@@ -54,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The macOS Window menu now drops a project when you close its window and checks the window that has focus
 - The Pages sidebar now highlights the open page when it is a typed page in a local wiki or sits under a typed page, opening the collapsed rows above it
 - Cursor Agent sessions now receive attached text documents and the file paths of pasted images and PDFs, which the agent opens itself
+- Archiving or deleting a worktree no longer deletes a folder or branch its repository does not own (another repository's worktree, or a moved, copied, locked or nested checkout), and no longer prunes the repository's other worktrees.
 
 ### Removed
 <!-- Removed features go here -->
