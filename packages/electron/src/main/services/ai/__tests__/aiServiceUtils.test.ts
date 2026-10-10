@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 // The runtime workspace is not pre-built when vitest runs in this package, so the
 // subpath imports in aiServiceUtils.ts (`@nimbalyst/runtime/ai/server*`) fail to
@@ -57,6 +60,11 @@ vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [] },
 }));
 
+const workspaceRoots = vi.hoisted(() => new Map<string, string[]>());
+vi.mock('../../../utils/store', () => ({
+  getWorkspaceRoots: (workspacePath: string) => workspaceRoots.get(workspacePath) ?? [workspacePath],
+}));
+
 import {
   bucketMessageLength,
   bucketResponseTime,
@@ -72,6 +80,7 @@ import {
   categorizeAIError,
   isCreateLikeChangeKind,
   detectNimbalystSlashCommand,
+  attachMentionedFiles,
   previewForLog,
   LOG_PREVIEW_LENGTH,
   extensionPromptRequiresConfiguredApiKey,
@@ -440,3 +449,35 @@ describe('aiServiceUtils', () => {
     });
   });
 });
+
+// Providers without file tools get mentioned files inlined. Only files inside
+// the workspace may be read: any of its roots, matched on a path boundary.
+describe('attachMentionedFiles', () => {
+  let root: string;
+  const provider = { getCapabilities: () => ({ supportsFileTools: false }) } as never;
+
+  beforeEach(() => {
+    root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nim-mentions-')));
+    for (const [file, content] of Object.entries({
+      'proj/a.ts': 'inside', 'project2/b.ts': 'sibling', 'infra/c.ts': 'attached',
+    })) {
+      fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+      fs.writeFileSync(path.join(root, file), content);
+    }
+    workspaceRoots.set(path.join(root, 'proj'), [path.join(root, 'proj'), path.join(root, 'infra')]);
+  });
+
+  afterEach(() => {
+    workspaceRoots.clear();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('reads files in any root of the workspace, and not a sibling that shares its prefix', async () => {
+    const message = `see @a.ts @${path.join(root, 'project2', 'b.ts')} @${path.join(root, 'infra', 'c.ts')}`;
+
+    const { attachedFiles } = await attachMentionedFiles(message, path.join(root, 'proj'), provider);
+
+    expect(attachedFiles.map((file) => file.path)).toEqual(['a.ts', path.join(root, 'infra', 'c.ts')]);
+  });
+});
+

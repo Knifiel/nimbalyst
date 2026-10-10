@@ -22,6 +22,8 @@ import {
   type AIProviderType,
 } from '@nimbalyst/runtime/ai/server/types';
 import { logger } from '../../utils/logger';
+import { getWorkspaceRoots } from '../../utils/store';
+import { isPathInWorkspace } from '../../../shared/pathUtils';
 import { historyManager } from '../../HistoryManager';
 
 export const LOG_PREVIEW_LENGTH = 400;
@@ -377,9 +379,11 @@ export async function attachMentionedFiles(
         ? mentionedPath
         : path.join(workspacePath, mentionedPath);
 
+      // Inside any root of the workspace, on a path boundary: a bare prefix
+      // check let `/proj` admit `/project2/...`, and turned away attached folders
       const resolvedPath = path.resolve(fullPath);
-      const resolvedWorkspace = path.resolve(workspacePath);
-      if (!resolvedPath.startsWith(resolvedWorkspace)) {
+      const roots = getWorkspaceRoots(workspacePath).map((root) => path.resolve(root));
+      if (!roots.some((root) => isPathInWorkspace(resolvedPath, root))) {
         logger.main.warn(`[AIService] Skipping @ mention outside workspace: ${mentionedPath}`);
         continue;
       }
