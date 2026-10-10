@@ -322,6 +322,20 @@ describe('getAdditionalDirectoriesForWorkspace', () => {
     expect(getAdditionalDirectoriesForWorkspace(projectPath)).toEqual([attached]);
   });
 
+  it('grants a worktree session the folders attached to its project', () => {
+    // Attachments are stored under the project, and a worktree session asks
+    // with the worktree's path, so they used to come back empty.
+    const attached = path.join(tmpRoot, 'infra');
+    fs.mkdirSync(attached);
+    attachedFoldersByWorkspace.set(projectPath, [attached]);
+    fs.mkdirSync(worktreesDir);
+    const cwd = path.join(worktreesDir, 'proud-gorge');
+    createLinkedWorktree(projectPath, cwd, 'proud-gorge');
+
+    expect(getAdditionalDirectoriesForWorkspace(cwd, { includeSiblingWorktrees: false }).sort())
+      .toEqual([attached, fs.realpathSync.native(projectPath)].sort());
+  });
+
   it('returns an empty list for a project with no worktrees and no extension marker', () => {
     expect(getAdditionalDirectoriesForWorkspace(projectPath)).toEqual([]);
   });

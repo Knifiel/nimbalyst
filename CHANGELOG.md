@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The pull request panel no longer reports the GitHub CLI as signed out when `gh auth status` is slow to answer.
 - Folders deeper than eight levels that you expanded in the file explorer no longer collapse to empty when files change elsewhere in the project
 - In a project spanning several repositories, the title-bar branch, the Git operations panel and the new-worktree dialog follow the file open in the editor instead of always using the first repository
+- An agent session in a worktree can read and edit the folders attached to its project, which it previously could not reach
 
 ### Removed
 <!-- Removed features go here -->

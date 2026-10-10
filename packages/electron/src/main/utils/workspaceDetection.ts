@@ -713,8 +713,13 @@ export function getAdditionalDirectoriesForWorkspace(
   const projectPath = resolveProjectPath(workspacePath);
 
   // Folders attached to this workspace are roots the user can see in the
-  // explorer, so the agent must be able to read and write them too.
-  for (const attached of getAttachedFolders(workspacePath)) {
+  // explorer, so the agent must be able to read and write them too. They are
+  // attached to the project, so a session in one of its worktrees reads them
+  // from the project, under whichever spelling of its path they were stored.
+  const attachedFrom = workspaceIdentity.isWorktree
+    ? resolveProjectPathCandidates(workspacePath).find((candidate) => getAttachedFolders(candidate).length > 0)
+    : workspacePath;
+  for (const attached of attachedFrom ? getAttachedFolders(attachedFrom) : []) {
     additionalDirs.add(attached);
   }
 
