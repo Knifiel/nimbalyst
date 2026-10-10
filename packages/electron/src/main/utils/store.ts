@@ -538,6 +538,8 @@ export interface WorkspaceState {
   worktreeRepoSelection?: string[];
   /** Files copied into each new worktree and a command run there; see `services/worktreeSetup.ts` */
   worktreeSetup?: { copy?: string[]; command?: string };
+  /** The repository the GitHub panel points at, when not the workspace root */
+  prRepoPath?: string;
   remoteSessionDrafts?: Record<string, { text: string; options?: import("@nimbalyst/runtime/sync/types").RemoteTurnOptions; attachments: import("@nimbalyst/runtime/ai/server/types").ChatAttachment[] }>;
   /** Explicit Cloudflare choices for this project; authentication stays in Wrangler. */
   cloudflareSandboxSelection?: { profileName: string; accountId: string | null };

@@ -1779,7 +1779,7 @@ interface ElectronAPI {
   onGhCliStatusChanged: (callback: (status: GhCliStatus) => void) => () => void;
 
   // PR review panel — GitHub API (Phase C of issue #307)
-  prDetectRemote: (workspacePath: string) => Promise<{
+  prDetectRemote: (workspacePath: string, repoPath?: string) => Promise<{
     success: boolean;
     error?: string;
     data?: { remote: string; host: string } | null;
@@ -1916,6 +1916,7 @@ interface ElectronAPI {
     workspacePath: string,
     remote: string,
     number: number,
+    repoPath?: string,
   ) => Promise<{
     success: boolean;
     error?: string;

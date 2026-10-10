@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New worktrees can be set up automatically: chosen project files such as `.env` are copied in and a setup command runs in a terminal of the worktree (Settings > Project > Worktree Setup)
 - The new-worktree dialog can branch a project's nested clones together with it: one task folder holds a worktree of each chosen clone at its own path, on one branch, with a repository picker in the Git panel, and is archived or deleted as a unit
 - A worktree name you type in the new-worktree dialog becomes its branch exactly (`feat/x` gives `worktree/feat/x` in a `feat-x` folder), and invalid or clashing names are flagged instead of renamed.
+- The GitHub panel can point at any repository in a multi-repo project, chosen from a picker in its header and remembered per project; a PR opened as a worktree branches from that repository
 
 ### Changed
 <!-- Changes to existing functionality go here -->
