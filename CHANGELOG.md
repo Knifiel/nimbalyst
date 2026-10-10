@@ -36,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An agent session in a worktree can read and edit the folders attached to its project, which it previously could not reach
 - Files @-mentioned to chat providers without file tools are read from attached folders too, and no longer from a sibling folder whose name starts with the project's
 - Cmd+Alt+W (Ctrl+Alt+W on Windows and Linux) now opens the new-worktree dialog, like the New Worktree menu item it is shown next to, instead of creating a worktree with a generated name
+- In a project spanning several repositories, pulling or pushing one of them from the title bar shows its progress and names the repository, and no longer greys out pull and push for the others while it runs
+- A question left open when the agent connection drops no longer leaves the session waiting for your response (#1557).
+- Sending queued messages to Codex no longer fails with an overlapping-turn error when interrupting a session
+- Nimbalyst's background branch and file status checks no longer lock the git index, which could make a `git pull --rebase` with autostash leave your uncommitted changes in the stash
 - Windows updates no longer fail with "Command failed ... Get-AuthenticodeSignature" when checking the downloaded installer's signature takes longer than 20 seconds
 - Clicking a link to another Local wiki page in the Wiki now opens that page in the same tab instead of switching to Files
 - Local wiki pages an agent edited now open in the Wiki with the edit applied instead of in red/green review
