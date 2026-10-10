@@ -23,6 +23,7 @@ import {
   isWorktreePath,
   findNearestAncestor,
   findProjectRoot,
+  resolveNestedCloneWorktreeProject,
 } from '../utils/workspaceDetection';
 
 type PermissionMode = 'ask' | 'allow-all' | 'bypass-all';
@@ -43,7 +44,18 @@ type PermissionMode = 'ask' | 'allow-all' | 'bypass-all';
  * trust.
  */
 function findTrustedProjectPath(startPath: string): string | null {
-  for (const candidate of resolveProjectPathCandidates(startPath)) {
+  const trusted = findTrustedAmong(resolveProjectPathCandidates(startPath));
+  if (trusted) {
+    return trusted;
+  }
+  // A nested clone's worktree made from inside its project uses the project's
+  // trust, as the project's own worktrees do. The clone itself does not.
+  const project = resolveNestedCloneWorktreeProject(startPath);
+  return project ? findTrustedAmong(resolveProjectPathCandidates(project)) : null;
+}
+
+function findTrustedAmong(candidates: string[]): string | null {
+  for (const candidate of candidates) {
     const boundary = findProjectRoot(candidate) ?? candidate;
     const trustedAncestor = findNearestAncestor(
       candidate,
@@ -55,6 +67,11 @@ function findTrustedProjectPath(startPath: string): string | null {
     }
   }
   return null;
+}
+
+/** Where a mode set from `workspacePath` is stored: its project, for a worktree */
+function resolvePermissionWritePath(workspacePath: string): string {
+  return resolveNestedCloneWorktreeProject(workspacePath) ?? resolveProjectPath(workspacePath);
 }
 
 /**
@@ -212,7 +229,7 @@ export class PermissionService {
    */
   public setPermissionMode(workspacePath: string, mode: PermissionMode | null): void {
     // Resolve worktree paths to parent project so trust is shared
-    const projectPath = resolveProjectPath(workspacePath);
+    const projectPath = resolvePermissionWritePath(workspacePath);
     const workspaceName = path.basename(projectPath) || projectPath;
     logger.main.info(`[PermissionService:${workspaceName}] Setting permission mode: ${mode}`);
 
@@ -236,7 +253,7 @@ export class PermissionService {
    * Toggle the "Allow All" automatic-review opt-in for a workspace (issue #628).
    */
   public setAllowAllUsesClassifier(workspacePath: string, enabled: boolean): void {
-    const projectPath = resolveProjectPath(workspacePath);
+    const projectPath = resolvePermissionWritePath(workspacePath);
     const workspaceName = path.basename(projectPath) || projectPath;
     logger.main.info(`[PermissionService:${workspaceName}] Setting allowAllUsesClassifier: ${enabled}`);
 
