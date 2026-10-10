@@ -205,8 +205,11 @@ describe('worktree repository choices', () => {
     expect(worktreeRepoChoices('/work', ['/other'])).toEqual([]);
   });
 
-  it('restores a remembered selection only where it still names offered repositories', () => {
-    expect(restoreRepoSelection(['/work', '/work/gone'], ['/work', '/work/api'], '/work/api')).toEqual(['/work']);
-    expect(restoreRepoSelection(undefined, ['/work', '/work/api'], '/work/api')).toEqual(['/work/api']);
+  it('brings back a remembered group, and otherwise follows the open file', () => {
+    const offered = ['/work', '/work/api', '/work/web'];
+    expect(restoreRepoSelection(['/work', '/work/api', '/work/gone'], offered, '/work/web')).toEqual(['/work', '/work/api']);
+    expect(restoreRepoSelection(['/work'], offered, '/work/api')).toEqual(['/work/api']);
+    expect(restoreRepoSelection(['/work', '/work/gone'], offered, '/work/api')).toEqual(['/work/api']);
+    expect(restoreRepoSelection(undefined, offered, '/work/api')).toEqual(['/work/api']);
   });
 });

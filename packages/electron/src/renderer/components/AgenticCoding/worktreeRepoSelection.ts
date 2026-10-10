@@ -40,8 +40,12 @@ export function worktreeRepoChoices(projectRepo: string, workspaceRepos: readonl
   return [projectRepo, ...workspaceRepos.filter(isInside)];
 }
 
-/** A remembered selection, kept only where it still names offered repositories */
+/**
+ * The repositories ticked when the dialog opens. A remembered group comes
+ * back, minus repositories no longer offered; otherwise the dialog follows the
+ * open file's repository, as it does without nested clones.
+ */
 export function restoreRepoSelection(saved: readonly string[] | undefined, choices: readonly string[], fallback: string): string[] {
   const kept = (saved ?? []).filter(repo => choices.includes(repo));
-  return kept.length > 0 ? kept : [fallback];
+  return kept.length > 1 ? kept : [fallback];
 }
