@@ -12,6 +12,7 @@ import { FeatureUsageService, FEATURES } from '../services/FeatureUsageService';
 import { GitWorktreeService } from '../services/GitWorktreeService';
 import { WorktreeStore, createWorktreeStore, isGroupAnchor, isGroupMember, type Worktree } from '../services/WorktreeStore';
 import { combineGroupStatus, groupMemberRefusal } from '../services/worktreeGroups';
+import { createWorktreeGroup, type CreateWorktreeGroupRequest } from '../services/worktreeGroupCreate';
 import { createSuperLoopStore } from '../services/SuperLoopStore';
 import { getDatabase } from '../database/initialize';
 import { archiveProgressManager } from '../services/ArchiveProgressManager';
@@ -415,6 +416,51 @@ export function registerWorktreeHandlers(): void {
    *   branch, when its folder is taken; a branch conflict fails as before.
    * @returns Worktree data including id, path, branch, etc.
    */
+  /**
+   * Create a worktree group: a task folder of the project's repository with a
+   * worktree of each chosen nested clone at the clone's own path inside it.
+   * Returns the anchor, which sessions bind to.
+   */
+  ipcMain.handle('worktree:create-group', async (
+    _event,
+    workspacePath: string,
+    request: CreateWorktreeGroupRequest
+  ): Promise<WorktreeCreateResult> => {
+    try {
+      if (!workspacePath) {
+        throw new Error('workspacePath is required');
+      }
+      if (!request || !Array.isArray(request.members)) {
+        throw new Error('members are required');
+      }
+      if (request.nameSource !== undefined && request.nameSource !== 'user' && request.nameSource !== 'suggested') {
+        throw new Error(`Unknown worktree nameSource: ${String(request.nameSource)}`);
+      }
+      const db = getDatabase();
+      if (!db) {
+        throw new Error('Database not initialized');
+      }
+      const { anchor, members } = await createWorktreeGroup(workspacePath, request, {
+        service: gitWorktreeService,
+        store: createWorktreeStore(db),
+        knownRepos: await listWorkspaceRepos(workspacePath),
+        worktreesDir: resolveWorktreesDir(workspacePath, getWorkspaceRoots(workspacePath)),
+      });
+      // The project may have closed while git created the checkouts
+      for (const worktree of [anchor, ...members]) {
+        if (isGitRepositoryInUse(worktree.path, new Set([workspacePath]))) {
+          gitRefWatcher.start(worktree.path, undefined, workspacePath).catch((error) => {
+            logger.error('Failed to start GitRefWatcher for worktree group checkout:', error);
+          });
+        }
+      }
+      return { success: true, worktree: anchor };
+    } catch (error) {
+      logger.error('Failed to create worktree group:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to create worktree group' };
+    }
+  });
+
   ipcMain.handle('worktree:create', async (
     _event,
     workspacePath: string,

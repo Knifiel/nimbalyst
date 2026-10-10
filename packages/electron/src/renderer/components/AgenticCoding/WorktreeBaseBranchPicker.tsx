@@ -24,6 +24,7 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
+import { planWorktreeRepos } from './worktreeRepoSelection';
 import {
   buildWorktreeBranchName,
   validateWorktreeBranchSuffix,
@@ -36,6 +37,10 @@ export interface WorktreePickerCreateOptions {
   name?: string;
   /** Set with `name`: `'user'` when the user typed it or edited the prefilled one */
   nameSource?: WorktreeNameSource;
+  /** The repository to branch, when the user ticked one other than the default */
+  sourceFolderPath?: string;
+  /** Nested clones to branch with the project's repository, as a worktree group */
+  groupMembers?: string[];
 }
 
 interface WorktreeBaseBranchPickerProps {
@@ -48,6 +53,14 @@ interface WorktreeBaseBranchPickerProps {
   repoPath: string;
   /** A suggested name, such as a tracker item's; sent as `'suggested'` unless edited */
   initialName?: string;
+  /**
+   * The project's repository first, then the nested clones inside it. With
+   * more than one, the dialog lists them to tick: one repository gets a
+   * worktree, the project's plus clones a worktree group.
+   */
+  repoChoices?: readonly string[];
+  /** The repositories ticked when the dialog opens */
+  initialRepoSelection?: readonly string[];
   onCreate: (options: WorktreePickerCreateOptions) => Promise<void>;
   onCancel: () => void;
 }
@@ -59,6 +72,8 @@ interface BranchSections {
 }
 
 const EMPTY_SECTIONS: BranchSections = { local: [], remote: [], current: '' };
+
+const folderName = (repo: string) => repo.split(/[\\/]/).filter(Boolean).pop() ?? repo;
 const REMOTE_PREFIX = 'remotes/';
 
 function partition(branches: string[], current: string): BranchSections {
@@ -87,11 +102,24 @@ async function fetchBranches(repoPath: string): Promise<BranchSections> {
 
 export function WorktreeBaseBranchPicker({
   isOpen,
-  repoPath,
+  repoPath: defaultRepoPath,
   initialName,
+  repoChoices,
+  initialRepoSelection,
   onCreate,
   onCancel,
 }: WorktreeBaseBranchPickerProps) {
+  const offersRepos = Boolean(repoChoices && repoChoices.length > 1);
+  const [selectedRepos, setSelectedRepos] = useState<string[]>([]);
+  // Read when the dialog opens, not tracked: a later change must not reset
+  // the open dialog under the user
+  const openingSelectionRef = useRef<readonly string[]>([defaultRepoPath]);
+  openingSelectionRef.current = initialRepoSelection ?? [defaultRepoPath];
+  const repoPlan = offersRepos ? planWorktreeRepos(selectedRepos, repoChoices![0]) : null;
+  // The bases offered are the branched repository's; a group's anchor is the project's
+  const repoPath = repoPlan?.kind === 'single'
+    ? repoPlan.sourceFolderPath
+    : repoPlan?.kind === 'group' ? repoChoices![0] : defaultRepoPath;
   const [sections, setSections] = useState<BranchSections>(EMPTY_SECTIONS);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshingRemotes, setIsRefreshingRemotes] = useState(false);
@@ -127,6 +155,7 @@ export function WorktreeBaseBranchPicker({
     setName(initialName ?? '');
     setIsSubmitting(false);
     setSubmitError(null);
+    setSelectedRepos([...openingSelectionRef.current]);
   }, [initialName, isOpen]);
 
   // Load branches + background fetch.
@@ -226,17 +255,23 @@ export function WorktreeBaseBranchPicker({
     };
   }, [sections, query]);
   const canSubmit =
-    !isSubmitting && !isLoading && !loadError && Boolean(selectedBranch) && !nameError;
+    !isSubmitting && !isLoading && !loadError && Boolean(selectedBranch) && !nameError &&
+    repoPlan?.kind !== 'invalid';
 
   const handleSubmit = useCallback(async () => {
     if (!canSubmit) return;
     setSubmitError(null);
     setIsSubmitting(true);
     try {
+      const repos: Partial<WorktreePickerCreateOptions> =
+        repoPlan?.kind === 'group' ? { groupMembers: repoPlan.members }
+          : repoPlan?.kind === 'single' && repoPlan.sourceFolderPath !== defaultRepoPath
+            ? { sourceFolderPath: repoPlan.sourceFolderPath }
+            : {};
       await onCreate(
         trimmedName
-          ? { baseBranch: selectedBranch, name: trimmedName, nameSource }
-          : { baseBranch: selectedBranch },
+          ? { baseBranch: selectedBranch, name: trimmedName, nameSource, ...repos }
+          : { baseBranch: selectedBranch, ...repos },
       );
       // Caller closes the modal on success; stop background work
       // before the unmount so the in-flight fetch is discarded.
@@ -247,7 +282,7 @@ export function WorktreeBaseBranchPicker({
       setSubmitError(error instanceof Error ? error.message : 'Failed to create worktree');
       setIsSubmitting(false);
     }
-  }, [canSubmit, nameSource, onCreate, selectedBranch, stopBackgroundWork, trimmedName]);
+  }, [canSubmit, defaultRepoPath, nameSource, onCreate, repoPlan, selectedBranch, stopBackgroundWork, trimmedName]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -292,11 +327,38 @@ export function WorktreeBaseBranchPicker({
           </p>
           {/* A workspace can hold several repos; say which one this branches. */}
           <p className="worktree-base-branch-picker-repo m-0 mt-1 text-[12px] text-nim-faint font-mono truncate" title={repoPath}>
-            Repository: {repoPath.split(/[\\/]/).filter(Boolean).pop() ?? repoPath}
+            {repoPlan?.kind === 'group'
+              ? `Repositories: ${[repoChoices![0], ...repoPlan.members].map(folderName).join(', ')}`
+              : `Repository: ${folderName(repoPath)}`}
           </p>
         </div>
 
         <div className="worktree-base-branch-picker-body flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-5">
+          {offersRepos && (
+            <fieldset className="worktree-repo-choices flex flex-col gap-1.5 m-0 p-0 border-0" data-testid="worktree-repo-choices">
+              <legend className="text-[12px] font-semibold text-nim uppercase tracking-wider mb-1.5">Repositories</legend>
+              {repoChoices!.map((repo, index) => (
+                <label key={repo} className="worktree-repo-choice flex items-center gap-2 text-[13px] text-nim cursor-pointer" title={repo}>
+                  <input
+                    type="checkbox"
+                    checked={selectedRepos.includes(repo)}
+                    disabled={isSubmitting}
+                    data-testid="worktree-repo-option"
+                    data-repo={repo}
+                    onChange={(e) => setSelectedRepos(prev =>
+                      e.target.checked ? [...prev, repo] : prev.filter(selected => selected !== repo))}
+                  />
+                  <span className="font-mono">{folderName(repo)}</span>
+                  {index === 0 && <span className="text-nim-faint">(project, holds the task folder)</span>}
+                </label>
+              ))}
+              {repoPlan?.kind === 'invalid' && (
+                <p className="worktree-repo-choices-error m-0 text-[12px] text-nim-error" data-testid="worktree-repo-choices-error">
+                  {repoPlan.reason}
+                </p>
+              )}
+            </fieldset>
+          )}
           <div className="worktree-name-field flex flex-col gap-1.5">
             <label
               htmlFor="worktree-name-input"

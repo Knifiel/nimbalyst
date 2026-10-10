@@ -4,6 +4,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { WorktreeBaseBranchPicker } from '../WorktreeBaseBranchPicker';
+import { restoreRepoSelection, worktreeRepoChoices } from '../worktreeRepoSelection';
 
 const BRANCHES = [
   'main',
@@ -153,5 +154,59 @@ describe('WorktreeBaseBranchPicker worktree name', () => {
     fireEvent.click(screen.getByTestId('worktree-base-branch-create'));
 
     await waitFor(() => expect(onCreate).toHaveBeenCalledWith({ baseBranch: 'main', ...expected }));
+  });
+});
+
+// A project whose repository holds nested clones: ticking one repository
+// branches it alone, the project's plus clones makes a worktree group.
+describe('WorktreeBaseBranchPicker repository choices', () => {
+  const choices = ['/work', '/work/api', '/work/web'];
+  const toggle = (repo: string) =>
+    fireEvent.click(screen.getAllByTestId('worktree-repo-option').find(input => input.getAttribute('data-repo') === repo)!);
+
+  it('sends the ticked clones as a group with the project repository', async () => {
+    const onCreate = vi.fn().mockResolvedValue(undefined);
+    renderPicker({ repoPath: '/work', repoChoices: choices, initialRepoSelection: ['/work'], onCreate });
+    await screen.findByTestId('worktree-base-branch-item-main');
+
+    toggle('/work/api');
+    toggle('/work/web');
+    fireEvent.click(screen.getByTestId('worktree-base-branch-create'));
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalledWith({ baseBranch: 'main', groupMembers: ['/work/api', '/work/web'] }));
+  });
+
+  it('branches one clone alone, offering that clone\'s bases', async () => {
+    const onCreate = vi.fn().mockResolvedValue(undefined);
+    renderPicker({ repoPath: '/work', repoChoices: choices, initialRepoSelection: ['/work'], onCreate });
+    await screen.findByTestId('worktree-base-branch-item-main');
+
+    toggle('/work');
+    toggle('/work/api');
+    await waitFor(() => expect(window.electronAPI.invoke).toHaveBeenCalledWith('git:branches', '/work/api'));
+    await screen.findByTestId('worktree-base-branch-item-main');
+    fireEvent.click(screen.getByTestId('worktree-base-branch-create'));
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalledWith({ baseBranch: 'main', sourceFolderPath: '/work/api' }));
+  });
+
+  it('refuses several clones without the project repository', async () => {
+    renderPicker({ repoPath: '/work', repoChoices: choices, initialRepoSelection: ['/work/api', '/work/web'] });
+    await screen.findByTestId('worktree-base-branch-item-main');
+
+    expect(screen.getByTestId('worktree-repo-choices-error').textContent).toMatch(/include the project repository/);
+    expect((screen.getByTestId('worktree-base-branch-create') as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe('worktree repository choices', () => {
+  it('offers the project repository first and only the clones inside it', () => {
+    expect(worktreeRepoChoices('/work', ['/work', '/work/api', '/workshop', '/other'])).toEqual(['/work', '/work/api']);
+    expect(worktreeRepoChoices('/work', ['/other'])).toEqual([]);
+  });
+
+  it('restores a remembered selection only where it still names offered repositories', () => {
+    expect(restoreRepoSelection(['/work', '/work/gone'], ['/work', '/work/api'], '/work/api')).toEqual(['/work']);
+    expect(restoreRepoSelection(undefined, ['/work', '/work/api'], '/work/api')).toEqual(['/work/api']);
   });
 });
