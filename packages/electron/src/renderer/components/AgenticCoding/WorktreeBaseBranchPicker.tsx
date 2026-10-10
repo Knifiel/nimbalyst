@@ -158,14 +158,22 @@ export function WorktreeBaseBranchPicker({
     setSelectedRepos([...openingSelectionRef.current]);
   }, [initialName, isOpen]);
 
-  // Load branches + background fetch.
+  // Load branches + background fetch. Runs again when the ticked
+  // repositories change which repository is branched; each run discards its
+  // own results once superseded, so a slower earlier load cannot land.
   useEffect(() => {
     if (!isOpen) return;
+    let current = true;
+    const live = () => current && aliveRef.current;
+    setSections(EMPTY_SECTIONS);
+    setSelectedBranch('');
+    setIsLoading(true);
+    setLoadError(null);
 
     const loadInitial = async () => {
       try {
         const initial = await fetchBranches(repoPath);
-        if (!aliveRef.current) return;
+        if (!live()) return;
         setSections(initial);
         // Pre-select current branch as a sensible default.
         if (initial.current && initial.local.includes(initial.current)) {
@@ -175,7 +183,7 @@ export function WorktreeBaseBranchPicker({
         }
         setIsLoading(false);
       } catch (error) {
-        if (!aliveRef.current) return;
+        if (!live()) return;
         setLoadError(error instanceof Error ? error.message : 'Failed to load branches');
         setIsLoading(false);
       }
@@ -186,15 +194,15 @@ export function WorktreeBaseBranchPicker({
       setIsRefreshingRemotes(true);
       try {
         await window.electronAPI.invoke('git:fetch', repoPath);
-        if (!aliveRef.current) return;
+        if (!live()) return;
         const refreshed = await fetchBranches(repoPath);
-        if (!aliveRef.current) return;
+        if (!live()) return;
         setSections((prev) => ({ ...refreshed, current: refreshed.current || prev.current }));
       } catch (error) {
         // eslint-disable-next-line no-console
         console.warn('[WorktreeBaseBranchPicker] git:fetch failed', error);
       } finally {
-        if (aliveRef.current) setIsRefreshingRemotes(false);
+        if (live()) setIsRefreshingRemotes(false);
       }
     };
 
@@ -202,7 +210,7 @@ export function WorktreeBaseBranchPicker({
     void refreshRemotes();
 
     return () => {
-      aliveRef.current = false;
+      current = false;
     };
   }, [isOpen, repoPath]);
 

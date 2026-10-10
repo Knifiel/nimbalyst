@@ -31,7 +31,9 @@ beforeEach(() => {
   Object.defineProperty(window, 'electronAPI', {
     configurable: true,
     value: {
-      invoke: vi.fn(async (channel: string) => {
+      invoke: vi.fn(async (channel: string, repoPath?: string) => {
+        // A nested clone has branches of its own
+        if (channel === 'git:branches' && repoPath === '/work/api') return { branches: ['develop'], current: 'develop' };
         if (channel === 'git:branches') return { branches: BRANCHES, current: 'main' };
         return undefined;
       }),
@@ -176,18 +178,18 @@ describe('WorktreeBaseBranchPicker repository choices', () => {
     await waitFor(() => expect(onCreate).toHaveBeenCalledWith({ baseBranch: 'main', groupMembers: ['/work/api', '/work/web'] }));
   });
 
-  it('branches one clone alone, offering that clone\'s bases', async () => {
+  it('branches one clone alone from that clone\'s own bases, not the ones listed before', async () => {
     const onCreate = vi.fn().mockResolvedValue(undefined);
     renderPicker({ repoPath: '/work', repoChoices: choices, initialRepoSelection: ['/work'], onCreate });
     await screen.findByTestId('worktree-base-branch-item-main');
 
     toggle('/work');
     toggle('/work/api');
-    await waitFor(() => expect(window.electronAPI.invoke).toHaveBeenCalledWith('git:branches', '/work/api'));
-    await screen.findByTestId('worktree-base-branch-item-main');
+    await screen.findByTestId('worktree-base-branch-item-develop');
+    expect(screen.queryByTestId('worktree-base-branch-item-main')).toBeNull();
     fireEvent.click(screen.getByTestId('worktree-base-branch-create'));
 
-    await waitFor(() => expect(onCreate).toHaveBeenCalledWith({ baseBranch: 'main', sourceFolderPath: '/work/api' }));
+    await waitFor(() => expect(onCreate).toHaveBeenCalledWith({ baseBranch: 'develop', sourceFolderPath: '/work/api' }));
   });
 
   it('refuses several clones without the project repository', async () => {
