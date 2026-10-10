@@ -59,6 +59,7 @@ import {
   writeScrollback,
   deleteScrollbackFile,
 } from '../utils/terminalStore';
+import { CommandFinishWaiters, type CommandWaitOutcome } from './commandFinishWaiters';
 
 // Maximum scrollback buffer size (500KB)
 const MAX_SCROLLBACK_SIZE = 500 * 1024;
@@ -162,6 +163,7 @@ interface SpawnConfig {
 
 export class TerminalSessionManager {
   private terminals = new Map<string, TerminalProcess>();
+  private commandWaiters = new CommandFinishWaiters();
   private scrollbackPersistTimers = new Map<string, NodeJS.Timeout>();
   private historyDirPromise: Promise<string> | null = null;
   private bootstrapDirPromise: Promise<string> | null = null;
@@ -900,6 +902,7 @@ export class TerminalSessionManager {
         const isRunning = commandState === 'cmd-start';
         if (terminalProcess.isCommandRunning !== isRunning) {
           terminalProcess.isCommandRunning = isRunning;
+          this.commandWaiters.onCommandState(terminalId, commandState);
           this.broadcastToWindows('terminal:command-running', {
             terminalId,
             isRunning,
@@ -939,6 +942,7 @@ export class TerminalSessionManager {
 
       // Remove from map
       this.terminals.delete(terminalId);
+      this.commandWaiters.onExit(terminalId);
     });
 
     // Persist initial state before adding to map to avoid race with quick exit
@@ -1129,6 +1133,23 @@ export class TerminalSessionManager {
   /**
    * Write data to a terminal (user input)
    */
+  /**
+   * Resolves when the next command run in the terminal finishes, judged by the
+   * shell's command-state marks (see CommandFinishWaiters).
+   */
+  waitForCommandToFinish(
+    terminalId: string,
+    options: { startTimeoutMs?: number; finishTimeoutMs?: number } = {}
+  ): Promise<CommandWaitOutcome> {
+    const terminal = this.terminals.get(terminalId);
+    if (!terminal) return Promise.resolve('exited');
+    return this.commandWaiters.wait(terminalId, {
+      runningNow: terminal.isCommandRunning === true,
+      startTimeoutMs: options.startTimeoutMs ?? 2 * 60_000,
+      finishTimeoutMs: options.finishTimeoutMs ?? 30 * 60_000,
+    });
+  }
+
   writeToTerminal(sessionId: string, data: string): void {
     const terminal = this.terminals.get(sessionId);
     if (terminal) {

@@ -131,6 +131,7 @@ import {
 import { setAgentModeSettingsAtom, showPromptAdditionsAtom, hasExternalEditorAtom, externalEditorNameAtom, openInExternalEditorAtom, defaultAgentModelAtom, defaultEffortLevelAtom, defaultThinkingModeAtom, chatShowToolCallsAtom, developerModeAtom } from '../../store/atoms/appSettings';
 import { supportsEffortLevel, supportsThinkingToggle, parseEffortLevel, resolveThinkingMode, type EffortLevel, type ThinkingMode } from '../../utils/modelUtils';
 import { buildPlanImplementationPrompt, resolvePlanFilePath } from '../../utils/pathUtils';
+import { isGitRepoAtom } from '../../store/actions/sessionHistoryActions';
 import { resolveTranscriptClickPath } from '../../utils/resolveTranscriptClickPath';
 import { openAgentEditedPage } from '../../utils/agentEditedPage';
 import { autoCommitEnabledAtom, setAutoCommitEnabledAtom } from '../../store/atoms/autoCommitAtoms';
@@ -439,6 +440,7 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
   const sessionChildren = useAtomValue(sessionChildrenAtom(sessionId));
   const sessionParentId = useAtomValue(sessionParentIdAtom(sessionId));
   const defaultModel = useAtomValue(defaultAgentModelAtom);
+  const isGitRepo = useAtomValue(isGitRepoAtom(workspacePath ?? '')) === true;
   const defaultEffortLevel = useAtomValue(defaultEffortLevelAtom);
   const defaultThinkingMode = useAtomValue(defaultThinkingModeAtom);
 
@@ -1773,6 +1775,33 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
     }
   }, [sessionChildren, sessionParentId, workspacePath, worktreeId, onCreateWorktreeSession, createChildSession, sessionWorktreePath, posthog, defaultModel, openSessionWithDraft, stopExitPlanModeSession]);
 
+  // Handler for "Yes, implement in a new worktree". The main process makes the
+  // worktree the way the New Worktree dialog does (the user's repositories, the
+  // project's setup step), opens its session, and queues the implementation
+  // prompt once the setup command finishes. The planning session stops only
+  // after the launch succeeded.
+  const handleExitPlanModeStartWorktreeSession = useCallback(async (requestId: string, confirmSessionId: string, planFilePath: string) => {
+    if (!workspacePath) {
+      throw new Error('Cannot start a worktree session without workspacePath');
+    }
+    const implementationPrompt = buildPlanImplementationPrompt({
+      planFilePath,
+      basePath: sessionWorktreePath || workspacePath,
+    });
+    await window.electronAPI.invoke('action-prompts:launch-new-session', {
+      workspacePath,
+      parentSessionId: confirmSessionId,
+      prompt: implementationPrompt,
+      title: 'Implement plan',
+      config: { foreground: true, autoSubmit: true, worktree: true },
+    });
+    await stopExitPlanModeSession(requestId, confirmSessionId);
+    posthog?.capture('exit_plan_mode_response', {
+      decision: 'start_worktree_session',
+      is_worktree: !!worktreeId,
+    });
+  }, [workspacePath, sessionWorktreePath, worktreeId, posthog, stopExitPlanModeSession]);
+
   const handleExitPlanModeCancel = useCallback(async (requestId: string, confirmSessionId: string) => {
     try {
       await stopExitPlanModeSession(requestId, confirmSessionId);
@@ -1858,6 +1887,12 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
       exitPlanModeStartNewSession: async (requestId: string, planFilePath: string) => {
         await handleExitPlanModeStartNewSession(requestId, sessionId, planFilePath);
       },
+      // Offered only where worktrees work: the project is a git repository
+      exitPlanModeStartWorktreeSession: isGitRepo
+        ? async (requestId: string, planFilePath: string) => {
+          await handleExitPlanModeStartWorktreeSession(requestId, sessionId, planFilePath);
+        }
+        : undefined,
       exitPlanModeDeny: async (requestId: string, feedback?: string) => {
         await handleExitPlanModeDeny(requestId, sessionId, feedback);
       },
@@ -2206,6 +2241,11 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
       requestUserInputCancel: (...args) => liveHostRef.current!.requestUserInputCancel(...args),
       exitPlanModeApprove: (...args) => liveHostRef.current!.exitPlanModeApprove(...args),
       exitPlanModeStartNewSession: (...args) => liveHostRef.current!.exitPlanModeStartNewSession(...args),
+      get exitPlanModeStartWorktreeSession() {
+        return liveHostRef.current?.exitPlanModeStartWorktreeSession
+          ? (requestId: string, planFilePath: string) => liveHostRef.current!.exitPlanModeStartWorktreeSession!(requestId, planFilePath)
+          : undefined;
+      },
       exitPlanModeDeny: (...args) => liveHostRef.current!.exitPlanModeDeny(...args),
       exitPlanModeCancel: (...args) => liveHostRef.current!.exitPlanModeCancel(...args),
       toolPermissionSubmit: (...args) => liveHostRef.current!.toolPermissionSubmit(...args),

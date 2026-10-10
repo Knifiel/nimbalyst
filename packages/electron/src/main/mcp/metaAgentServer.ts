@@ -30,6 +30,7 @@ type SpawnSessionArgs = {
   title?: string;
   prompt: string;
   useWorktree?: boolean;
+  repos?: string[];
   model?: string;
   notifyOnComplete?: boolean;
   /**
@@ -259,7 +260,13 @@ export const META_AGENT_TOOL_DEFS: Array<{
         useWorktree: {
           type: "boolean",
           description:
-            "Default false. By default the spawned session inherits the caller's working directory: if the caller is in a worktree, the new session runs in that same worktree; if the caller is in the main checkout, the new session runs there too. Set true only when the user explicitly asks for the new session to get its OWN new worktree (separate branch and working directory) — this creates a fresh worktree rather than inheriting the caller's.",
+            "Default false. By default the spawned session inherits the caller's working directory: if the caller is in a worktree, the new session runs in that same worktree; if the caller is in the main checkout, the new session runs there too. Set true only when the user explicitly asks for the new session to get its OWN new worktree (separate branch and working directory) — this creates a fresh worktree rather than inheriting the caller's. The new worktree is made the way the user's New Worktree dialog makes it: with the repositories cloned in the project that the user last chose there, and with the project's setup step (copied files, setup command). When there is a setup command, the new session's prompt is held until it finishes (waitingForWorktreeSetup in the result).",
+        },
+        repos: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Only with useWorktree=true, and only when the user asks for specific repositories. Repositories cloned inside the project (path relative to the project, or folder name) to include in the new worktree, overriding the user's last choice in the New Worktree dialog. An empty list means the project repository alone. An unknown name fails and lists the repositories available.",
         },
         model: {
           type: "string",

@@ -170,6 +170,12 @@ export interface InteractiveWidgetHost {
      */
     exitPlanModeStartNewSession(requestId: string, planFilePath: string): Promise<void>;
     /**
+     * Approve and implement in a session in its own new worktree, made the way
+     * the project's New Worktree dialog makes it. Optional: hosts without
+     * worktrees leave it out and the widget does not offer it.
+     */
+    exitPlanModeStartWorktreeSession?(requestId: string, planFilePath: string): Promise<void>;
+    /**
      * Deny exit and continue planning, optionally with feedback
      */
     exitPlanModeDeny(requestId: string, feedback?: string): Promise<void>;

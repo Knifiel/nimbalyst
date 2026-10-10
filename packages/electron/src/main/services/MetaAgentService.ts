@@ -26,9 +26,9 @@ import {
 import { toMillis } from '../utils/timestampUtils';
 import { createWorktreeStore } from './WorktreeStore';
 import { GitWorktreeService } from './GitWorktreeService';
+import type { AgentWorktreeProvisioner } from './agentWorktreeRepos';
 import { database as databaseWorker } from '../database/PGLiteDatabaseWorker';
 import { getDatabase } from '../database/initialize';
-import { gitRefWatcher } from '../file/GitRefWatcher';
 import { AIService } from './ai/AIService';
 import { setMetaAgentToolFns } from '../mcp/metaAgentServer';
 import { computeNotificationSignature } from './metaAgentNotificationSignature';
@@ -84,6 +84,8 @@ interface CreateChildSessionArgs {
   model?: string;
   prompt?: string;
   useWorktree?: boolean;
+  /** With useWorktree: the project's cloned repositories the new worktree holds (see resolveAgentWorktreeRepos). */
+  repos?: string[];
   worktreeId?: string;
   toolScope?: string;
   /**
@@ -136,6 +138,7 @@ interface SpawnSessionArgs {
   title?: string;
   prompt: string;
   useWorktree?: boolean;
+  repos?: string[];
   model?: string;
   /**
    * When true and `model` is not explicitly set, the new session uses the
@@ -198,6 +201,7 @@ export class MetaAgentService {
   private hierarchyMoveUnsubscribe: (() => void) | null = null;
   private serverPort: number | null = null;
   private aiService: AIService | null = null;
+  private worktreeProvisioner: AgentWorktreeProvisioner | null = null;
   private sessionManager: SessionManager | null = null;
   private unsubscribeStateListener: (() => void) | null = null;
   private notificationSignatures = new Map<string, string>();
@@ -240,6 +244,11 @@ export class MetaAgentService {
       searchable: true,
       metadata: promptProvenance ? { promptProvenance } : undefined,
     });
+  }
+
+  /** How spawned sessions get new worktrees; set at startup, before start(). */
+  public setWorktreeProvisioner(provisioner: AgentWorktreeProvisioner): void {
+    this.worktreeProvisioner = provisioner;
   }
 
   public async start(
@@ -475,12 +484,20 @@ export class MetaAgentService {
     worktreeMode: 'existing' | 'new' | 'none';
     createdBySessionId: string;
     queuedInitialPrompt: boolean;
+    /** The first prompt is held until the new worktree's setup command finishes. */
+    waitingForWorktreeSetup: boolean;
     parentSessionId: string | null;
     /** Effort actually applied, after clamping; null when left on the app default. */
     effortLevel: string | null;
   }> {
     if (!this.aiService) {
       throw new Error('AI service not initialized');
+    }
+    if (args.repos !== undefined) {
+      if (!Array.isArray(args.repos) || args.repos.some(repo => typeof repo !== 'string')) {
+        throw new Error('repos must be a list of repository names');
+      }
+      if (!args.useWorktree) throw new Error('repos only applies with useWorktree=true');
     }
     if (args.useWorktree && args.worktreeId) {
       throw new Error('useWorktree and worktreeId cannot be combined');
@@ -578,6 +595,7 @@ export class MetaAgentService {
     try {
       let worktreeId: string | null = null;
       let worktreePath: string | null = null;
+      let setupTerminalId: string | undefined;
 
       const db = getDatabase();
       if ((args.useWorktree || args.worktreeId) && !db) {
@@ -619,15 +637,22 @@ export class MetaAgentService {
         for (const name of filesystemNames) existingNames.add(name);
         for (const name of branchNames) existingNames.add(name);
         const finalName = gitWorktreeService.generateUniqueWorktreeName(existingNames);
-        // As-opened spelling, so the new worktree's projectPath matches the key
-        // the window and its sessions use.
-        const worktree = await gitWorktreeService.createWorktree(workspaceKey, { name: finalName });
-        await worktreeStore.create(worktree);
-        gitRefWatcher.start(worktree.path, undefined, workspaceId).catch((error: Error) => {
-          console.error('[MetaAgentService] Failed to start GitRefWatcher for meta-agent worktree:', error);
+        // The repositories the user picks in the New Worktree dialog (or the ones
+        // the agent named), plus the project's setup step -- the same worktree the
+        // user would have made. As-opened spelling, so the new worktree's
+        // projectPath matches the key the window and its sessions use.
+        if (!this.worktreeProvisioner) {
+          throw new Error('Worktree provisioning not initialized');
+        }
+        const created = await this.worktreeProvisioner.create({
+          workspacePath: workspaceKey,
+          name: finalName,
+          repos: args.repos,
+          refWatcherWorkspace: workspaceId,
         });
-        worktreeId = worktree.id;
-        worktreePath = worktree.path;
+        worktreeId = created.worktree.id;
+        worktreePath = created.worktree.path;
+        setupTerminalId = created.setupTerminalId;
       }
 
       // create_session shares the caller's container just like spawn_session.
@@ -692,12 +717,17 @@ export class MetaAgentService {
       const initialPrompt = args.prompt?.trim();
       const shouldBypassExecution = this.shouldBypassChildAgentExecutionForTests();
 
-      if (initialPrompt) {
-        const promptProvenance: PromptProvenance = {
-          actor: 'agent',
-          origin: 'session-orchestration',
-          originSessionId: metaSessionId,
-        };
+      const promptProvenance: PromptProvenance = {
+        actor: 'agent',
+        origin: 'session-orchestration',
+        originSessionId: metaSessionId,
+      };
+      // A new worktree's setup command (an install) must finish before the child
+      // starts, or the child builds against a half-installed tree or starts a
+      // second install. Its first prompt is queued once the setup terminal is done.
+      const waitForSetup = !!(initialPrompt && setupTerminalId && !shouldBypassExecution);
+
+      if (initialPrompt && !waitForSetup) {
         if (shouldBypassExecution) {
           await this.persistSyntheticInputMessage(sessionId, initialPrompt, promptProvenance);
         } else {
@@ -712,7 +742,15 @@ export class MetaAgentService {
         worktreeId,
       });
 
-      if (initialPrompt && !shouldBypassExecution) {
+      if (waitForSetup) {
+        void this.startAfterWorktreeSetup({
+          sessionId,
+          setupTerminalId: setupTerminalId!,
+          prompt: initialPrompt!,
+          promptProvenance,
+          workspacePath: worktreePath || workspaceKey,
+        });
+      } else if (initialPrompt && !shouldBypassExecution) {
         await this.aiService.triggerQueuedPromptProcessingForSession(sessionId, worktreePath || workspaceKey, 'meta-agent');
       }
 
@@ -726,10 +764,37 @@ export class MetaAgentService {
         worktreeMode: args.useWorktree ? 'new' : worktreeId ? 'existing' : 'none',
         createdBySessionId: metaSessionId,
         queuedInitialPrompt: !!initialPrompt,
+        waitingForWorktreeSetup: waitForSetup,
         parentSessionId: treeParentId,
         effortLevel: childEffortLevel ?? null,
       };
     } finally { releaseCapacity(); }
+  }
+
+  /**
+   * Queue a child's first prompt once its new worktree's setup terminal has run
+   * the setup command. A shell that never reports command state, or a command
+   * that runs past the cap, starts the child anyway (logged).
+   */
+  private async startAfterWorktreeSetup(input: {
+    sessionId: string;
+    setupTerminalId: string;
+    prompt: string;
+    promptProvenance: PromptProvenance;
+    workspacePath: string;
+  }): Promise<void> {
+    try {
+      const outcome = await this.worktreeProvisioner!.waitForSetup(input.setupTerminalId);
+      if (outcome !== 'finished') {
+        console.warn(`[MetaAgentService] Worktree setup for ${input.sessionId} ended as '${outcome}'; starting the session anyway`);
+      }
+      const aiService = this.aiService;
+      if (!aiService) throw new Error('AIService not initialized');
+      await aiService.queuePromptForSession(input.sessionId, input.prompt, undefined, { promptProvenance: input.promptProvenance });
+      await aiService.triggerQueuedPromptProcessingForSession(input.sessionId, input.workspacePath, 'meta-agent');
+    } catch (error) {
+      console.error(`[MetaAgentService] Could not start ${input.sessionId} after its worktree setup:`, error);
+    }
   }
 
   private async spawnSession(
@@ -775,6 +840,7 @@ export class MetaAgentService {
       title: args.title,
       prompt: args.prompt,
       useWorktree: !!args.useWorktree,
+      repos: args.repos,
       worktreeId: inheritedWorktreeId,
       model: effectiveModel,
       effortLevel: args.effortLevel,
