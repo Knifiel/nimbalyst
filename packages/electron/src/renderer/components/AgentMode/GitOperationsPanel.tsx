@@ -79,6 +79,12 @@ interface GitOperationsPanelProps {
   worktreeId?: string | null;
   /** The worktree path if this is a worktree session */
   worktreePath?: string | null;
+  /**
+   * The worktree archive acts on, when it differs from `worktreeId`: a
+   * group's anchor while one of its members is shown, since a member is only
+   * archived with its group
+   */
+  archiveWorktreeId?: string | null;
   /** Callback when worktree is archived */
   onWorktreeArchived?: () => void;
   /** Callback to open a file (used for .superloop/ file links) */
@@ -86,7 +92,7 @@ interface GitOperationsPanelProps {
 }
 
 export const GitOperationsPanel: React.FC<GitOperationsPanelProps> = React.memo(
-  ({ workspacePath, workstreamId, sessionId, editedFiles, worktreeId, worktreePath, onWorktreeArchived, onFileClick }) => {
+  ({ workspacePath, workstreamId, sessionId, editedFiles, worktreeId, worktreePath, archiveWorktreeId, onWorktreeArchived, onFileClick }) => {
     // Use useAtomValue for read-only, useSetAtom for write-only to minimize re-renders
     const gitStatus = useAtomValue(gitStatusAtom);
     const setGitStatus = useSetAtom(gitStatusAtom);
@@ -1107,7 +1113,7 @@ Please proceed with this strategy.`;
       console.log('[GitOperationsPanel] Archiving worktree:', { worktreeId, hasCallback: !!onWorktreeArchived });
 
       try {
-        await window.electronAPI.worktreeArchive(worktreeId, workspacePath);
+        await window.electronAPI.worktreeArchive(archiveWorktreeId ?? worktreeId, workspacePath);
         console.log('[GitOperationsPanel] Archive complete, closing dialog and calling onWorktreeArchived');
         setShowArchiveDialog(false);
         // Notify parent that worktree was archived
@@ -1120,7 +1126,7 @@ Please proceed with this strategy.`;
       } catch (err) {
         console.error('[GitOperationsPanel] Failed to archive worktree:', err);
       }
-    }, [worktreeId, workspacePath, onWorktreeArchived]);
+    }, [archiveWorktreeId, worktreeId, workspacePath, onWorktreeArchived]);
 
     // Handle keep worktree (dismiss dialog)
     const handleKeepWorktree = useCallback(() => {
@@ -1147,7 +1153,7 @@ Please proceed with this strategy.`;
       if (!worktreeId) return;
 
       try {
-        await window.electronAPI.worktreeArchive(worktreeId, workspacePath);
+        await window.electronAPI.worktreeArchive(archiveWorktreeId ?? worktreeId, workspacePath);
         setShowArchiveBlitzDialog(false);
         if (onWorktreeArchived) {
           onWorktreeArchived();
@@ -1155,7 +1161,7 @@ Please proceed with this strategy.`;
       } catch (err) {
         console.error('[GitOperationsPanel] Failed to archive worktree:', err);
       }
-    }, [worktreeId, workspacePath, onWorktreeArchived]);
+    }, [archiveWorktreeId, worktreeId, workspacePath, onWorktreeArchived]);
 
     // Handle keep all (dismiss blitz archive dialog)
     const handleKeepAll = useCallback(() => {
