@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { beforeEach, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   handlers: new Map<string, (...args: any[]) => Promise<any>>(),
@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
     getWorktreeSessions: vi.fn().mockResolvedValue([]),
     updateArchived: vi.fn().mockResolvedValue(undefined),
     getAllPaths: vi.fn().mockResolvedValue(new Set<string>()),
+    listGroupMembers: vi.fn().mockResolvedValue([]),
   },
   start: vi.fn().mockResolvedValue(undefined),
   stop: vi.fn().mockResolvedValue(undefined),
@@ -32,7 +33,10 @@ vi.mock('../../services/GitWorktreeService', () => ({
     checkWorktreeRemovable = mocks.checkWorktreeRemovable;
   },
 }));
-vi.mock('../../services/WorktreeStore', () => ({ createWorktreeStore: () => mocks.store }));
+vi.mock('../../services/WorktreeStore', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../services/WorktreeStore')>()),
+  createWorktreeStore: () => mocks.store,
+}));
 vi.mock('../../services/SuperLoopStore', () => ({ createSuperLoopStore: vi.fn() }));
 vi.mock('../../database/initialize', () => ({ getDatabase: () => ({}) }));
 vi.mock('../../services/ArchiveProgressManager', () => ({ archiveProgressManager: {} }));
@@ -58,6 +62,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.checkWorktreeRemovable.mockResolvedValue(null);
   mocks.store.getWorktreeSessions.mockResolvedValue([]);
+  mocks.store.listGroupMembers.mockResolvedValue([]);
   mocks.inUse = true;
   registerWorktreeHandlers();
 });
@@ -163,3 +168,57 @@ it('refuses to delete a worktree its repository will not remove, before stopping
   expect(mocks.deleteWorktree).not.toHaveBeenCalled();
   expect(mocks.store.delete).not.toHaveBeenCalled();
 });
+
+// A worktree group: the anchor's folder holds other repositories' worktrees,
+// which go first and are each checked through their own repository.
+describe('worktree groups', () => {
+  const anchor = {
+    id: 'task', path: '/project_worktrees/task', branch: 'worktree/task', projectPath: '/project',
+    sourceFolderPath: '/project', groupId: 'task', isArchived: false,
+  };
+  const member = {
+    id: 'api', path: '/project_worktrees/task/api', branch: 'worktree/task', projectPath: '/project',
+    sourceFolderPath: '/project/api', groupId: 'task', isArchived: false,
+  };
+
+  it('refuses to archive or delete a member on its own', async () => {
+    mocks.store.get.mockResolvedValue(member);
+
+    expect((await mocks.handlers.get('worktree:archive')!({}, 'api', '/project')).success).toBe(false);
+    expect((await mocks.handlers.get('worktree:delete')!({}, 'api', '/project')).error).toMatch(/part of a worktree group/);
+    expect(mocks.checkWorktreeRemovable).not.toHaveBeenCalled();
+    expect(mocks.deleteWorktree).not.toHaveBeenCalled();
+  });
+
+  it('refuses to archive the group when a member will not come out, before tearing anything down', async () => {
+    mocks.store.get.mockResolvedValue(anchor);
+    mocks.store.listGroupMembers.mockResolvedValue([member]);
+    mocks.checkWorktreeRemovable.mockImplementation(async (worktreePath: string) =>
+      worktreePath === member.path ? new Error('Worktree /project_worktrees/task/api is locked') : null);
+
+    expect(await mocks.handlers.get('worktree:archive')!({}, 'task', '/project')).toEqual({
+      success: false,
+      error: 'Worktree /project_worktrees/task/api is locked',
+    });
+    expect(mocks.checkWorktreeRemovable).toHaveBeenCalledWith(member.path, '/project/api', expect.anything());
+    expect(mocks.getTerminalSessionManager).not.toHaveBeenCalled();
+    expect(mocks.archiveSessions).not.toHaveBeenCalled();
+  });
+
+  it('deletes members through their own repositories before the anchor, whose check skips them', async () => {
+    mocks.store.get.mockResolvedValue(anchor);
+    mocks.store.listGroupMembers.mockResolvedValue([member]);
+
+    expect((await mocks.handlers.get('worktree:delete')!({}, 'task', '/project')).success).toBe(true);
+
+    expect(mocks.checkWorktreeRemovable).toHaveBeenLastCalledWith(anchor.path, '/project', expect.objectContaining({
+      removedFirst: [member.path],
+    }));
+    expect(mocks.deleteWorktree.mock.calls.map(([worktreePath, repoPath]) => [worktreePath, repoPath])).toEqual([
+      [member.path, '/project/api'],
+      [anchor.path, '/project'],
+    ]);
+    expect(mocks.store.delete.mock.calls.map(([id]) => id)).toEqual(['api', 'task']);
+  });
+});
+

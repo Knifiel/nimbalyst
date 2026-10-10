@@ -117,7 +117,7 @@ async function openDatabase(engine: 'pglite' | 'sqlite', dir: string): Promise<{
       id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, name TEXT NOT NULL, display_name TEXT,
       path TEXT NOT NULL, branch TEXT NOT NULL, base_branch TEXT, source_folder_path TEXT,
       is_pinned BOOLEAN DEFAULT FALSE, is_archived BOOLEAN DEFAULT FALSE,
-      pr_number INTEGER, pr_remote TEXT, pr_url TEXT,
+      pr_number INTEGER, pr_remote TEXT, pr_url TEXT, group_id TEXT,
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE ai_sessions (

@@ -10,7 +10,8 @@ import log from 'electron-log/main';
 import simpleGit from 'simple-git';
 import { FeatureUsageService, FEATURES } from '../services/FeatureUsageService';
 import { GitWorktreeService } from '../services/GitWorktreeService';
-import { WorktreeStore, createWorktreeStore } from '../services/WorktreeStore';
+import { WorktreeStore, createWorktreeStore, isGroupAnchor, isGroupMember, type Worktree } from '../services/WorktreeStore';
+import { combineGroupStatus, groupMemberRefusal } from '../services/worktreeGroups';
 import { createSuperLoopStore } from '../services/SuperLoopStore';
 import { getDatabase } from '../database/initialize';
 import { archiveProgressManager } from '../services/ArchiveProgressManager';
@@ -27,6 +28,7 @@ import { getWorkspaceRoots } from '../utils/store';
 import type { WorktreeCreateResult } from '../../shared/ipc/types';
 import { gitOperationLock } from '../services/GitOperationLock';
 import fs from 'node:fs';
+import path from 'node:path';
 import { archiveSessionsAndDestroyProviders } from '../services/ai/archiveSessionProviderLifecycle';
 import { createWorktreeArchiveCleanup, worktreeRepoPath } from '../services/worktreeArchiveCleanup';
 import { validateWorktreeBranchSuffix, type WorktreeNameSource } from '../../shared/worktreeBranchNaming';
@@ -76,6 +78,42 @@ function emitTerminalListChanged(workspacePath: string): void {
   for (const window of windows) {
     if (!window.isDestroyed()) {
       window.webContents.send('terminal:list-changed', { workspacePath });
+    }
+  }
+}
+
+/**
+ * The members of the group `worktreePath` anchors, or none when it is not an
+ * anchor. Archived members are left out: their checkouts are gone.
+ */
+async function liveGroupMembersOf(worktreePath: string): Promise<Worktree[]> {
+  const db = getDatabase();
+  if (!db) return [];
+  const worktreeStore = createWorktreeStore(db);
+  const worktree = await worktreeStore.getByPath(worktreePath);
+  if (!worktree || !isGroupAnchor(worktree)) return [];
+  return (await worktreeStore.listGroupMembers(worktree.id)).filter(member => !member.isArchived);
+}
+
+/**
+ * Refuses a merge, rebase or squash of a group's anchor when one of `checks`
+ * tracks files where a member's checkout sits, which git would write into it.
+ */
+async function assertAnchorTreeSparesMembers(
+  service: GitWorktreeService,
+  worktreePath: string,
+  checks: Array<{ repoPath: string; refs: string[] }>
+): Promise<void> {
+  const members = await liveGroupMembersOf(worktreePath);
+  if (members.length === 0) return;
+  const memberPaths = members.map(member => path.relative(worktreePath, member.path).split(path.sep).join('/'));
+  for (const { repoPath, refs } of checks) {
+    const tracked = await service.findTrackedPath(repoPath, refs, memberPaths);
+    if (tracked) {
+      throw new Error(
+        `${tracked.ref} tracks ${tracked.path}, inside a member checkout of this worktree group, so git would ` +
+        'write into that checkout; nothing was changed.'
+      );
     }
   }
 }
@@ -157,6 +195,10 @@ export async function archiveWorktree(worktreeId: string, workspacePath: string)
       );
     }
 
+    if (isGroupMember(worktree)) {
+      return { success: false, error: groupMemberRefusal(worktree) };
+    }
+
     const sessionIds = await worktreeStore.getWorktreeSessions(worktreeId);
 
     // Already archived - but only skip if the directory is actually gone.
@@ -185,11 +227,26 @@ export async function archiveWorktree(worktreeId: string, workspacePath: string)
     // The queued removal refuses only after the terminals are gone and the
     // ref watcher is stopped, and it reports the refusal only on the
     // progress task.
+    //
+    // A group's members are removed first, each through its own repository,
+    // so every one of them must be removable before anything is torn down.
+    const groupMembers = isGroupAnchor(worktree)
+      ? (await worktreeStore.listGroupMembers(worktree.id)).filter(member => !member.isArchived)
+      : [];
     let refusal: Error | null = null;
     try {
-      refusal = await gitWorktreeService.checkWorktreeRemovable(worktree.path, worktreeRepoPath(worktree), {
+      const knownRepos = await listWorkspaceRepos(workspacePath);
+      for (const member of groupMembers) {
+        refusal = await gitWorktreeService.checkWorktreeRemovable(member.path, worktreeRepoPath(member), {
+          expectedBranch: member.branch,
+          knownRepos,
+        });
+        if (refusal) break;
+      }
+      refusal ??= await gitWorktreeService.checkWorktreeRemovable(worktree.path, worktreeRepoPath(worktree), {
         expectedBranch: worktree.branch,
-        knownRepos: await listWorkspaceRepos(workspacePath),
+        knownRepos,
+        ...(groupMembers.length > 0 && { removedFirst: groupMembers.map(member => member.path) }),
       });
     } catch (checkError) {
       // The queued removal checks again and refuses then if it must
@@ -226,6 +283,9 @@ export async function archiveWorktree(worktreeId: string, workspacePath: string)
 
     // Stop the git ref watcher for this worktree (it's being archived/deleted)
     await gitRefWatcher.stop(worktree.path);
+    for (const member of groupMembers) {
+      await gitRefWatcher.stop(member.path);
+    }
 
     // Step 2b: Delete terminals associated with this worktree
     // Terminals have a worktreeId field that links them to the worktree.
@@ -591,13 +651,9 @@ export function registerWorktreeHandlers(): void {
 
         // Look up the worktree to get the stored base branch
         const db = getDatabase();
-        let baseBranch: string | undefined;
-        if (db) {
-          const worktreeStore = createWorktreeStore(db);
-          const worktree = await worktreeStore.getByPath(worktreePath);
-          baseBranch = worktree?.baseBranch;
-          // logger.info('Found worktree base branch for status', { worktreePath, baseBranch: baseBranch || 'not found' });
-        }
+        const worktreeStore = db ? createWorktreeStore(db) : null;
+        const worktree = worktreeStore ? await worktreeStore.getByPath(worktreePath) : null;
+        const baseBranch = worktree?.baseBranch;
 
         // Fetch latest remote refs for accurate merge detection
         if (options?.fetchFirst && baseBranch) {
@@ -610,6 +666,22 @@ export function registerWorktreeHandlers(): void {
         }
 
         const status = await gitWorktreeService.getWorktreeStatus(worktreePath, baseBranch);
+
+        // A group answers for all its checkouts: the archive dialog archives
+        // without asking when this says clean and merged
+        if (worktreeStore && worktree && isGroupAnchor(worktree)) {
+          const members = (await worktreeStore.listGroupMembers(worktree.id)).filter(member => !member.isArchived);
+          const memberStatuses = await Promise.all(members.map(async member => ({
+            worktreeId: member.id,
+            path: member.path,
+            repoPath: worktreeRepoPath(member),
+            status: await gitWorktreeService.getWorktreeStatus(member.path, member.baseBranch).catch(error => {
+              logger.warn('Failed to read a worktree group member status', { error, path: member.path });
+              return null;
+            }),
+          })));
+          return { success: true, status: combineGroupStatus(status, memberStatuses) };
+        }
 
         return {
           success: true,
@@ -664,17 +736,49 @@ export function registerWorktreeHandlers(): void {
         throw new Error(`Worktree not found: ${worktreeId}`);
       }
 
+      if (isGroupMember(worktree)) {
+        throw new Error(groupMemberRefusal(worktree));
+      }
+
       // Delete the git worktree from the repo it was branched from, not the
       // workspace's primary root -- see the note in `worktreeArchiveCleanup`.
       const repoPath = worktree.sourceFolderPath || workspacePath;
       const knownRepos = await listWorkspaceRepos(workspacePath);
+      // A group's members go first, deepest first, each through its own
+      // repository; all of them are checked before anything changes
+      const groupMembers = isGroupAnchor(worktree) ? await worktreeStore.listGroupMembers(worktree.id) : [];
+      for (const member of groupMembers) {
+        const memberRefusal = await gitWorktreeService.checkWorktreeRemovable(member.path, worktreeRepoPath(member), {
+          expectedBranch: member.branch,
+          knownRepos,
+        });
+        if (memberRefusal) {
+          throw memberRefusal;
+        }
+      }
       const refusal = await gitWorktreeService.checkWorktreeRemovable(worktree.path, repoPath, {
         expectedBranch: worktree.branch,
         knownRepos,
+        ...(groupMembers.length > 0 && { removedFirst: groupMembers.map(member => member.path) }),
       });
       if (refusal) {
         // Before the ref watcher stops, which nothing would restart
         throw refusal;
+      }
+
+      if (groupMembers.length > 0) {
+        logger.info('Deleting worktree group members before the anchor', {
+          worktreeId,
+          members: groupMembers.map(member => member.path),
+        });
+      }
+      for (const member of groupMembers) {
+        await gitRefWatcher.stop(member.path);
+        await gitWorktreeService.deleteWorktree(member.path, worktreeRepoPath(member), {
+          expectedBranch: member.branch,
+          knownRepos,
+        });
+        await worktreeStore.delete(member.id);
       }
 
       // Stop the git ref watcher for this worktree
@@ -1240,6 +1344,10 @@ export function registerWorktreeHandlers(): void {
 
       logger.info('Merging worktree to main', { worktreePath, targetRepoPath });
 
+      await assertAnchorTreeSparesMembers(gitWorktreeService, worktreePath, [
+        { repoPath: worktreePath, refs: ['HEAD'] },
+        { repoPath: targetRepoPath, refs: ['HEAD'] },
+      ]);
       const result = await gitWorktreeService.mergeToMain(worktreePath, targetRepoPath);
 
       // Track merge attempt
@@ -1303,6 +1411,7 @@ export function registerWorktreeHandlers(): void {
         throw new Error('Worktree has no base branch stored');
       }
 
+      await assertAnchorTreeSparesMembers(gitWorktreeService, worktreePath, [{ repoPath: worktreePath, refs: ['HEAD', worktree.baseBranch] }]);
       const result = await gitWorktreeService.rebaseFromBase(worktreePath, worktree.baseBranch);
 
       // Track rebase attempt
@@ -1437,6 +1546,7 @@ export function registerWorktreeHandlers(): void {
 
       logger.info('Squashing commits', { worktreePath, commitCount: commitHashes.length });
 
+      await assertAnchorTreeSparesMembers(gitWorktreeService, worktreePath, [{ repoPath: worktreePath, refs: ['HEAD'] }]);
       const newCommitHash = await gitWorktreeService.squashCommits(worktreePath, commitHashes, message);
 
       return {
@@ -1602,7 +1712,9 @@ export function registerWorktreeHandlers(): void {
         throw new Error('worktreePath is required');
       }
 
-      const removed = await gitWorktreeService.cleanGitignoredFiles(worktreePath);
+      // A group's members sit in folders the anchor ignores
+      const members = await liveGroupMembersOf(worktreePath);
+      const removed = await gitWorktreeService.cleanGitignoredFiles(worktreePath, members.map(member => member.path));
 
       return { success: true, removed, count: removed.length };
     } catch (error) {

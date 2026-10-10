@@ -199,6 +199,12 @@ export interface DeleteWorktreeOptions {
    * refuse, since deleting the directory would delete that checkout too.
    */
   knownRepos?: readonly string[];
+  /**
+   * Checkouts the caller removes before this one, as a worktree group's
+   * members before its anchor. The foreign-checkout check skips them, so a
+   * preflight can ask about the anchor while its members are still there.
+   */
+  removedFirst?: readonly string[];
 }
 
 /**
@@ -853,10 +859,11 @@ export class GitWorktreeService {
   async checkWorktreeRemovable(
     worktreePath: string,
     workspacePath: string,
-    { expectedBranch, knownRepos }: DeleteWorktreeOptions = {}
+    { expectedBranch, knownRepos, removedFirst }: DeleteWorktreeOptions = {}
   ): Promise<WorktreeRemovalRefusedError | null> {
-    return (await this.planRemoval(worktreePath, workspacePath, gitFor(workspacePath), expectedBranch, knownRepos))
-      .refusal;
+    return (await this.planRemoval(
+      worktreePath, workspacePath, gitFor(workspacePath), expectedBranch, knownRepos, removedFirst
+    )).refusal;
   }
 
   /**
@@ -871,7 +878,8 @@ export class GitWorktreeService {
     workspacePath: string,
     git: SimpleGit,
     expectedBranch: string | undefined,
-    knownRepos: readonly string[] = []
+    knownRepos: readonly string[] = [],
+    removedFirst: readonly string[] = []
   ): Promise<RemovalAssessment> {
     const worktreeKey = canonicalWorktreePath(worktreePath);
     const existsOnDisk = fs.existsSync(worktreePath);
@@ -898,7 +906,7 @@ export class GitWorktreeService {
       )?.path ?? null
       : null;
     const foreignCheckout = existsOnDisk && nestedWorktreePath === null && commonDir
-      ? await this.findForeignCheckout(worktreeKey, commonDir, knownRepos)
+      ? await this.findForeignCheckout(worktreeKey, commonDir, knownRepos, removedFirst)
       : null;
     let gitLink: WorktreeGitLink | null = null;
     if (existsOnDisk && commonDir) {
@@ -1130,8 +1138,10 @@ export class GitWorktreeService {
   private async findForeignCheckout(
     worktreeKey: string,
     commonDir: string,
-    knownRepos: readonly string[]
+    knownRepos: readonly string[],
+    removedFirst: readonly string[] = []
   ): Promise<{ path: string; repository: string } | null> {
+    const skipped = new Set(removedFirst.map(checkout => canonicalWorktreePath(checkout)));
     for (const repository of knownRepos) {
       const git = gitFor(repository);
       const repoCommonDir = await this.readCommonDir(repository, git);
@@ -1146,7 +1156,9 @@ export class GitWorktreeService {
         checkouts = [repository];
       }
       const inside = checkouts.find(checkout =>
-        isWorktreePathInside(canonicalWorktreePath(checkout), worktreeKey) && fs.existsSync(checkout)
+        isWorktreePathInside(canonicalWorktreePath(checkout), worktreeKey) &&
+        !skipped.has(canonicalWorktreePath(checkout)) &&
+        fs.existsSync(checkout)
       );
       if (inside) {
         return { path: inside, repository };
@@ -3163,14 +3175,46 @@ ${newLines.map(line => '+' + line).join('\n')}`;
   }
 
   /**
+   * The first file under `paths` (relative to the repository root) that one
+   * of `refs` tracks, or null when none does. A worktree group's anchor must
+   * not merge, rebase or squash a tree that tracks files where its members'
+   * checkouts sit: git would write them into those checkouts.
+   */
+  async findTrackedPath(
+    repoPath: string,
+    refs: readonly string[],
+    paths: readonly string[]
+  ): Promise<{ ref: string; path: string } | null> {
+    if (paths.length === 0) return null;
+    const git = gitFor(repoPath);
+    for (const ref of refs) {
+      const output = await git.raw(['ls-tree', '-r', '--name-only', ref, '--', ...paths]);
+      const tracked = output.split('\n').find(line => line.length > 0);
+      if (tracked) {
+        return { ref, path: tracked };
+      }
+    }
+    return null;
+  }
+
+  /**
    * Remove all gitignored files from a worktree, skipping preserved paths.
    * Gets the full list via dry-run, filters out preserved paths, then removes
    * only the safe paths by passing them as explicit pathspecs.
    */
-  async cleanGitignoredFiles(worktreePath: string): Promise<string[]> {
+  async cleanGitignoredFiles(worktreePath: string, keep: readonly string[] = []): Promise<string[]> {
     if (!worktreePath) {
       throw new Error('worktreePath is required');
     }
+    // Checkouts that must survive, as a worktree group's members: git reports
+    // an ignored folder holding one as a single entry, so its parents stay too
+    const kept = keep.map(checkout => path.relative(worktreePath, checkout).split(path.sep).join('/'));
+    const holdsKept = (entry: string) => {
+      const relative = entry.replace(/\/$/, '');
+      return kept.some(checkout =>
+        checkout === relative || checkout.startsWith(`${relative}/`) || relative.startsWith(`${checkout}/`)
+      );
+    };
 
     return gitOperationLock.withLock(worktreePath, 'cleanGitignoredFiles', async () => {
       logger.info('Cleaning gitignored files from worktree', { worktreePath });
@@ -3183,10 +3227,10 @@ ${newLines.map(line => '+' + line).join('\n')}`;
 
       // Parse and filter out preserved paths
       const allPaths = dryRun.trim().split('\n')
-        .filter(line => line.trim().length > 0)
+        .filter(line => line.startsWith('Would remove '))
         .map(line => line.replace(/^Would remove /, ''));
 
-      const toRemove = allPaths.filter(p => !GitWorktreeService.isPreservedPath(p));
+      const toRemove = allPaths.filter(p => !GitWorktreeService.isPreservedPath(p) && !holdsKept(p));
       if (toRemove.length === 0) return [];
 
       logger.info('Removing gitignored files', {

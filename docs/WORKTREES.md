@@ -44,6 +44,17 @@ CREATE INDEX idx_worktrees_workspace ON worktrees(workspace_id);
 CREATE INDEX idx_worktrees_path ON worktrees(path);
 ```
 
+Later migrations added `display_name`, `is_pinned`, `is_archived`, `source_folder_path`, the `pr_*` columns and `group_id`.
+
+#### Worktree groups (`group_id`)
+
+A group is one task folder holding several repositories' worktrees: the **anchor** is a worktree of the project's repository, and each **member** is a worktree of another repository at that repository's own path inside the anchor. The anchor's `group_id` is its own `id`; each member's is the anchor's; ordinary worktrees leave it NULL (partial index `idx_worktrees_group`).
+
+- `WorktreeStore.list()` returns the anchor only; `listGroupMembers(anchorId)` returns members deepest path first.
+- Sessions bind to the anchor. `worktree:get-status` on an anchor folds every member in: dirty if any is dirty, merged only if all are.
+- Archive and delete check every member through its own repository before anything is torn down, remove members deepest first, then the anchor, and stop at the first failure with the anchor left in place. A member cannot be archived or deleted on its own.
+- Merge, rebase and squash of an anchor refuse when a ref involved tracks files under a member path; cleaning ignored files skips member checkouts.
+
 ### ai_sessions Table (Worktree Association)
 
 The `ai_sessions` table includes a foreign key to associate sessions with worktrees.
