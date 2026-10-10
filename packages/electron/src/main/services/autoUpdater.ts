@@ -24,6 +24,11 @@ import { installAtomFeedFilter } from './electronUpdaterPatch';
 // (which is the first thing that triggers electron-updater to read the feed).
 installAtomFeedFilter();
 
+// A self-built package (a fork or a local build) sets NIMBALYST_DISABLE_AUTO_UPDATE=1
+// when it is built; electron-vite bakes the value in. Without it, the official
+// release feed would download over the package and install on the next quit.
+const AUTO_UPDATE_DISABLED = process.env.NIMBALYST_DISABLE_AUTO_UPDATE === '1';
+
 // Re-export the pure utilities so callers that already pulled them from this
 // module keep working. Unit tests should import from `autoUpdaterUtils`
 // directly to avoid the Electron app-global load chain.
@@ -67,8 +72,8 @@ export class AutoUpdaterService {
     // Configure auto-updater. autoDownload=true: both background polls and the
     // manual "Check for Updates" trigger download immediately, then surface a
     // single "Ready to install" toast. Per maintainer direction on #327.
-    autoUpdater.autoDownload = true;
-    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.autoDownload = !AUTO_UPDATE_DISABLED;
+    autoUpdater.autoInstallOnAppQuit = !AUTO_UPDATE_DISABLED;
 
     // Configure feed URL based on release channel
     this.configureFeedURL();
@@ -411,6 +416,7 @@ export class AutoUpdaterService {
 
   private setupIpcHandlers() {
     safeHandle('check-for-updates', async () => {
+      if (AUTO_UPDATE_DISABLED) return null;
       if (this.isCheckingForUpdate) {
         return { checking: true };
       }
@@ -425,6 +431,7 @@ export class AutoUpdaterService {
     });
 
     safeHandle('download-update', async () => {
+      if (AUTO_UPDATE_DISABLED) return { success: false };
       try {
         await autoUpdater.downloadUpdate();
         return { success: true };
@@ -574,6 +581,11 @@ export class AutoUpdaterService {
   }
 
   public startAutoUpdateCheck(intervalMinutes = 60) {
+    if (AUTO_UPDATE_DISABLED) {
+      log.info('Auto-update is turned off in this build');
+      return;
+    }
+
     // Initial check after 30 seconds
     setTimeout(() => {
       this.checkForUpdates();
@@ -597,6 +609,7 @@ export class AutoUpdaterService {
   }
 
   public async checkForUpdates() {
+    if (AUTO_UPDATE_DISABLED) return;
     if (this.isCheckingForUpdate) {
       log.info('Already checking for updates, skipping...');
       return;
@@ -613,6 +626,11 @@ export class AutoUpdaterService {
   public async checkForUpdatesWithUI() {
     if (this.isCheckingForUpdate) {
       // Already checking, don't show anything - the checking toast is already visible
+      return;
+    }
+
+    if (AUTO_UPDATE_DISABLED) {
+      this.sendToFrontmostWindow('update-toast:error', { message: 'Updates are turned off in this build' });
       return;
     }
 

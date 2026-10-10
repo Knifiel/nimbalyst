@@ -294,6 +294,8 @@ const config = {
     define: {
       'process.env.OFFICIAL_BUILD': JSON.stringify(isOfficialBuild ? 'true' : 'false'),
       'process.env.IS_DEV_MODE': JSON.stringify(isDevMode ? 'true' : 'false'),
+      // Baked in so a self-built package never takes official updates (autoUpdater.ts).
+      'process.env.NIMBALYST_DISABLE_AUTO_UPDATE': JSON.stringify(process.env.NIMBALYST_DISABLE_AUTO_UPDATE === '1' ? '1' : ''),
       // Note: RUN_ONE_DEV_MODE is intentionally NOT defined here.
       // The main process reads it from the actual runtime environment via process.env.
       // This allows crystal-run.sh to set it at runtime without affecting normal dev mode.
