@@ -142,9 +142,10 @@ Twelve built-in provider lanes, plus any agent an extension contributes. Every l
 
 ## Git Worktrees
 
-- Create isolated worktrees for AI coding sessions (Cmd+Alt+W uses a generated name; the new-worktree dialog also takes a typed name, which becomes the branch `worktree/<name>` exactly)
+- Create isolated worktrees for AI coding sessions (Cmd+Alt+W opens the new-worktree dialog; a typed name becomes the branch `worktree/<name>` exactly, a blank one is generated)
 - Worktree groups: in a project whose repository holds nested clones, the new-worktree dialog lists them to tick; the project's repository plus clones gives one task folder with a worktree of each clone at its own path, all on one branch, with a repository picker in the Git panel for committing, merging and rebasing each checkout, archived or deleted as a unit; one clone alone gets its own worktree beside the project
 - Worktree setup per project (Settings > Project > Worktree Setup, developer mode): files copied from the project into each new worktree without overwriting, then a command run in a terminal of the worktree
+- Agent-spawned worktrees (`spawn_session` with `useWorktree`) hold the repositories last chosen in the new-worktree dialog, or the ones the agent names, run the project's worktree setup, and start the new session once the setup command finishes
 - Multiple sessions per worktree
 - Merge worktree into base branch
 - Rebase onto base branch

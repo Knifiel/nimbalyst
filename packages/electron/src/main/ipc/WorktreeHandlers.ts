@@ -25,15 +25,8 @@ import { gitRefWatcher } from '../file/GitRefWatcher';
 import { isGitRepositoryInUse } from '../file/GitWatcherLifecycle';
 import { listReposForRoot, listWorkspaceRepos, resolveDefaultRepo } from '../services/workspaceRepos';
 import { resolveWorktreesDir } from '../services/worktreeLocation';
-import { getWorkspaceRoots, getWorkspaceState } from '../utils/store';
-import { createWorkspaceTerminal } from './TerminalHandlers';
-import {
-  copyWorktreeSetupFiles,
-  normalizeWorktreeSetup,
-  planWorktreeSetupCopies,
-  worktreeSetupEnv,
-  type WorktreeSetupLayout,
-} from '../services/worktreeSetup';
+import { getWorkspaceRoots } from '../utils/store';
+import { emitTerminalListChanged, relativeInside, runWorktreeSetup } from '../services/worktreeProvisioning';
 import type { WorktreeCreateResult } from '../../shared/ipc/types';
 import { gitOperationLock } from '../services/GitOperationLock';
 import fs from 'node:fs';
@@ -75,85 +68,6 @@ function emitGitStatusChanged(workspacePath: string): void {
     if (!window.isDestroyed()) {
       window.webContents.send('git:status-changed', { workspacePath });
     }
-  }
-}
-
-/**
- * Emit terminal list changed event to all windows
- * Used when terminals are deleted (e.g., when archiving a worktree)
- */
-function emitTerminalListChanged(workspacePath: string): void {
-  const windows = BrowserWindow.getAllWindows();
-  for (const window of windows) {
-    if (!window.isDestroyed()) {
-      window.webContents.send('terminal:list-changed', { workspacePath });
-    }
-  }
-}
-
-/** `child` relative to `parent` with forward slashes, or null when it is not strictly inside */
-function relativeInside(parent: string, child: string): string | null {
-  const relative = path.relative(path.resolve(parent), path.resolve(child));
-  return relative && !relative.startsWith('..') && !path.isAbsolute(relative)
-    ? relative.split(path.sep).join('/')
-    : null;
-}
-
-/**
- * The project's setup step for a new worktree: configured files copied in,
- * then the configured command run in a terminal of the worktree. Runs after
- * creation returns and never fails it; problems are logged.
- */
-async function runWorktreeSetup(input: {
-  workspacePath: string;
-  worktree: Pick<Worktree, 'id' | 'path' | 'name' | 'branch'>;
-  layout: WorktreeSetupLayout;
-}): Promise<void> {
-  const { workspacePath, worktree, layout } = input;
-  try {
-    const setup = normalizeWorktreeSetup(getWorkspaceState(workspacePath).worktreeSetup);
-    if (setup.copy.length === 0 && !setup.command) return;
-    const nestedClones = (await listWorkspaceRepos(workspacePath))
-      .map(repo => relativeInside(workspacePath, repo))
-      .filter((relative): relative is string => relative !== null);
-    const plan = planWorktreeSetupCopies({
-      projectPath: workspacePath,
-      taskRoot: worktree.path,
-      layout,
-      nestedClones,
-      copy: setup.copy,
-    });
-    // The command still runs when copying fails: an install does not need every file
-    try {
-      const copied = copyWorktreeSetupFiles(workspacePath, plan);
-      logger.info('Worktree setup copied files', { worktreeId: worktree.id, copied: copied.length, skipped: plan.skipped.length });
-    } catch (copyError) {
-      logger.error('Worktree setup could not copy files', { worktreeId: worktree.id, error: copyError });
-    }
-    if (setup.command) {
-      const result = await createWorkspaceTerminal({
-        workspacePath,
-        cwd: worktree.path,
-        worktreeId: worktree.id,
-        title: 'Worktree setup',
-        source: 'worktree',
-        env: worktreeSetupEnv({
-          worktreePath: worktree.path,
-          name: worktree.name,
-          branch: worktree.branch,
-          projectPath: workspacePath,
-          groupMembers: layout.kind === 'project' ? layout.members : [],
-        }),
-        initialCommand: setup.command,
-      });
-      if (result.success) {
-        emitTerminalListChanged(workspacePath);
-      } else {
-        logger.warn('Worktree setup could not open its terminal', { worktreeId: worktree.id, error: result.error });
-      }
-    }
-  } catch (error) {
-    logger.error('Worktree setup failed', { worktreeId: worktree.id, error });
   }
 }
 

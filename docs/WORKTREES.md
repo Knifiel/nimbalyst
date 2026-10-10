@@ -241,6 +241,16 @@ interface WorktreeSingleProps {
 7. `SessionManager` passes `worktreePath` to `ClaudeCodeProvider`
 8. Claude Code operations execute in the worktree directory
 
+### Worktrees created by agents
+
+An agent's `spawn_session` with `useWorktree: true` creates its worktree through `services/worktreeProvisioning.ts`, the same code the dialog's `worktree:create-group` and `worktree:create` use for the setup step:
+
+- **Repositories:** `resolveAgentWorktreeRepos` (`services/agentWorktreeRepos.ts`) takes the clones the agent names in `repos`, or else the user's last group choice in the dialog (`worktreeRepoSelection` in workspace state). Otherwise it is a worktree of the project repository alone.
+- **Setup step:** files copied, then the setup command in a terminal tied to the anchor.
+- **Start:** the child's first prompt is queued only when the setup terminal's command finishes (`TerminalSessionManager.waitForCommandToFinish`, from the shell's OSC 998 command marks). A shell that reports no command state within two minutes, or a command that runs past 30 minutes, starts the child anyway. A prompt still waiting when the app quits is not queued.
+
+`MetaAgentService` receives the provisioner at startup (`setWorktreeProvisioner` in `index.ts`), which keeps git, terminal and database imports out of it.
+
 ### Session-Worktree Association
 
 When creating a session with worktree:

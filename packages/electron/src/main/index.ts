@@ -156,6 +156,7 @@ import { registerDatabaseBrowserSqliteHandlers } from './ipc/DatabaseBrowserSqli
 import { registerMigrationHandlers } from './ipc/MigrationHandlers';
 import { registerRecoveryHandlers } from './ipc/RecoveryHandlers';
 import { registerTerminalHandlers, shutdownTerminalHandlers } from './ipc/TerminalHandlers';
+import { agentWorktreeProvisioner } from './services/worktreeProvisioning';
 import { AIService } from './services/ai/AIService';
 import { detectFileWorkspace, suggestWorkspaceForFile, getAdditionalDirectoriesForWorkspace } from './utils/workspaceDetection';
 import { getAgentGitContext } from './utils/gitAgentContext';
@@ -3061,6 +3062,7 @@ app.whenReady().then(async () => {
 
     try {
         const metaAgentService = MetaAgentService.getInstance();
+        metaAgentService.setWorktreeProvisioner(agentWorktreeProvisioner);
         await metaAgentService.start(
             aiService,
             (options) => notificationService.showNotificationWithResult(options),

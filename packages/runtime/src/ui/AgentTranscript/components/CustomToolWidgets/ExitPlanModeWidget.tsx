@@ -126,8 +126,8 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
     }
   }, [host, requestId, hasResponded, isPending]);
 
-  // Handle start new session
-  const handleStartNewSession = useCallback(async () => {
+  // Handle start new session, in this checkout or in a new worktree
+  const startImplementationSession = useCallback(async (inWorktree: boolean) => {
     if (hasResponded || !isPending || !host) return;
 
     setIsSubmitting(true);
@@ -137,7 +137,11 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
     setHasResponded(true);
 
     try {
-      await host.exitPlanModeStartNewSession(requestId, planFilePath);
+      if (inWorktree && host.exitPlanModeStartWorktreeSession) {
+        await host.exitPlanModeStartWorktreeSession(requestId, planFilePath);
+      } else {
+        await host.exitPlanModeStartNewSession(requestId, planFilePath);
+      }
     } catch (error) {
       console.error('[ExitPlanModeWidget] Failed to start new session:', error);
       setLocalResult(null);
@@ -146,6 +150,9 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
       setIsSubmitting(false);
     }
   }, [host, requestId, planFilePath, hasResponded, isPending]);
+  const handleStartNewSession = useCallback(() => startImplementationSession(false), [startImplementationSession]);
+  const handleStartWorktreeSession = useCallback(() => startImplementationSession(true), [startImplementationSession]);
+  const offersWorktree = !!host?.exitPlanModeStartWorktreeSession;
 
   // Handle deny with feedback
   const handleDeny = useCallback(async (feedbackText?: string) => {
@@ -352,13 +359,24 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
             <span className="text-nim-muted mr-2">1.</span>
             Yes, start new session and implement (clean context window)
           </button>
+          {offersWorktree && (
+            <button
+              data-testid="exit-plan-mode-new-worktree"
+              className="w-full px-4 py-2 rounded-md text-[13px] font-medium cursor-pointer border border-nim transition-colors duration-150 hover:bg-nim-hover active:opacity-80 bg-nim-tertiary text-nim text-left disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={handleStartWorktreeSession}
+              disabled={isSubmitting}
+            >
+              <span className="text-nim-muted mr-2">2.</span>
+              Yes, implement in a new worktree (starts once its setup finishes)
+            </button>
+          )}
           <button
             data-testid="exit-plan-mode-approve"
             className="w-full px-4 py-2 rounded-md text-[13px] font-medium cursor-pointer border border-nim transition-colors duration-150 hover:bg-nim-hover active:opacity-80 bg-nim-tertiary text-nim text-left disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleApprove}
             disabled={isSubmitting}
           >
-            <span className="text-nim-muted mr-2">2.</span>
+            <span className="text-nim-muted mr-2">{offersWorktree ? 3 : 2}.</span>
             Yes, proceed in this same session
           </button>
           {!showFeedbackInput ? (
@@ -368,7 +386,7 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
               onClick={handleShowFeedbackInput}
               disabled={isSubmitting}
             >
-              <span className="text-nim-muted mr-2">3.</span>
+              <span className="text-nim-muted mr-2">{offersWorktree ? 4 : 3}.</span>
               Type here to tell Claude what to change
             </button>
           ) : (
@@ -412,7 +430,7 @@ export const ExitPlanModeWidget: React.FC<CustomToolWidgetProps> = ({
             onClick={handleCancel}
             disabled={isSubmitting}
           >
-            <span className="text-nim-muted mr-2">4.</span>
+            <span className="text-nim-muted mr-2">{offersWorktree ? 5 : 4}.</span>
             Stop for now
           </button>
         </div>

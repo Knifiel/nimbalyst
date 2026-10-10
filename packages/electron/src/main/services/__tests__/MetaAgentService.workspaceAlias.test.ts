@@ -157,6 +157,7 @@ vi.mock('../ai/claudeCliLauncherSingleton', () => ({
 
 import { AISessionsRepository } from '@nimbalyst/runtime/storage/repositories/AISessionsRepository';
 import { MetaAgentService } from '../MetaAgentService';
+import { GitWorktreeService } from '../GitWorktreeService';
 import { clearWorktreeIdentityCache, resolveProjectPath } from '../../utils/workspaceDetection';
 import { setMetaAgentToolFns } from '../../mcp/metaAgentServer';
 
@@ -259,6 +260,13 @@ describe('MetaAgentService workspace-alias resolution (#1551)', () => {
     };
     service = MetaAgentService.getInstance();
     service.aiService = aiService;
+    // The real provisioner adds the user's repositories and the setup step; here
+    // only the checkout matters.
+    service.setWorktreeProvisioner({
+      create: async ({ workspacePath, name }: { workspacePath: string; name: string }) =>
+        ({ worktree: await new GitWorktreeService().createWorktree(workspacePath, { name }) }),
+      waitForSetup: async () => 'finished',
+    });
   });
 
   afterEach(() => {
