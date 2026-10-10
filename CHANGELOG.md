@@ -34,6 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - In a project spanning several repositories, the title-bar branch, the Git operations panel and the new-worktree dialog follow the file open in the editor instead of always using the first repository
 - An agent session in a worktree can read and edit the folders attached to its project, which it previously could not reach
 - Files @-mentioned to chat providers without file tools are read from attached folders too, and no longer from a sibling folder whose name starts with the project's
+- Cmd+Alt+W (Ctrl+Alt+W on Windows and Linux) now opens the new-worktree dialog, like the New Worktree menu item it is shown next to, instead of creating a worktree with a generated name
+- Windows updates no longer fail with "Command failed ... Get-AuthenticodeSignature" when checking the downloaded installer's signature takes longer than 20 seconds
+- Clicking a link to another Local wiki page in the Wiki now opens that page in the same tab instead of switching to Files
+- Local wiki pages an agent edited now open in the Wiki with the edit applied instead of in red/green review
+- Removing a project's last slash command or action prompt on the desktop now removes it on the phone too
+- The iOS session list now shows an error when the device's database can't be read, instead of an empty list
+- The desktop no longer fails to refresh its sign-in every 30 seconds when its saved sync server address is malformed
+- A Local wiki type file written as the wiki format describes, without `icon`, `color`, `modes` or `idPrefix`, now loads; a type file that still fails to load shows in the Local section with the reason instead of its tables and typed pages silently disappearing
 
 ### Removed
 <!-- Removed features go here -->

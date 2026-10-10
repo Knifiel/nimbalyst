@@ -2104,7 +2104,6 @@ export default function App() {
     setActiveMode,
     activeModeStateRef,
     editorModeRef,
-    agentModeRef,
     toggleAgentCollapsed,
     toggleActiveLeftPane,
     openHistoryForCurrentDocument,
