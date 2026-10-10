@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
     create: vi.fn().mockResolvedValue(undefined),
     linkPullRequest: vi.fn().mockResolvedValue(undefined),
     get: vi.fn(),
+    getAllPaths: vi.fn().mockResolvedValue(new Set(['/work_worktrees/old'])),
   },
   git: {
     branchLocal: vi.fn().mockResolvedValue({ all: [] }),
@@ -48,7 +49,7 @@ vi.mock('../../database/initialize', () => ({ getDatabase: () => ({}) }));
 vi.mock('../../services/workspaceRepos', () => ({
   listWorkspaceRepos: async () => ['/work', '/work/api'],
 }));
-vi.mock('../../utils/store', () => ({}));
+vi.mock('../../utils/store', () => ({ getWorkspaceRoots: (workspacePath: string) => [workspacePath] }));
 vi.mock('../../services/GithubServices', () => ({
   getGithubApiService: vi.fn(),
   getGithubPollScheduler: vi.fn(),
@@ -56,6 +57,10 @@ vi.mock('../../services/GithubServices', () => ({
   stopGithubPollScheduler: vi.fn(),
 }));
 vi.mock('../../services/PrTrackerLifecycle', () => ({ applyPrMergeToTrackers: vi.fn() }));
+// The placement rule has its own real-git tests; here only its use is checked
+vi.mock('../../services/worktreeLocation', () => ({
+  resolveWorktreesDir: (repo: string, roots: string[]) => (repo !== roots[0] ? `${roots[0]}_worktrees` : `${repo}_worktrees`),
+}));
 
 import { registerPullRequestHandlers } from '../PullRequestHandlers';
 
@@ -92,7 +97,12 @@ describe('the GitHub panel on one of the workspace\'s repositories', () => {
     expect(result.success).toBe(true);
     expect(mocks.simpleGit).toHaveBeenCalledWith('/work/api');
     expect(mocks.git.fetch).toHaveBeenCalledWith('origin', 'pull/7/head:pr-7');
-    expect(mocks.createWorktree).toHaveBeenCalledWith('/work/api', expect.objectContaining({ baseBranch: 'pr-7' }));
+    // A clone nested in the project gets its worktrees beside the project
+    expect(mocks.createWorktree).toHaveBeenCalledWith('/work/api', expect.objectContaining({
+      baseBranch: 'pr-7',
+      worktreesDir: '/work_worktrees',
+      takenPaths: new Set(['/work_worktrees/old']),
+    }));
     expect(mocks.store.create).toHaveBeenCalledWith(expect.objectContaining({
       projectPath: '/work',
       sourceFolderPath: '/work/api',

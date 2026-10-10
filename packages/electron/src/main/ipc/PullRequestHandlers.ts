@@ -33,12 +33,14 @@ import { gitOperationLock } from '../services/GitOperationLock';
 import { gitRefWatcher } from '../file/GitRefWatcher';
 import { getDatabase } from '../database/initialize';
 import { listWorkspaceRepos } from '../services/workspaceRepos';
+import { resolveWorktreesDir } from '../services/worktreeLocation';
 import {
   getEffectiveGhAccount,
   getPrReviewDefaultGhAccount,
   setPrReviewDefaultGhAccount,
   getPrReviewGhAccountOverride,
   savePrReviewGhAccountOverride,
+  getWorkspaceRoots,
 } from '../utils/store';
 import {
   getGithubApiService as getService,
@@ -603,9 +605,13 @@ export function registerPullRequestHandlers(): void {
 
         // Create the worktree on a branch based off the fetched PR head, then
         // persist + start the ref watcher (mirrors worktree:create).
+        // Beside the project for a clone nested in it, and never on a path a
+        // worktree row already records (see worktree:create)
         const created = await gitWorktreeService.createWorktree(sourceRepo, {
           name: `pr-${number}`,
           baseBranch: branchName,
+          takenPaths: await worktreeStore.getAllPaths(),
+          worktreesDir: resolveWorktreesDir(sourceRepo, getWorkspaceRoots(workspacePath)),
         });
         const worktree = { ...created, projectPath: workspacePath, sourceFolderPath: sourceRepo };
         await worktreeStore.create(worktree);
