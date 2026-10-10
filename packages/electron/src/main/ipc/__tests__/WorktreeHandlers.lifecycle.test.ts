@@ -212,6 +212,17 @@ describe('worktree groups', () => {
     expect(mocks.archiveSessions).not.toHaveBeenCalled();
   });
 
+  it('lists a group as its anchor and live members, and any other worktree as itself', async () => {
+    mocks.store.get.mockResolvedValue(anchor);
+    mocks.store.listGroupMembers.mockResolvedValue([member, { ...member, id: 'old', isArchived: true }]);
+    expect((await mocks.handlers.get('worktree:list-group')!({}, 'task')).worktrees.map((w: { id: string }) => w.id))
+      .toEqual(['task', 'api']);
+
+    mocks.store.get.mockResolvedValue({ ...anchor, id: 'plain', groupId: undefined });
+    expect((await mocks.handlers.get('worktree:list-group')!({}, 'plain')).worktrees.map((w: { id: string }) => w.id))
+      .toEqual(['plain']);
+  });
+
   it('deletes members through their own repositories before the anchor, whose check skips them', async () => {
     mocks.store.get.mockResolvedValue(anchor);
     mocks.store.listGroupMembers.mockResolvedValue([member]);

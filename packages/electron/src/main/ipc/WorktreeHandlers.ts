@@ -495,6 +495,34 @@ export function registerWorktreeHandlers(): void {
    * worktree of each chosen nested clone at the clone's own path inside it.
    * Returns the anchor, which sessions bind to.
    */
+  /**
+   * The checkouts of the group `worktreeId` anchors: the anchor first, then
+   * its live members. A worktree that anchors no group answers with itself
+   * alone, so callers need no special case.
+   */
+  ipcMain.handle('worktree:list-group', async (_event, worktreeId: string) => {
+    try {
+      if (!worktreeId) {
+        throw new Error('worktreeId is required');
+      }
+      const db = getDatabase();
+      if (!db) {
+        throw new Error('Database not initialized');
+      }
+      const worktreeStore = createWorktreeStore(db);
+      const worktree = await worktreeStore.get(worktreeId);
+      if (!worktree) {
+        throw new Error(`Worktree not found: ${worktreeId}`);
+      }
+      const members = isGroupAnchor(worktree)
+        ? (await worktreeStore.listGroupMembers(worktree.id)).filter(member => !member.isArchived)
+        : [];
+      return { success: true, worktrees: [worktree, ...members] };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to list the worktree group' };
+    }
+  });
+
   ipcMain.handle('worktree:create-group', async (
     _event,
     workspacePath: string,

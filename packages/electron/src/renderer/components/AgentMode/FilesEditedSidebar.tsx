@@ -54,6 +54,7 @@ import { workspaceRootPathsAtom } from '../../store/atoms/fileTree';
 import { isPathInWorkspace } from '../../../shared/pathUtils';
 import { FilesScopeDropdown } from './FilesScopeDropdown';
 import { GitOperationsPanel } from './GitOperationsPanel';
+import { WorktreeGroupCheckoutPicker, useWorktreeGroupCheckouts } from './WorktreeGroupCheckoutPicker';
 import { TodoPanel } from './TodoPanel';
 import { TaskListPanel } from './TaskListPanel';
 import { TeammatePanel } from './TeammatePanel';
@@ -119,6 +120,10 @@ export const FilesEditedSidebar: React.FC<FilesEditedSidebarProps> = React.memo(
   isGitRepo = false,
 }) => {
   const effectiveWorkspacePath = worktreePath || workspacePath;
+  const groupCheckouts = useWorktreeGroupCheckouts(worktreeId ?? null);
+  const [selectedCheckoutId, setSelectedCheckoutId] = useState<string | null>(null);
+  useEffect(() => { setSelectedCheckoutId(null); }, [worktreeId]);
+  const selectedCheckout = groupCheckouts.find(checkout => checkout.id === selectedCheckoutId && checkout.id !== worktreeId) ?? null;
   // Get all session IDs in this workstream (must be declared before useEffects that use it)
   const workstreamSessions = useAtomValue(workstreamSessionsAtom(workstreamId));
   const hasMultipleSessions = workstreamSessions.length > 1;
@@ -663,14 +668,24 @@ export const FilesEditedSidebar: React.FC<FilesEditedSidebarProps> = React.memo(
         </div>
       </div>
 
+      {/* A worktree group's checkouts: the Git panel works on the chosen one */}
+      {groupCheckouts.length > 1 && (
+        <WorktreeGroupCheckoutPicker
+          checkouts={groupCheckouts}
+          selectedId={selectedCheckout?.id ?? worktreeId ?? null}
+          onSelect={setSelectedCheckoutId}
+        />
+      )}
+
       {/* Git Operations Panel */}
       <GitOperationsPanel
         workspacePath={workspacePath}
         workstreamId={workstreamId}
         sessionId={activeSessionId || workstreamId}
         editedFiles={editedFilePaths}
-        worktreeId={worktreeId}
-        worktreePath={worktreePath}
+        worktreeId={selectedCheckout?.id ?? worktreeId}
+        worktreePath={selectedCheckout?.path ?? worktreePath}
+        archiveWorktreeId={worktreeId}
         onWorktreeArchived={onWorktreeArchived}
         onFileClick={onFileClick}
       />
