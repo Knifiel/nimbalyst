@@ -103,6 +103,8 @@ export interface TerminalOptions {
   rows?: number;
   /** Workspace path for store lookups */
   workspacePath?: string;
+  /** Extra variables for the shell, such as a worktree setup command's */
+  env?: Record<string, string>;
 }
 
 export interface TerminalProcess {
@@ -808,6 +810,9 @@ export class TerminalSessionManager {
 
     if (bootstrapConfig?.env) {
       Object.assign(spawnEnv, bootstrapConfig.env);
+    }
+    if (options.env) {
+      Object.assign(spawnEnv, options.env);
     }
 
     // Filter out any undefined/null/empty args to prevent shell errors

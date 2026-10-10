@@ -45,6 +45,7 @@ import { ToolsMcpPanel } from './panels/ToolsMcpPanel';
 import { CloudflareSandboxesPanel } from './panels/CloudflareSandboxesPanel';
 import { ClaudeCodePluginsPanel } from '../GlobalSettings/panels/ClaudeCodePluginsPanel';
 import { ProjectPermissionsPanel } from './panels/ProjectPermissionsPanel';
+import { WorktreeSetupPanel } from './panels/WorktreeSetupPanel';
 import { ProviderOverrideWrapper } from './panels/ProviderOverrideWrapper';
 import { InstalledExtensionsPanel } from './panels/InstalledExtensionsPanel';
 import { PrivilegedExtensionsPanel } from './panels/PrivilegedExtensionsPanel';
@@ -1040,6 +1041,10 @@ export function SettingsView({
       case 'project-trackers':
       case 'tracker-config':
         return <TrackerConfigPanel workspacePath={workspacePath ?? undefined} />;
+      case 'project-worktree-setup':
+        return workspacePath
+          ? <WorktreeSetupPanel workspacePath={workspacePath} workspaceName={workspaceName ?? 'this project'} />
+          : <p className="text-sm text-[var(--nim-text-muted)]">Open a local project to configure worktree setup.</p>;
       case 'project-ai-providers':
         return workspacePath
           ? <ProjectAIProvidersPanel workspacePath={workspacePath} workspaceName={workspaceName ?? 'this project'} />

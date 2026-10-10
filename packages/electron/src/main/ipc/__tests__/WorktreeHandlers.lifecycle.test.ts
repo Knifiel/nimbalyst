@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   start: vi.fn().mockResolvedValue(undefined),
   stop: vi.fn().mockResolvedValue(undefined),
   inUse: true,
+  workspaceState: {} as Record<string, unknown>,
+  createWorkspaceTerminal: vi.fn().mockResolvedValue({ success: true }),
 }));
 vi.mock('electron', () => ({
   ipcMain: { handle: (name: string, fn: (...args: any[]) => Promise<any>) => mocks.handlers.set(name, fn) },
@@ -53,7 +55,11 @@ vi.mock('../../services/workspaceRepos', () => ({
   listWorkspaceRepos: () => ['/project', '/collab'],
   resolveDefaultRepo: () => null,
 }));
-vi.mock('../../utils/store', () => ({ getWorkspaceRoots: (workspacePath: string) => [workspacePath] }));
+vi.mock('../../utils/store', () => ({
+  getWorkspaceRoots: (workspacePath: string) => [workspacePath],
+  getWorkspaceState: () => mocks.workspaceState,
+}));
+vi.mock('../TerminalHandlers', () => ({ createWorkspaceTerminal: mocks.createWorkspaceTerminal }));
 vi.mock('../../services/GitOperationLock', () => ({ gitOperationLock: {} }));
 vi.mock('../../services/ai/archiveSessionProviderLifecycle', () => ({ archiveSessionsAndDestroyProviders: mocks.archiveSessions }));
 import { registerWorktreeHandlers } from '../WorktreeHandlers';
@@ -63,6 +69,7 @@ beforeEach(() => {
   mocks.checkWorktreeRemovable.mockResolvedValue(null);
   mocks.store.getWorktreeSessions.mockResolvedValue([]);
   mocks.store.listGroupMembers.mockResolvedValue([]);
+  mocks.workspaceState = {};
   mocks.inUse = true;
   registerWorktreeHandlers();
 });
@@ -220,5 +227,22 @@ describe('worktree groups', () => {
     ]);
     expect(mocks.store.delete.mock.calls.map(([id]) => id)).toEqual(['api', 'task']);
   });
+});
+
+// The project's setup command runs in a terminal of the new worktree, which
+// archiving that worktree closes; creation does not wait for it.
+it('runs the setup command in a terminal of the new worktree, with its variables', async () => {
+  mocks.workspaceState = { worktreeSetup: { copy: [], command: 'pnpm install' } };
+  mocks.createWorktree.mockResolvedValue({ id: 'b', name: 'b', path: '/project_worktrees/b', branch: 'worktree/b', projectPath: '/project' });
+
+  expect((await mocks.handlers.get('worktree:create')!({}, '/project', { name: 'b' })).success).toBe(true);
+
+  await vi.waitFor(() => expect(mocks.createWorkspaceTerminal).toHaveBeenCalledWith(expect.objectContaining({
+    workspacePath: '/project',
+    cwd: '/project_worktrees/b',
+    worktreeId: 'b',
+    initialCommand: 'pnpm install',
+    env: expect.objectContaining({ NIMBALYST_WORKTREE_PATH: '/project_worktrees/b', NIMBALYST_WORKTREE_BRANCH: 'worktree/b' }),
+  })));
 });
 
