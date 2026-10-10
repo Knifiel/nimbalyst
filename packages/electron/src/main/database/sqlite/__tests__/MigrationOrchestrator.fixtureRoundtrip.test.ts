@@ -86,6 +86,7 @@ describe('MigrationOrchestrator fixture round-trip', () => {
         display_name TEXT,
         is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
         is_archived BOOLEAN NOT NULL DEFAULT FALSE,
+        group_id TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
@@ -180,6 +181,8 @@ describe('MigrationOrchestrator fixture round-trip', () => {
       ],
     );
     await db.query(`UPDATE worktrees SET is_archived = TRUE WHERE id = 'wt-3'`);
+    // wt-1 anchors a worktree group whose member is wt-2
+    await db.query(`UPDATE worktrees SET group_id = 'wt-1' WHERE id IN ('wt-1', 'wt-2')`);
 
     // 4 sessions across two workspaces
     await db.query(
@@ -285,6 +288,15 @@ describe('MigrationOrchestrator fixture round-trip', () => {
         [],
       );
       expect(activeWt.map((r) => r.id)).toEqual(['wt-1', 'wt-2']);
+      const { rows: grouped } = await adapter.query<{ id: string; group_id: string | null }>(
+        `SELECT id, group_id FROM worktrees ORDER BY id`,
+        [],
+      );
+      expect(grouped).toEqual([
+        { id: 'wt-1', group_id: 'wt-1' },
+        { id: 'wt-2', group_id: 'wt-1' },
+        { id: 'wt-3', group_id: null },
+      ]);
 
       // Tracker item + body cache cold-load via JSON column
       const { rows: trackerRows } = await adapter.query<{ id: string; title: string | null; data: string }>(

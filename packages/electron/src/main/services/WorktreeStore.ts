@@ -38,6 +38,23 @@ export interface Worktree {
   prNumber?: number;
   prRemote?: string;
   prUrl?: string;
+  /**
+   * Worktree group. A group is one task folder -- the anchor, a worktree of
+   * the project's repository -- holding worktrees of other repositories at
+   * their own paths inside it -- the members. The anchor's `groupId` is its
+   * own id; each member's is the anchor's. Unset for an ordinary worktree.
+   */
+  groupId?: string;
+}
+
+/** True for the anchor of a worktree group */
+export function isGroupAnchor(worktree: Pick<Worktree, 'id' | 'groupId'>): boolean {
+  return worktree.groupId === worktree.id;
+}
+
+/** True for a member of a worktree group, which is managed only through its anchor */
+export function isGroupMember(worktree: Pick<Worktree, 'id' | 'groupId'>): boolean {
+  return worktree.groupId !== undefined && worktree.groupId !== worktree.id;
 }
 
 /**
@@ -59,6 +76,7 @@ interface WorktreeRow {
   pr_number?: number | null;
   pr_remote?: string | null;
   pr_url?: string | null;
+  group_id?: string | null;
 }
 
 function mapWorktreeRow(row: WorktreeRow): Worktree {
@@ -79,6 +97,7 @@ function mapWorktreeRow(row: WorktreeRow): Worktree {
   if (row.pr_number != null) worktree.prNumber = row.pr_number;
   if (row.pr_remote != null) worktree.prRemote = row.pr_remote;
   if (row.pr_url != null) worktree.prUrl = row.pr_url;
+  if (row.group_id != null) worktree.groupId = row.group_id;
   return worktree;
 }
 
@@ -121,9 +140,9 @@ export function createWorktreeStore(db: PGliteLike, ensureDbReady?: EnsureReadyF
 
       await db.query(
         `INSERT INTO worktrees (
-          id, workspace_id, name, path, branch, base_branch, source_folder_path, created_at, updated_at
+          id, workspace_id, name, path, branch, base_branch, source_folder_path, created_at, updated_at, group_id
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
         )`,
         [
           worktree.id,
@@ -137,6 +156,7 @@ export function createWorktreeStore(db: PGliteLike, ensureDbReady?: EnsureReadyF
           worktree.sourceFolderPath || worktree.projectPath,
           createdAt,
           updatedAt,
+          worktree.groupId ?? null,
         ]
       );
 
@@ -212,7 +232,8 @@ export function createWorktreeStore(db: PGliteLike, ensureDbReady?: EnsureReadyF
 
     /**
      * List all worktrees for a workspace/project
-     * By default, excludes archived worktrees
+     * By default, excludes archived worktrees. Group members are left out:
+     * a group shows as its anchor, and `listGroupMembers` lists the rest.
      */
     async list(workspaceId: string, includeArchived = false): Promise<Worktree[]> {
       await ensureReady();
@@ -221,6 +242,7 @@ export function createWorktreeStore(db: PGliteLike, ensureDbReady?: EnsureReadyF
       const { rows } = await db.query<WorktreeRow>(
         `SELECT * FROM worktrees
          WHERE workspace_id = $1 ${archiveFilter}
+           AND (group_id IS NULL OR group_id = id)
          ORDER BY created_at DESC`,
         [workspaceId]
       );
@@ -286,10 +308,36 @@ export function createWorktreeStore(db: PGliteLike, ensureDbReady?: EnsureReadyF
     },
 
     /**
-     * Delete a worktree record
+     * A group's members, deepest path first: the order they must be removed
+     * in, so no removal deletes a checkout nested below it. Archived members
+     * are included; the caller decides what to skip.
+     */
+    async listGroupMembers(anchorId: string): Promise<Worktree[]> {
+      await ensureReady();
+
+      const { rows } = await db.query<WorktreeRow>(
+        'SELECT * FROM worktrees WHERE group_id = $1 AND id <> $1',
+        [anchorId]
+      );
+      const depth = (p: string) => p.split(/[\\/]+/).filter(Boolean).length;
+      return rows.map(mapWorktreeRow).sort((a, b) => depth(b.path) - depth(a.path) || b.path.localeCompare(a.path));
+    },
+
+    /**
+     * Delete a worktree record. An anchor whose members still have rows is
+     * refused: their checkouts sit inside its folder, and without the anchor
+     * nothing would remove them.
      */
     async delete(id: string): Promise<void> {
       await ensureReady();
+
+      const { rows: remaining } = await db.query<{ id: string }>(
+        'SELECT id FROM worktrees WHERE group_id = $1 AND id <> $1 LIMIT 1',
+        [id]
+      );
+      if (remaining.length > 0) {
+        throw new Error(`Refusing to delete worktree record ${id}: its group still has member ${remaining[0].id}`);
+      }
 
       logger.info('Deleting worktree record', { id });
 
@@ -304,11 +352,11 @@ export function createWorktreeStore(db: PGliteLike, ensureDbReady?: EnsureReadyF
     async deleteByPath(path: string): Promise<void> {
       await ensureReady();
 
-      logger.info('Deleting worktree record by path', { path });
-
-      await db.query('DELETE FROM worktrees WHERE path = $1', [path]);
-
-      logger.info('Worktree record deleted', { path });
+      // Through `delete`, so an anchor's member check applies here too
+      const row = await this.getByPath(path);
+      if (row) {
+        await this.delete(row.id);
+      }
     },
 
     /**

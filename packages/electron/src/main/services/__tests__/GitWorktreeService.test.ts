@@ -1295,3 +1295,56 @@ describe('GitWorktreeService.getWorktreeStatus isMerged', () => {
     expect(status.isMerged).toBe(true);
   });
 });
+
+// A worktree group's anchor holds other repositories' checkouts in folders it
+// ignores; nothing run in the anchor may delete or overwrite them.
+describe('GitWorktreeService worktree group guards', () => {
+  const service = new GitWorktreeService();
+  let root: string;
+  let repo: string;
+
+  beforeEach(async () => {
+    root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nimbalyst-gws-group-')));
+    repo = path.join(root, 'repo');
+    await initRepo(repo);
+  });
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  // Git skips a folder holding a `.git` on its own; a member whose `.git`
+  // link is gone (deleted by a tool, say) is plain ignored files to git, and
+  // only the member list keeps its uncommitted work.
+  it('cleans ignored output but never a member checkout, even one that lost its .git link', async () => {
+    fs.writeFileSync(path.join(repo, '.gitignore'), '/build/\n/api/\n/services/\n');
+    await fixtureGit(repo).add('.gitignore');
+    await fixtureGit(repo).commit('ignore the members');
+    const anchor = await service.createWorktree(repo, { name: 'task' });
+    fs.mkdirSync(path.join(anchor.path, 'build'));
+    fs.writeFileSync(path.join(anchor.path, 'build', 'out.js'), '');
+    const api = path.join(anchor.path, 'api');
+    const web = path.join(anchor.path, 'services', 'web');
+    for (const member of [api, web]) {
+      await initRepo(member);
+      fs.writeFileSync(path.join(member, 'work.txt'), 'uncommitted member work');
+    }
+    fs.rmSync(path.join(api, '.git'), { recursive: true, force: true });
+
+    expect(await service.cleanGitignoredFiles(anchor.path, [api, web])).toEqual(['build/']);
+
+    expect(fs.existsSync(path.join(anchor.path, 'build'))).toBe(false);
+    expect(fs.readFileSync(path.join(api, 'work.txt'), 'utf8')).toBe('uncommitted member work');
+    expect(fs.readFileSync(path.join(web, 'work.txt'), 'utf8')).toBe('uncommitted member work');
+  });
+
+  it('names a file a ref tracks where a member checkout sits', async () => {
+    fs.mkdirSync(path.join(repo, 'api'));
+    fs.writeFileSync(path.join(repo, 'api', 'README.md'), 'tracked by the umbrella');
+    await fixtureGit(repo).add('api/README.md');
+    await fixtureGit(repo).commit('track a file under api');
+
+    expect(await service.findTrackedPath(repo, ['HEAD'], ['web', 'api'])).toEqual({ ref: 'HEAD', path: 'api/README.md' });
+    expect(await service.findTrackedPath(repo, ['HEAD~1', 'HEAD'], ['web'])).toBeNull();
+  });
+});

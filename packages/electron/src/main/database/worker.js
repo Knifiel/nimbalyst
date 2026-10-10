@@ -3268,6 +3268,21 @@ class PGLiteWorker {
       throw error;
     }
 
+    // Migration: worktree groups (schema version 53).
+    // Mirror of SQLite migration 0053_worktree_groups.sql -- keep in sync.
+    // A nullable column and a partial index, IF NOT EXISTS, so rerunning it
+    // every launch is safe.
+    try {
+      await this.db.exec(`
+        ALTER TABLE worktrees ADD COLUMN IF NOT EXISTS group_id TEXT;
+        CREATE INDEX IF NOT EXISTS idx_worktrees_group ON worktrees(group_id) WHERE group_id IS NOT NULL;
+      `);
+      console.log('[PGLite Worker] worktree groups migration applied');
+    } catch (error) {
+      console.error('[PGLite Worker] Failed to apply the worktree groups migration:', error);
+      throw error;
+    }
+
     // Migration: team-shared tracker saved views (schema version 28).
     // Mirror of SQLite migration 0028_tracker_shared_saved_views.sql.
     // Payload is stored as TEXT (not JSONB) so the row round-trips byte-for-byte

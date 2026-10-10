@@ -8,11 +8,12 @@
  * crash finishes the same way it would have finished live.
  */
 
+import { existsSync } from 'fs';
 import log from 'electron-log/main';
 import type { ArchiveProgressManager } from './ArchiveProgressManager';
 import type { DeleteWorktreeOptions } from './GitWorktreeService';
 import type { SuperLoopStore } from './SuperLoopStore';
-import { checkWorktreeArchiveConsistency, type Worktree, type WorktreeStore } from './WorktreeStore';
+import { checkWorktreeArchiveConsistency, isGroupAnchor, type Worktree, type WorktreeStore } from './WorktreeStore';
 import { WorktreeRemovalRefusedError } from './worktreeOwnership';
 
 const logger = log.scope('worktreeArchiveCleanup');
@@ -25,7 +26,8 @@ export interface WorktreeArchiveCleanupDeps {
    * refuse a worktree that holds a checkout of one of them
    */
   listKnownRepos?(projectPath: string): readonly string[] | Promise<readonly string[]>;
-  worktreeStore: Pick<WorktreeStore, 'updateArchived'>;
+  /** `listGroupMembers` is needed only where a worktree group can be archived */
+  worktreeStore: Pick<WorktreeStore, 'updateArchived'> & Partial<Pick<WorktreeStore, 'listGroupMembers'>>;
   superLoopStore: Pick<SuperLoopStore, 'getLoopByWorktreeId' | 'updateLoop'>;
   archiveQueue: Pick<ArchiveProgressManager, 'updateTaskStatus'>;
   /** Makes a session visible again after a failed cleanup */
@@ -45,12 +47,15 @@ export function worktreeRepoPath(worktree: Pick<Worktree, 'projectPath' | 'sourc
 
 /**
  * Removes the worktree from disk, then marks it and its super loop archived.
+ * A group's anchor goes last: its members are removed first, deepest first,
+ * each through its own repository and marked archived as it goes. Any failure
+ * stops there, before the anchor.
  * A refused removal, or a failure that leaves the checkout on disk,
  * un-archives the sessions. The error is always rethrown, so the archive
  * queue reports the task as failed.
  */
 export type WorktreeArchiveCleanup = (
-  worktree: Pick<Worktree, 'id' | 'path' | 'branch' | 'projectPath' | 'sourceFolderPath'>,
+  worktree: Pick<Worktree, 'id' | 'path' | 'branch' | 'projectPath' | 'sourceFolderPath' | 'groupId'>,
   sessionIds: string[]
 ) => Promise<void>;
 
@@ -65,8 +70,23 @@ export function createWorktreeArchiveCleanup(deps: WorktreeArchiveCleanupDeps): 
       // after cleanup), through the repo it was branched from. The row's
       // branch is the only branch the removal may delete.
       const repoPath = worktreeRepoPath(worktree);
-      logger.info('Removing archived worktree from disk', { worktreeId, path: worktree.path, repoPath });
       const knownRepos = await deps.listKnownRepos?.(worktree.projectPath);
+      const members = isGroupAnchor(worktree) && deps.worktreeStore.listGroupMembers
+        ? (await deps.worktreeStore.listGroupMembers(worktreeId)).filter(member => !member.isArchived)
+        : [];
+      if (members.length > 0) {
+        // Logged before the first deletion, so a run that dies midway still
+        // says what it was removing
+        logger.info('Removing worktree group members before the anchor', {
+          worktreeId,
+          members: members.map(member => member.path),
+        });
+      }
+      for (const member of members) {
+        await deps.deleteWorktree(member.path, worktreeRepoPath(member), { expectedBranch: member.branch, knownRepos });
+        await deps.worktreeStore.updateArchived(member.id, true);
+      }
+      logger.info('Removing archived worktree from disk', { worktreeId, path: worktree.path, repoPath });
       await deps.deleteWorktree(worktree.path, repoPath, { expectedBranch: worktree.branch, knownRepos });
 
       logger.info('Worktree cleanup completed, now marking as archived in database', { worktreeId });
@@ -109,8 +129,42 @@ export function createWorktreeArchiveCleanup(deps: WorktreeArchiveCleanupDeps): 
 export interface WorktreeArchiveRecoveryDeps {
   db: Parameters<typeof checkWorktreeArchiveConsistency>[0];
   archiveQueue: Pick<ArchiveProgressManager, 'getPersistedTaskIds' | 'loadPersistedTasks'>;
-  worktreeStore: Pick<WorktreeStore, 'get' | 'getWorktreeSessions'>;
+  worktreeStore: Pick<WorktreeStore, 'get' | 'getWorktreeSessions' | 'updateArchived'>;
   cleanup: WorktreeArchiveCleanup;
+  /** `fs.existsSync` */
+  pathExists?(path: string): boolean;
+}
+
+/**
+ * Group members left unarchived under an archived anchor, as after a crash
+ * between removing a member and marking it. A member whose checkout is gone
+ * is marked archived; one still on disk is left as it is and logged, since
+ * nothing here may delete it.
+ */
+export async function reconcileArchivedGroupMembers(
+  db: WorktreeArchiveRecoveryDeps['db'],
+  worktreeStore: Pick<WorktreeStore, 'updateArchived'>,
+  pathExists: (path: string) => boolean
+): Promise<{ archived: string[]; leftOnDisk: string[] }> {
+  const { rows } = await db.query<{ id: string; path: string }>(
+    `SELECT m.id, m.path FROM worktrees m
+     JOIN worktrees a ON a.id = m.group_id
+     WHERE m.id <> m.group_id
+       AND a.is_archived = TRUE
+       AND (m.is_archived = FALSE OR m.is_archived IS NULL)`
+  );
+  const archived: string[] = [];
+  const leftOnDisk: string[] = [];
+  for (const member of rows) {
+    if (pathExists(member.path)) {
+      logger.warn('Worktree group member of an archived anchor is still on disk; leaving it', member);
+      leftOnDisk.push(member.id);
+    } else {
+      await worktreeStore.updateArchived(member.id, true);
+      archived.push(member.id);
+    }
+  }
+  return { archived, leftOnDisk };
 }
 
 /**
@@ -142,6 +196,15 @@ export async function recoverWorktreeArchivesOnStartup(deps: WorktreeArchiveReco
   } catch (consistencyError) {
     // Don't fail startup if consistency check fails
     logger.error('Worktree archive consistency check failed:', consistencyError);
+  }
+
+  try {
+    const members = await reconcileArchivedGroupMembers(deps.db, deps.worktreeStore, deps.pathExists ?? existsSync);
+    if (members.archived.length > 0 || members.leftOnDisk.length > 0) {
+      logger.info('Worktree group members reconciled', members);
+    }
+  } catch (memberError) {
+    logger.error('Worktree group member reconciliation failed:', memberError);
   }
 
   // Load persisted archive queue tasks
