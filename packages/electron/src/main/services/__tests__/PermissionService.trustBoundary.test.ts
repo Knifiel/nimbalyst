@@ -145,3 +145,67 @@ describe('PermissionService inheritance through a symlinked checkout (#1419)', (
     expect(service.isWorkspaceTrusted(openedProject)).toBe(false);
   });
 });
+
+// A project repository holding a separate clone, whose worktree Nimbalyst
+// puts in the project's `_worktrees` folder. That worktree belongs to the
+// project and uses its trust; the clone opened on its own does not.
+describe('PermissionService trust for a nested clone\'s worktree', () => {
+  let tmpRoot: string;
+  let project: string;
+  let clone: string;
+  const service = PermissionService.getInstance();
+
+  /** A verified linked worktree of `repo` at `worktree`: .git file plus back-pointer */
+  function linkWorktree(repo: string, worktree: string): void {
+    const registration = path.join(repo, '.git', 'worktrees', path.basename(worktree));
+    fs.mkdirSync(registration, { recursive: true });
+    fs.mkdirSync(worktree, { recursive: true });
+    fs.writeFileSync(path.join(worktree, '.git'), `gitdir: ${registration}\n`);
+    fs.writeFileSync(path.join(registration, 'gitdir'), `${path.join(worktree, '.git')}\n`);
+  }
+
+  beforeEach(() => {
+    store.clear();
+    delete process.env.NIMBALYST_PERMISSION_MODE;
+    clearWorktreeIdentityCache();
+    tmpRoot = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nim-clone-trust-')));
+    project = path.join(tmpRoot, 'work');
+    clone = path.join(project, 'api');
+    fs.mkdirSync(path.join(project, '.git'), { recursive: true });
+    fs.mkdirSync(path.join(clone, '.git'), { recursive: true });
+    store.set(project, { permissionMode: 'allow-all' });
+  });
+
+  afterEach(() => {
+    clearWorktreeIdentityCache();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('uses the project\'s trust in the project\'s worktrees folder, and stores changes there', () => {
+    const worktree = path.join(tmpRoot, 'work_worktrees', 'fix');
+    linkWorktree(clone, worktree);
+
+    expect(service.getPermissionMode(worktree)).toBe('allow-all');
+
+    service.setPermissionMode(worktree, 'ask');
+    expect(store.get(project)?.permissionMode).toBe('ask');
+    expect(store.has(clone)).toBe(false);
+  });
+
+  it('still asks for the clone opened on its own, or its worktree anywhere else', () => {
+    const elsewhere = path.join(tmpRoot, 'api_worktrees', 'fix');
+    linkWorktree(clone, elsewhere);
+
+    expect(service.getPermissionMode(clone)).toBeNull();
+    expect(service.getPermissionMode(elsewhere)).toBeNull();
+  });
+
+  it('does not lend the project\'s trust to a worktree of a repository outside it', () => {
+    const outsider = path.join(tmpRoot, 'outsider');
+    fs.mkdirSync(path.join(outsider, '.git'), { recursive: true });
+    const placed = path.join(tmpRoot, 'work_worktrees', 'borrowed');
+    linkWorktree(outsider, placed);
+
+    expect(service.getPermissionMode(placed)).toBeNull();
+  });
+});

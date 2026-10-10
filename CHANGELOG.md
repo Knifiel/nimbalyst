@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- A worktree of a repository cloned inside the project uses the project's agent trust instead of asking again; the clone opened on its own still asks
 
 ### Fixed
 <!-- Bug fixes go here -->

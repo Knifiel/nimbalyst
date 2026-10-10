@@ -222,6 +222,39 @@ export function resolveProjectPath(workspacePath: string): string {
 }
 
 /**
+ * The project a nested clone's worktree was made from, or null.
+ *
+ * A project repository can hold separate clones inside it, ignored by its own
+ * history. Nimbalyst puts a worktree of such a clone in the project's
+ * `<project>_worktrees` folder, beside the project's own worktrees, and that
+ * worktree belongs to the project the way the project's own worktrees do.
+ * Everything here is read from disk, never from the name alone: the worktree
+ * must be a verified linked worktree (see `resolveWorktreeIdentity`), its
+ * repository must sit strictly inside a real repository root, and it must
+ * live in that root's `_worktrees` folder. The clone opened on its own is not
+ * covered; it stays a separate trust boundary.
+ */
+export function resolveNestedCloneWorktreeProject(workspacePath: string): string | null {
+  if (!workspacePath) return null;
+  const identity = resolveWorktreeIdentity(workspacePath);
+  if (!identity.isWorktree || !identity.parentRoot) return null;
+  const suffix = '_worktrees';
+  for (let dir = path.dirname(identity.canonical); dir !== path.dirname(dir); dir = path.dirname(dir)) {
+    const folder = path.basename(dir);
+    if (!folder.endsWith(suffix) || folder.length === suffix.length) continue;
+    try {
+      const project = fs.realpathSync.native(path.join(path.dirname(dir), folder.slice(0, -suffix.length)));
+      if (!fs.lstatSync(path.join(project, '.git')).isDirectory()) return null;
+      const relative = path.relative(project, identity.parentRoot);
+      return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? project : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
  * Every path that names the SAME project directory as `resolveProjectPath()`
  * returns, differing only in how the symlinks along it are spelled. Most
  * canonical first: candidate 0 is always exactly `resolveProjectPath()`.
