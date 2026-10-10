@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- Bug fixes go here -->
 - A worktree of a repository cloned inside the project is created next to the project instead of inside it, and the new-worktree dialog names the repository it branches from.
+- Archiving or deleting a worktree no longer deletes another repository's checkout of the same project that sits inside the worktree's folder
 - Archiving a worktree that was interrupted by quitting the app now finishes cleanly on the next launch, without leaving its sessions visible on a deleted checkout or deleting a same-named branch in the wrong repository.
 - Archiving or deleting a worktree no longer deletes a folder or branch its repository does not own (another repository's worktree, or a moved, copied, locked or nested checkout), and no longer prunes the repository's other worktrees.
 - Archiving a worktree with unmerged commits no longer skips its warning because a similarly named branch, a remote copy of the branch, or `origin/HEAD` was already merged.
