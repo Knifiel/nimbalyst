@@ -55,6 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Pages sidebar now highlights the open page when it is a typed page in a local wiki or sits under a typed page, opening the collapsed rows above it
 - Cursor Agent sessions now receive attached text documents and the file paths of pasted images and PDFs, which the agent opens itself
 - Archiving or deleting a worktree no longer deletes a folder or branch its repository does not own (another repository's worktree, or a moved, copied, locked or nested checkout), and no longer prunes the repository's other worktrees.
+- Archiving or deleting a worktree no longer deletes another repository's checkout of the same project that sits inside the worktree's folder
 
 ### Removed
 <!-- Removed features go here -->
