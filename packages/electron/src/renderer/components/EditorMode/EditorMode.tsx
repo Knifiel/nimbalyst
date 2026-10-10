@@ -43,6 +43,7 @@ import {
   aiChatCollapsedAtomFamily,
 } from '../../store/atoms/workspaceLayout';
 import { refreshFileTree } from '../../store/listeners/fileTreeListeners';
+import { bindActiveFileToTabs } from '../../store/atoms/fileTree';
 import { requestConfirmation } from '../../dialogs/requestConfirmation';
 
 export interface EditorModeRef {
@@ -244,6 +245,10 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
     const unsubscribe = tabsActions.subscribe(updateCurrentFileForPlugins);
     return unsubscribe;
   }, [tabsActions]);
+
+  // The repo-aware UI (title-bar branch, new-worktree source) reads the active
+  // file from Jotai; the main tabs live in TabsContext.
+  useEffect(() => bindActiveFileToTabs(tabsActions), [tabsActions]);
 
   // Keep activeTabForContextRef in sync with active tab (no re-render)
   useEffect(() => {

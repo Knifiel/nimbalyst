@@ -11,7 +11,8 @@
 
 import { atom } from 'jotai';
 import { atomFamily } from '../debug/atomFamilyRegistry';
-import { activeTabIdAtom, getFilePathFromKey } from '@nimbalyst/runtime/store';
+import { store } from '@nimbalyst/runtime/store';
+import { isNonFilesystemTab } from '../../contexts/TabsContext';
 
 /**
  * Git status codes matching what `simple-git` provides.
@@ -117,16 +118,34 @@ export interface RevealRequest {
 export const revealRequestAtom = atom<RevealRequest | null>(null);
 
 /**
- * Derived: Active file path from the main editor context.
- * WorkspaceSidebar subscribes to this for auto-scroll functionality.
- * This allows the file tree to react to tab switches without requiring
- * the parent component to re-render.
+ * The file the main editor's active tab shows; null when no tab is open or the
+ * tab is not a file on disk (a tracker item, a shared document, a virtual
+ * page). The repo-aware UI -- the title-bar branch, the Git operations panel,
+ * the repo a new worktree branches from -- follows it via
+ * `activeFileRepoPathAtom`.
+ *
+ * The main editor's tabs live in TabsContext, not Jotai, so EditorMode keeps
+ * this in step with `bindActiveFileToTabs`. It keeps its value while EditorMode
+ * is unmounted, so agent mode still knows the file the user was last in.
  */
-export const activeFilePathAtom = atom((get) => {
-  const activeTabKey = get(activeTabIdAtom('main'));
-  if (!activeTabKey) return null;
-  return getFilePathFromKey(activeTabKey);
-});
+export const activeFilePathAtom = atom<string | null>(null);
+
+interface ActiveTabSource {
+  subscribe: (callback: () => void) => () => void;
+  getSnapshot: () => { activeTabId: string | null; tabs: Map<string, { filePath: string }> };
+}
+
+/** Mirror the main editor's active tab into `activeFilePathAtom`; returns the unsubscribe. */
+export function bindActiveFileToTabs(tabs: ActiveTabSource, target = store): () => void {
+  const update = () => {
+    const { activeTabId, tabs: open } = tabs.getSnapshot();
+    const filePath = activeTabId ? open.get(activeTabId)?.filePath : undefined;
+    const next = filePath && !isNonFilesystemTab(filePath) ? filePath : null;
+    if (target.get(activeFilePathAtom) !== next) target.set(activeFilePathAtom, next);
+  };
+  update();
+  return tabs.subscribe(update);
+}
 
 /**
  * Active filter for file tree (e.g., "modified", "untracked").
@@ -529,11 +548,6 @@ export const fileTreeItemsAtom = atom<RendererFileTreeItem[]>([]);
 /**
  * Current active file path for the flat tree.
  * Written by FlatFileTree when currentFilePath prop changes.
- *
- * This exists because the main tab system uses TabsContext (not Jotai),
- * so the Jotai-based activeFilePathAtom (which reads activeTabIdAtom)
- * doesn't get updated. The component bridges the gap by syncing the
- * prop value into this atom.
  */
 export const flatTreeActiveFileAtom = atom<string | null>(null);
 

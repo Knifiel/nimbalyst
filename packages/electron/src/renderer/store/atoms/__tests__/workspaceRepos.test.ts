@@ -13,7 +13,7 @@ import {
   resolveRepoForPath,
 } from '../../../utils/workspaceRepos';
 import { activeFileRepoPathAtom, workspaceRepoPathsAtom } from '../workspaceRepos';
-import { activeTabIdAtom } from '@nimbalyst/runtime/store';
+import { bindActiveFileToTabs } from '../fileTree';
 
 const REPOS = ['/proj', '/other/collab'];
 
@@ -73,24 +73,60 @@ describe('groupPathsByRepo', () => {
 });
 
 describe('activeFileRepoPathAtom', () => {
-  const openFile = (store: ReturnType<typeof createStore>, filePath: string) => {
-    store.set(activeTabIdAtom('main'), `main:${filePath}`);
-  };
+  // A stand-in for TabsContext, where the main editor's tabs live. The atom
+  // used to read a Jotai tab atom nothing wrote, so it always answered the
+  // first repo; these drive the binding EditorMode installs instead.
+  function mainTabs(store: ReturnType<typeof createStore>) {
+    let snapshot = { activeTabId: null as string | null, tabs: new Map<string, { filePath: string }>() };
+    const listeners = new Set<() => void>();
+    const unbind = bindActiveFileToTabs({
+      subscribe: (callback) => {
+        listeners.add(callback);
+        return () => listeners.delete(callback);
+      },
+      getSnapshot: () => snapshot,
+    }, store);
+    return {
+      open(filePath: string) {
+        snapshot = { activeTabId: filePath, tabs: new Map([...snapshot.tabs, [filePath, { filePath }]]) };
+        listeners.forEach((callback) => callback());
+      },
+      unbind,
+    };
+  }
 
-  it('follows the repo of the active file', () => {
+  it('follows the repo of the file the main editor shows', () => {
     const store = createStore();
     store.set(workspaceRepoPathsAtom, REPOS);
-    openFile(store, '/other/collab/src/index.ts');
+    const tabs = mainTabs(store);
 
+    tabs.open('/other/collab/src/index.ts');
     expect(store.get(activeFileRepoPathAtom)).toBe('/other/collab');
+    tabs.open('/proj/src/index.ts');
+    expect(store.get(activeFileRepoPathAtom)).toBe('/proj');
   });
 
-  it('falls back to the first repo when the active file is in none', () => {
+  it('falls back to the first repo for a file in none or a tab that is not a file', () => {
     const store = createStore();
     store.set(workspaceRepoPathsAtom, REPOS);
-    openFile(store, '/elsewhere/a.ts');
+    const tabs = mainTabs(store);
 
+    tabs.open('/elsewhere/a.ts');
     expect(store.get(activeFileRepoPathAtom)).toBe('/proj');
+    tabs.open('/other/collab/a.ts');
+    tabs.open('tracker://item-1');
+    expect(store.get(activeFileRepoPathAtom)).toBe('/proj');
+  });
+
+  it('keeps the last file after the main editor unmounts, for agent mode', () => {
+    const store = createStore();
+    store.set(workspaceRepoPathsAtom, REPOS);
+    const tabs = mainTabs(store);
+
+    tabs.open('/other/collab/a.ts');
+    tabs.unbind();
+    tabs.open('/proj/a.ts');
+    expect(store.get(activeFileRepoPathAtom)).toBe('/other/collab');
   });
 
   it('is null when the workspace contains no repo at all', () => {
