@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Git repositories cloned inside a project and ignored by its `.gitignore` now get status badges and appear in the Git panel's repo picker and the title-bar branch menu.
 - Quick Open, @ mentions, and content search find files in git repositories cloned inside a project, which the project's ignore rules used to hide (#1449).
 - The pull request panel no longer reports the GitHub CLI as signed out when `gh auth status` is slow to answer.
+- Folders deeper than eight levels that you expanded in the file explorer no longer collapse to empty when files change elsewhere in the project
 
 ### Removed
 <!-- Removed features go here -->

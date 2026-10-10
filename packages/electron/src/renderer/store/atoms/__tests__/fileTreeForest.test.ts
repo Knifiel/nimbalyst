@@ -10,6 +10,8 @@ import {
   buildFileTreeForest,
   flattenTree,
   replaceFolderChildren,
+  keepLoadedTruncatedChildren,
+  findExpandedTruncatedFolders,
   type RendererFileTreeItem,
 } from '../fileTree';
 
@@ -95,5 +97,51 @@ describe('file tree forest', () => {
     ]);
     // Structural sharing: the untouched attached root is the same object.
     expect(next[1]).toBe(forest[1]);
+  });
+});
+
+describe('keepLoadedTruncatedChildren', () => {
+  const deepFile: RendererFileTreeItem = { name: 'deep.ts', path: '/proj/a/deep/deep.ts', type: 'file' };
+
+  it('keeps children loaded on expand where the rebuild stopped at its depth limit', () => {
+    const previous: RendererFileTreeItem[] = [
+      { name: 'a', path: '/proj/a', type: 'directory', children: [
+        { name: 'deep', path: '/proj/a/deep', type: 'directory', childrenTruncated: true, children: [deepFile] },
+      ] },
+      { name: 'b.ts', path: '/proj/b.ts', type: 'file' },
+    ];
+    const rebuilt: RendererFileTreeItem[] = [
+      { name: 'a', path: '/proj/a', type: 'directory', children: [
+        { name: 'deep', path: '/proj/a/deep', type: 'directory', childrenTruncated: true, children: [] },
+      ] },
+      { name: 'b.ts', path: '/proj/b.ts', type: 'file' },
+    ];
+
+    const merged = keepLoadedTruncatedChildren(previous, rebuilt);
+
+    expect(merged[0].children?.[0].children).toEqual([deepFile]);
+    expect(merged[1]).toBe(rebuilt[1]);
+  });
+
+  it('takes the rebuild as is where it read the folder itself', () => {
+    const previous: RendererFileTreeItem[] = [
+      { name: 'a', path: '/proj/a', type: 'directory', children: [deepFile] },
+    ];
+    const rebuilt: RendererFileTreeItem[] = [{ name: 'a', path: '/proj/a', type: 'directory', children: [] }];
+
+    expect(keepLoadedTruncatedChildren(previous, rebuilt)).toBe(rebuilt);
+  });
+
+  it('names only the open folders the rebuild left unread, for a re-read', () => {
+    const rebuilt: RendererFileTreeItem[] = [
+      { name: 'a', path: '/proj/a', type: 'directory', children: [
+        { name: 'deep', path: '/proj/a/deep', type: 'directory', childrenTruncated: true, children: [] },
+        { name: 'shut', path: '/proj/a/shut', type: 'directory', childrenTruncated: true, children: [] },
+        { name: 'read', path: '/proj/a/read', type: 'directory', children: [] },
+      ] },
+    ];
+    const expanded = new Set(['/proj/a', '/proj/a/deep', '/proj/a/read']);
+
+    expect(findExpandedTruncatedFolders(rebuilt, expanded)).toEqual(['/proj/a/deep']);
   });
 });

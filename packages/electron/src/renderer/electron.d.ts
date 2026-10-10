@@ -23,6 +23,7 @@ interface FileTreeItem {
   path: string;
   type: 'file' | 'directory';
   children?: FileTreeItem[];
+  childrenTruncated?: boolean;
 }
 
 interface ClaudeForWindowsInstallation {

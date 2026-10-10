@@ -66,6 +66,24 @@ describe('FileTree All Files Mode', () => {
         expect(result.length).toBe(8);
     });
 
+    it('marks a folder past the depth limit as unread rather than empty', async () => {
+        // d1/.../d10: the walk lists d9 inside d8 but does not read it.
+        const chain = Array.from({ length: 10 }, (_, i) => `d${i + 1}`);
+        fs.mkdirSync(path.join(tempDir, ...chain), { recursive: true });
+        fs.writeFileSync(path.join(tempDir, ...chain, 'deep.ts'), '');
+
+        let level = await getFolderContents(tempDir);
+        const seen: Array<{ name: string; truncated: boolean }> = [];
+        while (level.length > 0) {
+            const dir = level[0];
+            seen.push({ name: dir.name, truncated: dir.childrenTruncated === true });
+            level = dir.children ?? [];
+        }
+
+        expect(seen.find((entry) => entry.truncated)?.name).toBe('d9');
+        expect(seen.filter((entry) => entry.truncated)).toHaveLength(1);
+    });
+
     it('should return empty folders', async () => {
         fs.mkdirSync(path.join(tempDir, 'emptyFolder1'));
         fs.mkdirSync(path.join(tempDir, 'emptyFolder2'));

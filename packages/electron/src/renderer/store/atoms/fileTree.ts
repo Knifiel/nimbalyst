@@ -338,6 +338,8 @@ export interface RendererFileTreeItem {
   path: string;
   type: 'file' | 'directory';
   children?: RendererFileTreeItem[];
+  /** The main-process walk stopped at its depth limit here; `children` was not read. */
+  childrenTruncated?: boolean;
 }
 
 // Special directories that should always appear first with distinct styling
@@ -408,6 +410,72 @@ export function normalizeTreePath(path: string): string {
     normalized = normalized.replace(/\/+$/, '');
   }
   return normalized;
+}
+
+/**
+ * Carry children the renderer already loaded into a rebuilt tree, wherever the
+ * rebuild stopped at the main-process depth limit. A watcher rebuild replaces a
+ * whole root, and without this every folder opened below that depth would turn
+ * empty on the next file change. Branches with nothing to carry are shared.
+ */
+export function keepLoadedTruncatedChildren(
+  previous: RendererFileTreeItem[] | undefined,
+  next: RendererFileTreeItem[],
+): RendererFileTreeItem[] {
+  if (!previous?.length) return next;
+  const loaded = new Map<string, RendererFileTreeItem[]>();
+  const collect = (items: RendererFileTreeItem[]) => {
+    for (const item of items) {
+      if (item.type === 'directory' && item.children?.length) {
+        loaded.set(normalizeTreePath(item.path), item.children);
+        collect(item.children);
+      }
+    }
+  };
+  collect(previous);
+
+  const graft = (items: RendererFileTreeItem[]): RendererFileTreeItem[] => {
+    let changed = false;
+    const result = items.map((item) => {
+      if (item.type !== 'directory') return item;
+      if (item.childrenTruncated) {
+        const kept = loaded.get(normalizeTreePath(item.path));
+        if (!kept) return item;
+        changed = true;
+        return { ...item, children: kept };
+      }
+      if (!item.children?.length) return item;
+      const children = graft(item.children);
+      if (children === item.children) return item;
+      changed = true;
+      return { ...item, children };
+    });
+    return changed ? result : items;
+  };
+  return graft(next);
+}
+
+/**
+ * Open folders where a rebuild stopped at the depth limit. Their kept children
+ * are only as fresh as the last expand, so the listener re-reads these.
+ */
+export function findExpandedTruncatedFolders(
+  items: RendererFileTreeItem[],
+  expanded: Set<string>,
+): string[] {
+  const found: string[] = [];
+  const walk = (nodes: RendererFileTreeItem[]) => {
+    for (const node of nodes) {
+      if (node.type !== 'directory') continue;
+      if (node.childrenTruncated) {
+        if (expanded.has(node.path)) found.push(node.path);
+      } else if (node.children) {
+        walk(node.children);
+      }
+    }
+  };
+  walk(items);
+  return found;
 }
 
 /**

@@ -24,6 +24,9 @@ import {
   buildFileTreeForest,
   normalizeTreePath,
   replaceFolderChildren,
+  keepLoadedTruncatedChildren,
+  findExpandedTruncatedFolders,
+  expandedDirsAtom,
   type RendererFileTreeItem,
 } from '../atoms/fileTree';
 import { workspaceRepoPathsAtom } from '../atoms/workspaceRepos';
@@ -125,8 +128,21 @@ export function initFileTreeListeners(workspacePath: string): () => void {
         // pending debounce) must not resurrect it in the forest.
         if (rootPaths.length > 0 && !rootPaths.includes(rootPath)) return;
 
-        treesByRoot[rootPath] = data.fileTree;
+        treesByRoot[rootPath] = keepLoadedTruncatedChildren(treesByRoot[rootPath], data.fileTree);
         publishForest(rootPaths.length > 0 ? rootPaths : [workspacePath]);
+
+        // The rebuild did not read below its depth limit, so an open folder
+        // there would keep showing what it held when it was expanded.
+        const stale = findExpandedTruncatedFolders(data.fileTree, store.get(expandedDirsAtom));
+        for (const folderPath of stale) {
+          window.electronAPI.refreshFolderContents?.(folderPath)
+            .then((contents) => {
+              if (!disposed) applyLoadedFolderContents(folderPath, Array.isArray(contents) ? contents : []);
+            })
+            .catch((error) => {
+              console.error('[fileTreeListeners] Error re-reading deep folder:', folderPath, error);
+            });
+        }
       }
     );
     cleanups.push(cleanup);

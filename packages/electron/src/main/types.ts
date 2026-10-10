@@ -81,4 +81,6 @@ export interface FileTreeItem {
     path: string;
     children?: FileTreeItem[];
     truncated?: number; // Number of items hidden when directory was too large
+    /** The tree walk stopped at its depth limit here; `children` was not read. */
+    childrenTruncated?: boolean;
 }

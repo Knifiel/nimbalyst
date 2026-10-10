@@ -175,6 +175,12 @@ export async function getFolderContents(dirPath: string, depth: number = 0, sign
         // Each call is still async (non-blocking), so the main thread stays responsive.
         for (const directory of directoriesToPopulate) {
             if (signal?.aborted) return [];
+            // Past the limit the folder is unread, not empty. Say so, or a
+            // rebuild replaces children the renderer loaded on expand with [].
+            if (depth + 1 > MAX_DEPTH) {
+                directory.childrenTruncated = true;
+                continue;
+            }
             directory.children = await getFolderContents(directory.path, depth + 1, signal);
         }
     } catch (error: any) {
