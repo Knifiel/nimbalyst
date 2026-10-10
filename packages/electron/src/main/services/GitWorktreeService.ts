@@ -181,6 +181,13 @@ export interface CreateWorktreeOptions {
    * to `<repo>_worktrees` next to the repo. Set by the main process only.
    */
   worktreesDir?: string;
+  /**
+   * The exact folder to create, as a worktree group member at its
+   * repository's own path inside the anchor. Never renamed: a folder or a
+   * registered worktree already there fails, and `worktreesDir` is unused.
+   * Set by the main process only.
+   */
+  exactPath?: string;
 }
 
 /**
@@ -486,7 +493,7 @@ export class GitWorktreeService {
     const projectName = path.basename(workspacePath);
     const worktreesDir = options.worktreesDir ?? path.resolve(workspacePath, '..', `${projectName}_worktrees`);
 
-    if (!fs.existsSync(worktreesDir)) {
+    if (!options.exactPath && !fs.existsSync(worktreesDir)) {
       logger.info('Creating worktrees directory', { worktreesDir });
       fs.mkdirSync(worktreesDir, { recursive: true });
     }
@@ -503,12 +510,17 @@ export class GitWorktreeService {
     }
     const isTaken = (candidate: string) =>
       fs.existsSync(candidate) || takenKeys.has(canonicalWorktreePath(candidate));
-    let worktreePath = path.join(worktreesDir, worktreeName);
+    let worktreePath = options.exactPath ? path.resolve(options.exactPath) : path.join(worktreesDir, worktreeName);
     let finalWorktreeName = worktreeName;
     let counter = 1;
+    if (options.exactPath && isTaken(worktreePath)) {
+      throw new Error(
+        `Cannot create the worktree at ${worktreePath}: a folder or a registered worktree is already there`
+      );
+    }
 
     // If path is taken, append incrementing number until we find an available path
-    while (isTaken(worktreePath)) {
+    while (!options.exactPath && isTaken(worktreePath)) {
       finalWorktreeName = `${worktreeName}-${counter}`;
       worktreePath = path.join(worktreesDir, finalWorktreeName);
       counter++;
@@ -3172,6 +3184,55 @@ ${newLines.map(line => '+' + line).join('\n')}`;
     return lines
       .map(line => line.replace(/^Would remove /, ''))
       .filter(p => !GitWorktreeService.isPreservedPath(p));
+  }
+
+  /**
+   * Throws, naming the conflict, when `branchName` cannot be created in the
+   * repository: the read-only half of the check `createWorktree` repeats,
+   * so a worktree group can refuse before creating anything anywhere.
+   */
+  async assertBranchAvailable(repoPath: string, branchName: string): Promise<void> {
+    const git = gitFor(repoPath);
+    const caseInsensitive = BRANCH_NAMES_IGNORE_CASE || await this.readIgnoresCase(git);
+    const conflict = findBranchConflict(branchName, await this.readLocalBranches(git), { caseInsensitive });
+    if (conflict) {
+      throw new Error(branchConflictMessage(branchName, conflict, repoPath));
+    }
+  }
+
+  /** Throws unless `ref` names a commit in the repository; refuses a ref git would read as an option */
+  async assertCommitRef(repoPath: string, ref: string): Promise<void> {
+    if (ref.startsWith('-')) {
+      throw new Error(`Invalid base branch '${ref}': a branch name cannot start with '-'`);
+    }
+    // `--quiet` prints nothing for a missing ref, and simple-git does not
+    // reject on the exit code alone, so the printed hash is the answer
+    let resolved = '';
+    try {
+      resolved = (await gitFor(repoPath).raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])).trim();
+    } catch {
+      // handled below
+    }
+    if (!resolved) {
+      throw new Error(`Base branch '${ref}' does not exist in ${repoPath}`);
+    }
+  }
+
+  /** The repository's current branch, the base a worktree takes when none is named */
+  async readCurrentBranch(repoPath: string): Promise<string> {
+    return this.getCurrentBranch(gitFor(repoPath));
+  }
+
+  /** Whether the checkout at `checkoutPath` ignores the folder `relativeDir` */
+  async isIgnoredDirectory(checkoutPath: string, relativeDir: string): Promise<boolean> {
+    // The path is printed when ignored. simple-git does not reject on the
+    // exit code alone, so `-q` would read every folder as ignored.
+    try {
+      const output = await gitFor(checkoutPath).raw(['check-ignore', `${relativeDir.replace(/\/+$/, '')}/`]);
+      return output.trim().length > 0;
+    } catch {
+      return false;
+    }
   }
 
   /**

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- The new-worktree dialog can branch a project's nested clones together with it: one task folder holds a worktree of each chosen clone at its own path, on one branch, and is archived or deleted as a unit
 - A worktree name you type in the new-worktree dialog becomes its branch exactly (`feat/x` gives `worktree/feat/x` in a `feat-x` folder), and invalid or clashing names are flagged instead of renamed.
 
 ### Changed

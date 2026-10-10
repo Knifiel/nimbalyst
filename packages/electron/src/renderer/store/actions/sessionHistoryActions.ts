@@ -100,6 +100,10 @@ export interface CreateNewWorktreeSessionOptions {
   /** `'user'` when the user typed or edited `name`; see `worktree:create` */
   nameSource?: WorktreeNameSource;
   initialDraft?: string;
+  /** The repository to branch; defaults to the active file's */
+  sourceFolderPath?: string;
+  /** Nested clones to branch with the project's repository, as a worktree group */
+  groupMembers?: string[];
 }
 
 export interface CreateNewSessionOptions {
@@ -468,15 +472,20 @@ export const createNewWorktreeSessionActionAtom = atom(
       // Which root the worktree is branched from. Follows the active file's
       // repo, so a workspace spanning two repos branches the one being worked
       // in; a single-folder project resolves to the workspace itself.
-      const sourceFolderPath = get(activeFileRepoPathAtom) ?? undefined;
+      const sourceFolderPath = options?.sourceFolderPath ?? get(activeFileRepoPathAtom) ?? undefined;
       const ipcOptions = options?.baseBranch || options?.name || sourceFolderPath
         ? { baseBranch: options?.baseBranch, name: options?.name, nameSource: options?.nameSource, sourceFolderPath }
         : undefined;
-      const worktreeResult: WorktreeCreateResult = await window.electronAPI.invoke(
-        'worktree:create',
-        workspacePath,
-        ipcOptions,
-      );
+      // A group is one task folder of the project's repository holding a
+      // worktree of each chosen clone; sessions bind to that folder
+      const worktreeResult: WorktreeCreateResult = options?.groupMembers?.length
+        ? await window.electronAPI.invoke('worktree:create-group', workspacePath, {
+          name: options.name,
+          nameSource: options.nameSource,
+          anchorBaseBranch: options.baseBranch,
+          members: options.groupMembers.map(repoPath => ({ repoPath })),
+        })
+        : await window.electronAPI.invoke('worktree:create', workspacePath, ipcOptions);
       if (!worktreeResult.success || !worktreeResult.worktree) {
         throw new Error(worktreeResult.error || 'Failed to create worktree');
       }

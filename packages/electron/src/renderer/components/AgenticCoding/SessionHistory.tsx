@@ -2,7 +2,7 @@ import { createCommittedRankBuilder, createSessionOrder, getLiveSessionOrderTime
 import {selectedMachineAtom} from '../../store/atoms/remoteMachines';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
-import { activeFileRepoPathAtom } from '../../store/atoms/workspaceRepos';
+import { activeFileRepoPathAtom, workspaceRepoPathsAtom } from '../../store/atoms/workspaceRepos';
 import {
   setTitleBarCreateMenuAtom,
   type TitleBarCreateMenuItem,
@@ -10,6 +10,7 @@ import {
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import { CollapsibleGroup } from './CollapsibleGroup';
 import { WorktreeBaseBranchPicker, type WorktreePickerCreateOptions } from './WorktreeBaseBranchPicker';
+import { restoreRepoSelection, worktreeRepoChoices } from './worktreeRepoSelection';
 import { SessionListItem } from './SessionListItem';
 import { SessionTreeRow, useVisibleSessionTreeRows, type VisibleSessionTreeRow } from './SessionTree.tsx';
 import { visibleSessionTreeIds, sessionTreeRootId } from './sessionTreeModel';
@@ -240,6 +241,28 @@ const SessionHistoryComponent: React.FC = () => {
   // sends as `sourceFolderPath`, so the offered bases exist in that repo.
   const activeFileRepoPath = useAtomValue(activeFileRepoPathAtom);
   const worktreeSourceRepoPath = activeFileRepoPath ?? workspacePath;
+  // Nested clones of the project can be branched alone or with it, as a group
+  const workspaceRepoPaths = useAtomValue(workspaceRepoPathsAtom);
+  const worktreeRepoChoiceList = useMemo(
+    () => worktreeRepoChoices(workspacePath, workspaceRepoPaths),
+    [workspacePath, workspaceRepoPaths],
+  );
+  const [savedWorktreeRepoSelection, setSavedWorktreeRepoSelection] = useState<string[] | undefined>(undefined);
+  useEffect(() => {
+    setSavedWorktreeRepoSelection(undefined);
+    if (!workspacePath || !window.electronAPI?.invoke) return;
+    let cancelled = false;
+    window.electronAPI.invoke('workspace:get-state', workspacePath)
+      .then((state: { worktreeRepoSelection?: string[] } | null) => {
+        if (!cancelled) setSavedWorktreeRepoSelection(state?.worktreeRepoSelection);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [workspacePath]);
+  const worktreeInitialRepoSelection = useMemo(
+    () => restoreRepoSelection(savedWorktreeRepoSelection, worktreeRepoChoiceList, worktreeSourceRepoPath),
+    [savedWorktreeRepoSelection, worktreeRepoChoiceList, worktreeSourceRepoPath],
+  );
   const isBlitzAlphaAvailable = useAtomValue(alphaFeatureEnabledAtom('blitz'));
 
   const renamedSession = useAtomValue(recentlyRenamedSessionAtom);
@@ -2830,12 +2853,22 @@ const SessionHistoryComponent: React.FC = () => {
     <WorktreeBaseBranchPicker
       isOpen={worktreeBaseBranchPickerOpen}
       repoPath={worktreeSourceRepoPath}
+      repoChoices={worktreeRepoChoiceList}
+      initialRepoSelection={worktreeInitialRepoSelection}
       onCreate={async (options) => {
         // Await the parent's create handler so the picker can keep its
         // submitting state until creation actually resolves (and surface
         // any error inline without losing the user's input).
         await onNewWorktreeSession(options);
         setWorktreeBaseBranchPickerOpen(false);
+        if (worktreeRepoChoiceList.length > 1) {
+          // Remembered per project, so the next worktree starts from it
+          const selection = options.groupMembers
+            ? [workspacePath, ...options.groupMembers]
+            : [options.sourceFolderPath ?? worktreeSourceRepoPath];
+          setSavedWorktreeRepoSelection(selection);
+          void window.electronAPI?.invoke?.('workspace:update-state', workspacePath, { worktreeRepoSelection: selection });
+        }
       }}
       onCancel={() => setWorktreeBaseBranchPickerOpen(false)}
     />
