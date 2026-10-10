@@ -193,7 +193,7 @@ Twelve built-in provider lanes, plus any agent an extension contributes. Every l
 
 ## File Management
 
-- Multi-folder projects -- attach folders from the File menu or quick open; their files participate in the explorer, search, and agent context, with Git tracked per repository
+- Multi-folder projects -- attach folders from the File menu or quick open; their files participate in the explorer, search, and agent context, with Git tracked per repository. Git repositories cloned inside a project and hidden by its `.gitignore` count as repositories of the project: they get status, the Git panel, file watching under their own ignore rules, and worktrees created beside the project
 - File tree with expand/collapse and keyboard navigation
 - Virtualized file tree for large repositories
 - Context menu: rename, delete, reveal in Finder, open externally, copy path, move, copy
