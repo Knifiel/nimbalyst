@@ -62,6 +62,84 @@ async function fetchWorktreeName(worktreeId: string): Promise<string | undefined
   return undefined;
 }
 
+export interface CreateTerminalPayload {
+  workspacePath: string;
+  cwd?: string;
+  worktreeId?: string;
+  title?: string;
+  source?: 'panel' | 'worktree';
+  /** Extra variables for the shell; set by the main process only */
+  env?: Record<string, string>;
+  /** Typed into the shell once it starts, as a worktree setup command; set by the main process only */
+  initialCommand?: string;
+}
+
+/**
+ * Creates a terminal of the workspace: the store entry and the PTY process.
+ * Shared by the `terminal:create` IPC and main-process callers such as the
+ * worktree setup step.
+ */
+export async function createWorkspaceTerminal(payload: CreateTerminalPayload) {
+  const manager = getTerminalSessionManager();
+  try {
+    const terminalId = ulid();
+    const terminalCwd = payload.cwd || payload.workspacePath;
+    const now = Date.now();
+
+    // Create PTY process first to get shell info
+    await manager.createTerminal(terminalId, {
+      cwd: terminalCwd,
+      workspacePath: payload.workspacePath,
+      env: payload.env,
+    });
+
+    const terminalInfo = manager.getTerminalInfo(terminalId);
+
+    // Fetch worktree name if worktreeId is provided
+    const worktreeName = payload.worktreeId ? await fetchWorktreeName(payload.worktreeId) : undefined;
+
+    // Create terminal instance in store
+    const instance: TerminalInstance = {
+      id: terminalId,
+      title: payload.title || 'Terminal',
+      shellName: terminalInfo?.shell.name || 'unknown',
+      shellPath: terminalInfo?.shell.path || '',
+      cwd: terminalInfo?.cwd || terminalCwd,
+      worktreeId: payload.worktreeId,
+      worktreeName,
+      createdAt: now,
+      lastActiveAt: now,
+      historyFile: terminalInfo?.historyFile,
+      cols: terminalInfo?.cols,
+      rows: terminalInfo?.rows,
+    };
+
+    createTerminalInstance(payload.workspacePath, instance);
+
+    console.log(`[TerminalHandlers] Created terminal ${terminalId}`);
+
+    if (payload.initialCommand) {
+      manager.writeToTerminal(terminalId, `${payload.initialCommand}\r`);
+    }
+
+    // Track terminal creation
+    AnalyticsService.getInstance().sendEvent('terminal_created', {
+      shell: terminalInfo?.shell.name || 'unknown',
+      source: payload.source || 'panel',
+    });
+
+    return {
+      success: true,
+      terminalId,
+      shell: terminalInfo?.shell,
+      instance,
+    };
+  } catch (error) {
+    console.error('[TerminalHandlers] Error creating terminal:', error);
+    return { success: false, error: String(error) };
+  }
+}
+
 export function registerTerminalHandlers(): void {
   if (handlersRegistered) {
     console.log('[TerminalHandlers] Handlers already registered, skipping');
@@ -79,67 +157,8 @@ export function registerTerminalHandlers(): void {
     'terminal:create',
     async (
       _event,
-      payload: {
-        workspacePath: string;
-        cwd?: string;
-        worktreeId?: string;
-        title?: string;
-        source?: 'panel' | 'worktree';
-      }
-    ) => {
-      try {
-        const terminalId = ulid();
-        const terminalCwd = payload.cwd || payload.workspacePath;
-        const now = Date.now();
-
-        // Create PTY process first to get shell info
-        await manager.createTerminal(terminalId, {
-          cwd: terminalCwd,
-          workspacePath: payload.workspacePath,
-        });
-
-        const terminalInfo = manager.getTerminalInfo(terminalId);
-
-        // Fetch worktree name if worktreeId is provided
-        const worktreeName = payload.worktreeId ? await fetchWorktreeName(payload.worktreeId) : undefined;
-
-        // Create terminal instance in store
-        const instance: TerminalInstance = {
-          id: terminalId,
-          title: payload.title || 'Terminal',
-          shellName: terminalInfo?.shell.name || 'unknown',
-          shellPath: terminalInfo?.shell.path || '',
-          cwd: terminalInfo?.cwd || terminalCwd,
-          worktreeId: payload.worktreeId,
-          worktreeName,
-          createdAt: now,
-          lastActiveAt: now,
-          historyFile: terminalInfo?.historyFile,
-          cols: terminalInfo?.cols,
-          rows: terminalInfo?.rows,
-        };
-
-        createTerminalInstance(payload.workspacePath, instance);
-
-        console.log(`[TerminalHandlers] Created terminal ${terminalId}`);
-
-        // Track terminal creation
-        AnalyticsService.getInstance().sendEvent('terminal_created', {
-          shell: terminalInfo?.shell.name || 'unknown',
-          source: payload.source || 'panel',
-        });
-
-        return {
-          success: true,
-          terminalId,
-          shell: terminalInfo?.shell,
-          instance,
-        };
-      } catch (error) {
-        console.error('[TerminalHandlers] Error creating terminal:', error);
-        return { success: false, error: String(error) };
-      }
-    }
+      payload: CreateTerminalPayload
+    ) => createWorkspaceTerminal(payload)
   );
 
   safeHandle('terminal:get-available-shells', async () => {

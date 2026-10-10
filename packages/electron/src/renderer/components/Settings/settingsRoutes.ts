@@ -60,7 +60,8 @@ export type ProjectSettingsCategory =
   | 'project-ai-providers'
   | 'project-mcp-servers'
   | 'project-github'
-  | 'project-extensions';
+  | 'project-extensions'
+  | 'project-worktree-setup';
 
 export type RegisteredSettingsCategory =
   | ApplicationSettingsCategory
@@ -175,6 +176,7 @@ const builtinSettingsRouteDefinitions: readonly Omit<BuiltinSettingsRoute, 'sour
   { id: 'project-mcp-servers', scope: 'project', group: 'Project', label: 'MCP Servers', icon: 'dns' },
   { id: 'project-github', scope: 'project', group: 'Project', label: 'GitHub', icon: 'merge', isAvailable: developerOnly },
   { id: 'project-extensions', scope: 'project', group: 'Project', label: 'Extensions', icon: 'extension' },
+  { id: 'project-worktree-setup', scope: 'project', group: 'Project', label: 'Worktree Setup', icon: 'account_tree', isAvailable: developerOnly },
 ] as const;
 
 export const settingsRoutes: readonly BuiltinSettingsRoute[] = builtinSettingsRouteDefinitions.map(
