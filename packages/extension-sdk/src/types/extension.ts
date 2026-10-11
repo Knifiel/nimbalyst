@@ -623,7 +623,7 @@ export interface NewFileMenuContribution {
 }
 
 export interface CustomEditorContribution {
-  /** Glob patterns for files this editor handles (e.g., ['*.csv', '*.tsv']) */
+  /** File name suffix patterns this editor handles (e.g., ['*.csv', '*.tsv']), or a 'virtual://' prefix for fileless tabs. Globs like '*.{csv,tsv}' or 'data/*.json' never match */
   filePatterns: string[];
 
   /** Display name shown in UI */
@@ -726,7 +726,7 @@ export interface DocumentHeaderContribution {
   /** Unique identifier for this header (e.g., 'astro-frontmatter') */
   id: string;
 
-  /** Glob patterns for files this header applies to (e.g., ['*.astro']) */
+  /** '*.ext' or path patterns containing '/' this header applies to (e.g., ['*.astro']) */
   filePatterns: string[];
 
   /** Display name shown in UI */

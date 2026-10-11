@@ -80,6 +80,8 @@ import { registerReadReceiptHandlers } from './ipc/ReadReceiptHandlers';
 import { registerTrackerPersonalStateHandlers } from './ipc/TrackerPersonalStateHandlers';
 import { registerTrackerPageLinkHandlers } from './ipc/TrackerPageLinkHandlers';
 import { registerTrackerPageTypeHandlers } from './ipc/TrackerPageTypeHandlers';
+import { registerLinkPreviewHandlers } from './ipc/LinkPreviewHandlers';
+import { registerCodeExcerptHandlers } from './ipc/CodeExcerptHandlers';
 import {
     registerTeamInboxHandlers,
     shutdownTeamInboxHandlers,
@@ -2005,6 +2007,8 @@ app.whenReady().then(async () => {
     registerTrackerPersonalStateHandlers();
     registerTrackerPageLinkHandlers();
     registerTrackerPageTypeHandlers();
+    registerLinkPreviewHandlers();
+    registerCodeExcerptHandlers();
     registerWakeupHandlers();
     registerBlitzHandlers();
     registerProjectMigrationHandlers();
@@ -3504,6 +3508,13 @@ const shutdownForRestart = createRestartShutdown({
         console.log('[QUIT] Restart signal detected, saving session state before restart');
         isAppRestarting = true;
         isAppQuitting = true;
+        // The normal quit path below never runs on restart, and a live tray
+        // repaints the menu bar island into a fresh window mid-quit.
+        try {
+            TrayManager.getInstance().shutdown();
+        } catch (error) {
+            console.error('[QUIT] Error shutting down TrayManager for restart:', error);
+        }
         if (sessionSaveInterval) clearInterval(sessionSaveInterval);
         sessionSaveInterval = null;
     },

@@ -29,6 +29,7 @@ import { dirname, join, relative, isAbsolute, resolve } from 'path';
 import { gitOperationLock } from '../services/GitOperationLock';
 import { executeGitCommitAcrossRepos, toRepositoryRelativePath, type HunkSelection } from '../services/GitCommitService';
 import { getGitSubprocessEnv, simpleGitWithHookEnv } from '../services/gitEnv';
+import { simpleGitReadOnly } from '../services/gitReadOnly';
 import { SessionCommitService } from '../services/SessionCommitService';
 import { safeHandle } from '../utils/ipcRegistry';
 import { findGitRootForFile } from '../services/GitStatusService';
@@ -283,7 +284,7 @@ function parseGitStatusPorcelainV1Z(rawStatus: string): GitWorkingChanges {
  * vocabulary used by consumers.
  */
 export async function getWorkingChanges(repoPath: string): Promise<GitWorkingChanges> {
-  const git: SimpleGit = simpleGit(repoPath, { config: ['core.optionalLocks=false'] });
+  const git: SimpleGit = simpleGitReadOnly(repoPath);
   const rawStatus = await git.raw(['status', '--porcelain=v1', '-z', '--untracked-files=all']);
   return parseGitStatusPorcelainV1Z(rawStatus);
 }
@@ -332,12 +333,12 @@ export async function discardGitChanges(
 /**
  * Read the branch/ahead-behind snapshot the title bar and Git panel both render.
  *
- * `core.optionalLocks=false` tells git to skip the index refresh that would
+ * GIT_OPTIONAL_LOCKS=0 (simpleGitReadOnly) tells git to skip the index refresh that would
  * create `.git/index.lock`, so this read can run concurrently with writes
  * (commit/rebase/etc.) without queueing behind them on `gitOperationLock`.
  */
 export async function readBranchStatus(repoPath: string): Promise<GitStatusResult> {
-  const git: SimpleGit = simpleGit(repoPath, { config: ['core.optionalLocks=false'] });
+  const git: SimpleGit = simpleGitReadOnly(repoPath);
   const status = await git.status();
   return {
     branch: normalizeCurrentBranch(status.current) || 'HEAD',
@@ -871,7 +872,7 @@ export function registerGitHandlers(): void {
         return { staged: [], unstaged: [], untracked: [], conflicted: [] };
       }
 
-      // core.optionalLocks=false skips the index refresh that would create
+      // GIT_OPTIONAL_LOCKS=0 skips the index refresh that would create
       // .git/index.lock, allowing this read to run concurrently with writes
       // without queueing on gitOperationLock.
       try {

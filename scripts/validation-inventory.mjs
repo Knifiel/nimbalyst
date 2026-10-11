@@ -18,6 +18,7 @@ export const scriptTests = [
   "scripts/__tests__/check-main-bundle-graph.test.mjs",
   "scripts/__tests__/check-native-dialogs.test.mjs",
   "scripts/__tests__/check-push-authors.test.mjs",
+  "scripts/__tests__/check-push-destination.test.mjs",
   "scripts/__tests__/check-renderer-sync-sockets.test.mjs",
   "scripts/__tests__/check-sync-floating-promises.test.mjs",
   "scripts/__tests__/check-runtime-host-boundary.test.mjs",

@@ -60,3 +60,32 @@ it('releases native polling listeners after overlapping starts and cancellation'
   expect(watcher.getStats().activeWatchers).toBe(0);
   expect([...handles].every(handle => handle.listenerCount('change') === 0)).toBe(true);
 });
+
+it('reads HEAD changes without rewriting the index another git command may need', async () => {
+  // A rebase moves HEAD on every step. If the watcher's status refreshes and
+  // locks .git/index at the wrong moment, `git pull --rebase` fails to reapply
+  // its autostash and leaves the user's dirty edits parked in the stash.
+  fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'nimbalyst-native-watcher-'));
+  const gitConfig = path.join(fixture, '.gitconfig');
+  fs.writeFileSync(gitConfig, '');
+  const git = (...args: string[]) => execFileSync('git', args, {
+    cwd: fixture,
+    env: { ...process.env, GIT_CONFIG_GLOBAL: gitConfig, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' },
+    stdio: 'pipe',
+  });
+  git('init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(fixture, 'file.txt'), 'Synthetic lock test\n');
+  git('add', '.');
+  git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'Create test fixture');
+  await watcher.start(fixture);
+
+  // Make the index's cached stat data stale so a locking status would rewrite it.
+  const later = new Date(Date.now() + 5000);
+  fs.utimesSync(path.join(fixture, 'file.txt'), later, later);
+  const indexPath = path.join(fixture, '.git', 'index');
+  const before = fs.statSync(indexPath).mtimeMs;
+
+  await (watcher as unknown as { handleHeadChange(p: string): Promise<void> }).handleHeadChange(fixture);
+
+  expect(fs.statSync(indexPath).mtimeMs).toBe(before);
+});

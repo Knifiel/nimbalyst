@@ -205,6 +205,20 @@ describe('MenuBarIslandWindow', () => {
     );
   });
 
+  // A window created while the app quits keeps Electron's window count above
+  // zero, so the quit never finishes and a dev restart hangs with no windows.
+  it('builds no new window after shutdown, even when a repaint arrives', async () => {
+    vi.resetModules();
+    const fresh = await import('../MenuBarIslandWindow');
+    fresh.showMenuBarIsland(frame(1));
+    expect(browserWindowCtor).toHaveBeenCalledTimes(1);
+
+    fresh.shutdownMenuBarIsland();
+    expect(win.destroy).toHaveBeenCalled();
+    fresh.showMenuBarIsland(frame(2));
+    expect(browserWindowCtor).toHaveBeenCalledTimes(1);
+  });
+
   it('stays on screen when the fleet goes quiet', async () => {
     showMenuBarIsland(frame(1));
     finishLoad();

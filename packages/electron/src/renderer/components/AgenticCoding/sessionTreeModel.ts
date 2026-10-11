@@ -21,6 +21,9 @@ export interface SessionTreeNode<T extends TreeSession> {
   ids: string[];
 }
 
+/** Mirrors MAX_SESSION_DEPTH in main/services/sessionHierarchy.ts, which enforces it. */
+export const MAX_TREE_DEPTH = 256;
+
 export function treeIndent(depth: number) {
   return { level: Math.min(Math.max(0, depth), 3), rail: depth > 3 };
 }
@@ -160,5 +163,5 @@ export function sessionMoveError(
   const node = find(forest);
   const height = (n: SessionTreeNode<TreeSession>): number =>
     n.children.length ? 1 + Math.max(...n.children.map(height)) : 0;
-  return depth + (node ? height(node) : 0) > 8 ? 'The moved tree would exceed 8 levels' : null;
+  return depth + (node ? height(node) : 0) > MAX_TREE_DEPTH ? `The moved tree would exceed ${MAX_TREE_DEPTH} levels` : null;
 }

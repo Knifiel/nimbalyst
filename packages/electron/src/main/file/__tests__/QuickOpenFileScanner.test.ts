@@ -13,6 +13,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { rgPath } from '@vscode/ripgrep';
 import { assertGitSandbox, FIXTURE_IDENTITY_ARGS, gitSandboxEnv } from '../../services/testSupport/gitTestSandbox';
+import { QUICKOPEN_FILE_TYPE_ARGS, RIPGREP_EXCLUDE_ARGS_ARRAY } from '../../utils/fileFilters';
 
 vi.mock('../../services/ripgrepPath', () => ({ getRipgrepPath: () => rgPath }));
 
@@ -82,9 +83,24 @@ describe('findWorkspaceFiles with nested repositories (#1449)', () => {
     expect(files.filter(file => file.startsWith('snapshot/'))).toEqual([]);
   });
 
-  it('names each nested clone once for content search, even when it is also a root', async () => {
+  it('returns content matches once when a nested clone is also a root, respecting its ignore rules', async () => {
+    const needle = 'nested-search-regression';
+    write(path.join(inner, 'src', 'content.md'), `${needle}\n`);
+    write(path.join(inner, 'tmp', 'ignored.md'), `${needle}\n`);
+    write(path.join(outer, 'generated', 'ignored.md'), `${needle}\n`);
     const roots = await listContentSearchRoots([outer, inner]);
 
     expect(roots).toEqual([outer, inner, path.join(outer, 'mirror')]);
+    // Exercise the argument shapes used by both content-search handlers.
+    for (const types of [QUICKOPEN_FILE_TYPE_ARGS, ['--type', 'md']]) {
+      const stdout = execFileSync(rgPath, [
+        ...types, '-i', '--json', ...RIPGREP_EXCLUDE_ARGS_ARRAY, needle, ...roots,
+      ], { encoding: 'utf8' });
+      const matches = stdout.trim().split('\n').map(line => JSON.parse(line))
+        .filter(item => item.type === 'match');
+      expect(matches.map(item => path.normalize(item.data.path.text)))
+        .toEqual([path.join(inner, 'src', 'content.md')]);
+      expect(matches[0].data.lines.text).toBe(`${needle}\n`);
+    }
   });
 });

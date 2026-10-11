@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import simpleGit, { SimpleGit } from 'simple-git';
+import type { SimpleGit } from 'simple-git';
+import { simpleGitReadOnly } from '../services/gitReadOnly';
 import { BrowserWindow } from 'electron';
 import { logger } from '../utils/logger';
 import { clearGitStatusCache } from '../ipc/GitStatusHandlers';
@@ -245,7 +246,8 @@ export class GitRefWatcher {
 
       const { gitDir, commonDir } = gitDirs;
 
-      const git: SimpleGit = simpleGit(workspacePath);
+      // HEAD moves on every rebase step; this status must not lock the index.
+      const git: SimpleGit = simpleGitReadOnly(workspacePath);
 
       // Pre-flight: get current branch + HEAD hash. Both can fail on a
       // fresh-init repo with zero commits ("fatal: your current branch X

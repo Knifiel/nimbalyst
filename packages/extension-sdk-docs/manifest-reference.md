@@ -184,7 +184,7 @@ Register custom editors for matching file types.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `filePatterns` | `string[]` | Glob patterns for matching files |
+| `filePatterns` | `string[]` | File name patterns such as `*.csv`. See [File Pattern Syntax](#file-pattern-syntax) |
 | `displayName` | `string` | Name shown in the editor selector |
 | `component` | `string` | Key in your exported `components` object |
 | `supportsSourceMode` | `boolean` | Enables the host's source-mode toggle |
@@ -564,14 +564,27 @@ APIs.
 
 ## File Pattern Syntax
 
-File patterns use glob syntax:
+`filePatterns` are not full glob patterns. How a pattern is matched depends on the contribution.
+
+For `customEditors`, each pattern is a file name suffix.
 
 | Pattern | Matches |
 | --- | --- |
-| `*.csv` | Any file ending in `.csv` |
-| `*.{csv,tsv}` | Files ending in `.csv` or `.tsv` |
-| `data/*.json` | JSON files in `data/` |
-| `**/*.test.ts` | Test files anywhere in the tree |
+| `*.csv` | Any file whose name ends in `.csv` |
+| `*.mockup.html` | Any file whose name ends in `.mockup.html`. The longest matching suffix wins, so this beats `*.html` |
+
+List one pattern per extension, for example `["*.csv", "*.tsv"]`. Brace sets like `*.{csv,tsv}`, folder patterns like `data/*.json` and `**` never match a custom editor. Patterns that start with `*.` are also registered as a file type in the main process. Files whose last extension is registered this way, such as `.excalidraw`, show up in `@` file mentions, and types Nimbalyst would otherwise refuse to open, such as `.pdf`, are allowed. Only the last extension is checked, so `*.mockup.html` adds nothing there.
+
+The one other form is a `virtual://` prefix, such as `virtual://com.nimbalyst.browser/*`. It matches fileless tabs opened by a `newFileMenu` item with `action: "openVirtualTab"`, not files.
+
+For `documentHeaders`, a pattern is either `*.ext` or a path pattern that contains `/`.
+
+| Pattern | Matches |
+| --- | --- |
+| `*.astro` | Any file whose path ends in `.astro` |
+| `data/*.json` | `.json` files directly inside a folder named `data`. `*` matches within one path segment |
+
+Document headers ignore patterns of any other form.
 
 ## Validation Notes
 

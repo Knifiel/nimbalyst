@@ -18,6 +18,9 @@ if ! command -v node >/dev/null 2>&1 || ! command -v pnpm >/dev/null 2>&1; then
   exit 1
 fi
 
+# Maintainer-only allowlist from local git config; a no-op for contributors.
+printf '%s\n' "$push_refs" | node scripts/check-push-destination.mjs "${2:-$remote_name}"
+
 # A release pushes main and then the tag on that same commit. The tag delivers no
 # commit the remote lacks, so every gate below would re-validate the tree the
 # branch push just proved. Skip it rather than spend the suite twice per release.

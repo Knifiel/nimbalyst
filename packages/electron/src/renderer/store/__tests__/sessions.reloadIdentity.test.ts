@@ -308,6 +308,43 @@ describe('canonical generation load/reload reconciliation', () => {
       expect(store.get(sessionStoreAtom(id))!.messages[0].text).toBe(saved);
     });
 
+    // #1663: no saved row ever acknowledges a local error, so it stayed pinned
+    // below every later turn and kept re-mounting the login card.
+    it(`${name} keeps a local error row only until a later turn is saved`, async () => {
+      const store = createStore();
+      const id = `optimistic-error-${name}`;
+      const prompt = {
+        ...message(1, 0, 7, 'First request'),
+        type: 'user_message' as const,
+        createdAt: new Date(1000),
+      };
+      const localError: TranscriptViewMessage = {
+        ...makeMessage(-7, 'Error: OAuth token has expired'),
+        type: 'system_message',
+        createdAt: new Date(2000),
+        isError: true,
+        isAuthError: true,
+        systemMessage: { systemType: 'error' },
+      };
+      let snapshot: TranscriptViewMessage[] = [prompt];
+      vi.stubGlobal('window', {
+        electronAPI: {
+          aiLoadSession: vi.fn(async () =>
+            makeSession({ id, model: 'claude:test', messages: snapshot }),
+          ),
+        },
+      });
+      store.set(sessionStoreAtom(id), makeSession({ id, messages: [prompt, localError] }));
+      await run(store, { sessionId: id, workspacePath: '/repo' });
+      expect(store.get(sessionStoreAtom(id))!.messages.map((m) => m.id)).toEqual([1, -7]);
+      snapshot = [
+        prompt,
+        { ...message(2, 1, 7, 'Second request'), type: 'user_message', createdAt: new Date(3000) },
+        { ...message(3, 2, 7, 'Answer'), createdAt: new Date(4000) },
+      ];
+      await run(store, { sessionId: id, workspacePath: '/repo' });
+      expect(store.get(sessionStoreAtom(id))!.messages.map((m) => m.id)).toEqual([1, 2, 3]);
+    });
     it(`${name} rejects an older snapshot arriving after newer streamed messages`, async () => {
       const store = createStore();
       const id = `generation-stale-${name}`;

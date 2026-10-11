@@ -16,6 +16,22 @@ import { mergeClaimedRun, selectCoalescibleRun } from './coalesceQueuedPrompts';
  */
 export class SessionProcessingGuard extends Set<string> {
   private owners = new Map<string, symbol>();
+  private claims = new Set<string>();
+
+  override has(sessionId: string): boolean {
+    return this.claims.has(sessionId) || super.has(sessionId);
+  }
+
+  /** Reserve before storage awaits, including when a live drain bypasses the turn guard. */
+  beginClaim(sessionId: string): boolean {
+    if (this.claims.has(sessionId)) return false;
+    this.claims.add(sessionId);
+    return true;
+  }
+
+  endClaim(sessionId: string): void {
+    this.claims.delete(sessionId);
+  }
 
   /** Take the guard for `sessionId`; the returned token is required to release it. */
   acquire(sessionId: string): symbol {
@@ -166,7 +182,10 @@ export async function dispatchClaimedQueuedPrompt(
       // displaced it, the priority prompt that replaced it is still running and
       // releasing here would let the FIFO continuation start a second turn
       // underneath it (#1018).
-      processingSet.releaseIfOwner(sessionId, guardToken);
+      const released = processingSet.releaseIfOwner(sessionId, guardToken);
+      // A replacement dispatch owns continuation and settlement as well as
+      // the guard. A displaced turn must not report the child finished.
+      if (!released && processingSet.has(sessionId)) return;
       // NIM-7428: the turn ended by waking the session with background-task
       // results. That wake turn's own completion continues the queue, ends the
       // session and reports to the parent; doing it here would end a running
@@ -266,68 +285,73 @@ export async function tryClaimAndDispatchNextQueuedPrompt(
     return false;
   }
 
-  const pendingPrompts = await queueStore.listPending(sessionId);
-  if (pendingPrompts.length === 0) {
-    // logInfo(`[AIService] ${source}: no pending prompts for session ${sessionId}`);
-    return false;
-  }
-
-  // Agent-authored rows deliver as one turn; a human row keeps its own turn and
-  // bounds the run on both sides. See coalesceQueuedPrompts.ts.
-  const run = selectCoalescibleRun(pendingPrompts);
-  const nextPrompt = run[0];
-  logInfo(`[AIService] ${source}: processing prompt ${nextPrompt.id} for session ${sessionId}`);
-
-  const claimedHead = await queueStore.claim(nextPrompt.id);
-  if (!claimedHead) {
-    logInfo(`[AIService] ${source}: prompt ${nextPrompt.id} already claimed`);
-    return false;
-  }
-
-  // Claim the tail one row at a time. A row that fails to claim was taken by
-  // another drainer, so stop extending rather than skipping over it -- pulling
-  // the row behind it forward would deliver the run out of order.
-  const claimedRun = [claimedHead];
-  for (const queued of run.slice(1)) {
-    const claimedNext = await queueStore.claim(queued.id);
-    if (!claimedNext) break;
-    claimedRun.push(claimedNext);
-  }
-
-  const claimed = mergeClaimedRun(claimedRun);
-  const claimedIds = claimedRun.map((row) => row.id);
-
-  if (claimedRun.length > 1) {
-    logInfo(`[AIService] ${source}: coalesced ${claimedRun.length} agent-authored prompts into one turn for session ${sessionId}`);
-  }
-
-  if (!sendMessageHandler) {
-    for (const promptId of claimedIds) {
-      await queueStore.fail(promptId, 'sendMessageHandler not initialized');
+  if (!processingSet.beginClaim(sessionId)) return false;
+  try {
+    const pendingPrompts = await queueStore.listPending(sessionId);
+    if (pendingPrompts.length === 0) {
+      // logInfo(`[AIService] ${source}: no pending prompts for session ${sessionId}`);
+      return false;
     }
-    logError('[AIService] Failed to process queued prompt because sendMessageHandler is not initialized', new Error('sendMessageHandler not initialized'));
-    return false;
+
+    // Agent-authored rows deliver as one turn; a human row keeps its own turn and
+    // bounds the run on both sides. See coalesceQueuedPrompts.ts.
+    const run = selectCoalescibleRun(pendingPrompts);
+    const nextPrompt = run[0];
+    logInfo(`[AIService] ${source}: processing prompt ${nextPrompt.id} for session ${sessionId}`);
+
+    const claimedHead = await queueStore.claim(nextPrompt.id);
+    if (!claimedHead) {
+      logInfo(`[AIService] ${source}: prompt ${nextPrompt.id} already claimed`);
+      return false;
+    }
+
+    // Claim the tail one row at a time. A row that fails to claim was taken by
+    // another drainer, so stop extending rather than skipping over it -- pulling
+    // the row behind it forward would deliver the run out of order.
+    const claimedRun = [claimedHead];
+    for (const queued of run.slice(1)) {
+      const claimedNext = await queueStore.claim(queued.id);
+      if (!claimedNext) break;
+      claimedRun.push(claimedNext);
+    }
+
+    const claimed = mergeClaimedRun(claimedRun);
+    const claimedIds = claimedRun.map((row) => row.id);
+
+    if (claimedRun.length > 1) {
+      logInfo(`[AIService] ${source}: coalesced ${claimedRun.length} agent-authored prompts into one turn for session ${sessionId}`);
+    }
+
+    if (!sendMessageHandler) {
+      for (const promptId of claimedIds) {
+        await queueStore.fail(promptId, 'sendMessageHandler not initialized');
+      }
+      logError('[AIService] Failed to process queued prompt because sendMessageHandler is not initialized', new Error('sendMessageHandler not initialized'));
+      return false;
+    }
+
+    await dispatchClaimedQueuedPrompt({
+      claimed,
+      claimedIds,
+      continueQueuedPromptChain,
+      logError,
+      onAfterSettled,
+      onChainSettled,
+      onPromptClaimed,
+      processingSet,
+      queueStore,
+      sendMessageHandler,
+      sessionId,
+      source,
+      startSession,
+      targetWindow: liveWindow,
+      workspacePath,
+      isLeadTurnPending,
+      logInfo,
+    });
+
+    return true;
+  } finally {
+    processingSet.endClaim(sessionId);
   }
-
-  await dispatchClaimedQueuedPrompt({
-    claimed,
-    claimedIds,
-    continueQueuedPromptChain,
-    logError,
-    onAfterSettled,
-    onChainSettled,
-    onPromptClaimed,
-    processingSet,
-    queueStore,
-    sendMessageHandler,
-    sessionId,
-    source,
-    startSession,
-    targetWindow: liveWindow,
-    workspacePath,
-    isLeadTurnPending,
-    logInfo,
-  });
-
-  return true;
 }

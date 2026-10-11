@@ -87,6 +87,14 @@ it.each(['pglite', 'sqlite'] as const)('%s executes recursive fetch/count/archiv
     const remote = await store.applyRemoteHierarchySnapshot!([{ sessionId: 'leaf', parentSessionId: 'root' }], () => true);
     expect(remote[0]).toMatchObject({ accepted: true, parentSessionId: 'root', createdBySessionId: 'root' });
     expect((await store.listPendingHierarchyIntents!()).some(row => row.sessionId === 'leaf')).toBe(false);
+    // Handoff chains nest one level per spawn and must not stop at a small fixed depth.
+    let previous: string | null = null;
+    for (let i = 0; i <= 20; i++) {
+      await store.create({ id: `chain-${i}`, provider: 'claude-code', workspaceId: '/p', parentSessionId: previous, createdBySessionId: previous });
+      previous = `chain-${i}`;
+    }
+    expect(await findSessionTreeRoot(db, 'chain-20', '/p')).toBe('chain-0');
+    expect(Number((await readSessionSubtree(db, 'chain-0', '/p')).find(row => row.id === 'chain-20')?.depth)).toBe(20);
   } finally { await raw.close(); fs.rmSync(temporary, { recursive: true, force: true }); }
 });
 

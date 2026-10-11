@@ -741,6 +741,11 @@ const config = {
         'refractor',
         'remark-gfm',
         'uuid',
+        // Chart blocks import these dynamically on first mount.
+        'vega',
+        'vega-embed',
+        'vega-interpreter',
+        'vega-lite',
         'virtua',
         'y-monaco',
         'y-protocols/awareness',

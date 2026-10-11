@@ -41,6 +41,8 @@ type SpawnSessionArgs = {
    * spawned directly under the caller in the same worktree.
    */
   isolated?: boolean;
+  /** Place the new session beside the caller instead of under it. */
+  besideCaller?: boolean;
   effortLevel?: string;
 };
 
@@ -239,7 +241,7 @@ export const META_AGENT_TOOL_DEFS: Array<{
   {
     name: "spawn_session",
     description:
-      "Spawn a new session from the calling session. By default the new session is a direct child of the caller in its existing session tree (sharing files-edited, tabs, and get_workstream_overview). The new session also inherits the caller's working directory: if the caller is running in a worktree, the spawned session runs in that same worktree (so its edits land where the user is looking). Pass isolated=true to instead create a top-level session with no parent and no workstream — use this when the new session should fix-and-commit work independently without polluting the caller's workstream. Pass useWorktree=true to give the spawned session its OWN new worktree as a top-level session, managed by the caller. Fire-and-forget by default — the calling session is not notified when the spawned session completes; pass notifyOnComplete=true to opt in. Use this for the /launch-new-session flow.",
+      "Spawn a new session from the calling session. By default the new session is a direct child of the caller in its existing session tree (sharing files-edited, tabs, and get_workstream_overview). The new session also inherits the caller's working directory: if the caller is running in a worktree, the spawned session runs in that same worktree (so its edits land where the user is looking). Pass isolated=true to instead create a top-level session with no parent and no workstream — use this when the new session should fix-and-commit work independently without polluting the caller's workstream. Pass besideCaller=true to place it beside the caller instead of under it (for handoffs to a successor). Pass useWorktree=true to give the spawned session its OWN new worktree as a top-level session, managed by the caller. Fire-and-forget by default — the calling session is not notified when the spawned session completes; pass notifyOnComplete=true to opt in. Use this for the /launch-new-session flow.",
     inputSchema: {
       type: "object",
       properties: {
@@ -256,6 +258,11 @@ export const META_AGENT_TOOL_DEFS: Array<{
           type: "boolean",
           description:
             "Default false. When true, the new session is created at the top level — no parent, no workstream container, no shared files-edited or tabs with the caller. Use for fix-and-commit-separately work that should not pollute the caller's workstream.",
+        },
+        besideCaller: {
+          type: "boolean",
+          description:
+            "Default false. When true, the new session is placed beside the caller (under the caller's parent, or at the top level if the caller has none) instead of nested under it. It still shares the caller's worktree and is managed by the caller. Use when handing work off to a successor session, so a chain of handoffs stays flat instead of nesting one level per handoff.",
         },
         useWorktree: {
           type: "boolean",

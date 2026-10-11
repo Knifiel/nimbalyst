@@ -21,6 +21,7 @@ Returns a list of recent commits with:
 
 This is useful for understanding the project's commit message style before proposing a new commit.`,
   scope: 'global' as const,
+  access: { kind: 'filesystem' } as const,
   parameters: {
     type: 'object' as const,
     properties: {

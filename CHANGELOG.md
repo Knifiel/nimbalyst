@@ -24,19 +24,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Bug fixes go here -->
 - A worktree of a repository cloned inside the project is created next to the project instead of inside it, and the new-worktree dialog names the repository it branches from.
 - Archiving or deleting a worktree no longer deletes another repository's checkout of the same project that sits inside the worktree's folder
-- Archiving a worktree that was interrupted by quitting the app now finishes cleanly on the next launch, without leaving its sessions visible on a deleted checkout or deleting a same-named branch in the wrong repository.
 - Archiving or deleting a worktree no longer deletes a folder or branch its repository does not own (another repository's worktree, or a moved, copied, locked or nested checkout), and no longer prunes the repository's other worktrees.
-- Archiving a worktree with unmerged commits no longer skips its warning because a similarly named branch, a remote copy of the branch, or `origin/HEAD` was already merged.
 - Edits inside a repository cloned in the project and ignored by its `.gitignore` now reach the file tree and open editors, following that clone's own ignore rules.
 - Git repositories cloned inside a project and ignored by its `.gitignore` now get status badges and appear in the Git panel's repo picker and the title-bar branch menu.
-- Quick Open, @ mentions, and content search find files in git repositories cloned inside a project, which the project's ignore rules used to hide (#1449).
 - The pull request panel no longer reports the GitHub CLI as signed out when `gh auth status` is slow to answer.
-- Folders deeper than eight levels that you expanded in the file explorer no longer collapse to empty when files change elsewhere in the project
-- In a project spanning several repositories, the title-bar branch, the Git operations panel and the new-worktree dialog follow the file open in the editor instead of always using the first repository
-- An agent session in a worktree can read and edit the folders attached to its project, which it previously could not reach
-- Files @-mentioned to chat providers without file tools are read from attached folders too, and no longer from a sibling folder whose name starts with the project's
 - Cmd+Alt+W (Ctrl+Alt+W on Windows and Linux) now opens the new-worktree dialog, like the New Worktree menu item it is shown next to, instead of creating a worktree with a generated name
 - In a project spanning several repositories, pulling or pushing one of them from the title bar shows its progress and names the repository, and no longer greys out pull and push for the others while it runs
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.81.0] - 2026-10-11
+
+
+### Added
+<!-- New features go here -->
+- New editor blocks for wiki pages: charts, callouts, columns, tabs, a table of contents, transclusions, `@` mentions of people and dates, link previews and video players, code excerpts, and buttons that start an agent session or create a new item. Most can be resized from a bottom-right grip and edited from the block menu.
+- Local wikis on iPhone, iPad and Android: a Wiki tab shows the project's page tree, follows links between pages in the app, and saves page edits back to the desktop
+- On iPhone, iPad and Android, a Team tab opens a team project's Wiki and Trackers (alpha)
+- The CSV spreadsheet editor gains a formatting toolbar, conditional formatting, data validation, wrap text, freezing, a status bar, formula autocomplete with click-to-insert references, named ranges, spreadsheet-style keyboard shortcuts and paste from other spreadsheet apps, and undo for every edit; agents can edit sheets with A1-range tools, including files that aren't open
+- Reorder projects in the rail by dragging or using the context menu, or sort them by name, with the order saved across restarts.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- A document's frontmatter properties and the sources it cites now sit in a resizable Page info panel opened from the header, instead of a metadata bar above the page and a Sources line below it; a page whose status is not current shows it as a small tag at the top
+
+### Fixed
+<!-- Bug fixes go here -->
 - A question left open when the agent connection drops no longer leaves the session waiting for your response (#1557).
 - Sending queued messages to Codex no longer fails with an overlapping-turn error when interrupting a session
 - Nimbalyst's background branch and file status checks no longer lock the git index, which could make a `git pull --rebase` with autostash leave your uncommitted changes in the stash
@@ -47,6 +61,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The iOS session list now shows an error when the device's database can't be read, instead of an empty list
 - The desktop no longer fails to refresh its sign-in every 30 seconds when its saved sync server address is malformed
 - A Local wiki type file written as the wiki format describes, without `icon`, `color`, `modes` or `idPrefix`, now loads; a type file that still fails to load shows in the Local section with the reason instead of its tables and typed pages silently disappearing
+- Shell commands no longer appear as sub-agents in the agent sidebar, and a stopped task no longer looks the same as one that failed.
+- An error from an earlier turn, such as the "You are logged in" login card, no longer stays pinned to the bottom of a session after later turns
+- Files @-mentioned to chat providers without file tools are read from attached folders too, and no longer from a sibling folder whose name starts with the project's
+- Commit with AI from the Git panel no longer fails with "Session not found" when the selected repository is nested inside the project folder.
+- In a project spanning several repositories, the title-bar branch, the Git operations panel and the new-worktree dialog follow the file open in the editor instead of always using the first repository
+- Archiving a worktree that was interrupted by quitting the app now finishes cleanly on the next launch, without leaving its sessions visible on a deleted checkout or deleting a same-named branch in the wrong repository.
+- Sessions that hand off to a new session no longer fail with "Session hierarchy depth exceeds 8" after eight handoffs, and agents can place a spawned session beside themselves instead of nested under them
+- Archiving a worktree with unmerged commits no longer skips its warning because a similarly named branch, a remote copy of the branch, or `origin/HEAD` was already merged.
+- Quick Open, @ mentions, and content search find files in git repositories cloned inside a project, which the project's ignore rules used to hide (#1449).
+- An agent session in a worktree can read and edit folders attached to either the worktree or its project
+- Expanded deep folders stay visible and current when files change elsewhere, even when refreshes finish out of order
 
 ### Removed
 <!-- Removed features go here -->
@@ -92,6 +117,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tracker reference chips bold the item's name instead of its key, and no longer show a raw internal ID for types without an issue key.
 - Moving a session under a new parent no longer sends "moved by the user" notes to old sessions or wakes them when the session-tree update runs.
 - Open in browser on a shared document opens the web console again instead of doing nothing.
+- The agent's recent-commits tool no longer fails when given the project folder instead of a file.
 
 ### Removed
 <!-- Removed features go here -->

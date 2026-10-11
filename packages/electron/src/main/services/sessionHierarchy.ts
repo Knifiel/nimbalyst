@@ -3,7 +3,12 @@ import { sessionMetadataMergeSql } from './sessionMetadataMerge';
 import type { SessionStore, CreateSessionPayload } from '@nimbalyst/runtime/ai/adapters/sessionStore';
 import { parseJsonObjectColumn } from '../utils/jsonColumn';
 
-export const MAX_SESSION_DEPTH = 8;
+// A runaway-recursion bound, not a product limit: agents that hand off to a
+// successor build one level per handoff, and a cap of 8 broke those chains.
+export const MAX_SESSION_DEPTH = 256;
+export class SessionDepthLimitError extends Error {
+  constructor(message: string) { super(message); this.name = 'SessionDepthLimitError'; }
+}
 export type HierarchyStatement = { sql: string; params?: any[]; expectedRows?: number };
 export type HierarchyDatabase = {
   query<T = any>(sql: string, params?: any[]): Promise<{ rows: T[] }>;
@@ -65,7 +70,7 @@ export function assertHierarchyPlacement(rows: HierarchyRow[], node: HierarchyRo
     if (!ancestor || ancestor.workspace_id !== node.workspace_id) throw new Error('Parent session is not in this workspace');
     if (ancestor.session_type !== 'blitz' && (ancestor.worktree_id ?? null) !== (node.worktree_id ?? null)) throw new Error('Parent session is in a different worktree');
     targetDepth++;
-    if (targetDepth > MAX_SESSION_DEPTH) throw new Error('Session hierarchy depth exceeds 8');
+    if (targetDepth > MAX_SESSION_DEPTH) throw new SessionDepthLimitError(`Session hierarchy depth exceeds ${MAX_SESSION_DEPTH}`);
     ancestorId = ancestor.parent_session_id;
   }
   const children = new Map<string, string[]>();
@@ -81,12 +86,30 @@ export function assertHierarchyPlacement(rows: HierarchyRow[], node: HierarchyRo
     const [id, depth] = pending.pop()!;
     if (seen.has(id)) throw new Error('Session hierarchy cycle');
     seen.add(id);
-    if (depth > MAX_SESSION_DEPTH) throw new Error('Session subtree depth exceeds 8');
+    if (depth > MAX_SESSION_DEPTH) throw new SessionDepthLimitError(`Session subtree depth exceeds ${MAX_SESSION_DEPTH}`);
     const row = byId.get(id)!;
     if (row.workspace_id !== node.workspace_id) throw new Error('Session subtree spans different workspaces');
     const parent = row.parent_session_id ? byId.get(row.parent_session_id) : null;
     if (parent && parent.session_type !== 'blitz' && (row.worktree_id ?? null) !== (parent.worktree_id ?? null)) throw new Error('Session subtree spans different worktrees');
     for (const child of children.get(id) ?? []) pending.push([child, depth + 1]);
+  }
+}
+
+/**
+ * A spawn must not fail on tree shape: when nesting under the spawner would
+ * pass the depth bound, the new session goes beside the spawner instead.
+ * Returns the parent the row was actually created under.
+ */
+export async function createUnderParentOrBeside(create: (parentId: string | null) => Promise<void>,
+  parentId: string | null, besideParentId: string | null): Promise<string | null> {
+  try {
+    await create(parentId);
+    return parentId;
+  } catch (error) {
+    if (!(error instanceof SessionDepthLimitError) || parentId === besideParentId) throw error;
+    console.warn(`[SessionHierarchy] ${error.message}; placing the new session beside ${parentId} instead`);
+    await create(besideParentId);
+    return besideParentId;
   }
 }
 
@@ -144,7 +167,7 @@ export async function findSessionTreeRoot(db: HierarchyDatabase, sessionId: stri
     WHERE p.workspace_id = $2 AND a.depth < ${MAX_SESSION_DEPTH}
   ) SELECT id, parent_session_id FROM ancestors ORDER BY depth DESC LIMIT 1`, [sessionId, workspaceId]);
   if (!rows.length) throw new Error('Session not found in this workspace');
-  if (rows[0].parent_session_id) throw new Error('Invalid session tree: cycle or depth exceeds 8');
+  if (rows[0].parent_session_id) throw new Error(`Invalid session tree: cycle or depth exceeds ${MAX_SESSION_DEPTH}`);
   return rows[0].id;
 }
 

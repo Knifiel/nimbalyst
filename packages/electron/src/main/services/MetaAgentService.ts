@@ -1,7 +1,7 @@
 import type { OrchestrationMessageKind } from '@nimbalyst/runtime/ai/server/types';
 import path from 'path';
 import { BrowserWindow } from 'electron';
-import { onHierarchyMove, type HierarchyMove } from './sessionHierarchy';
+import { createUnderParentOrBeside, onHierarchyMove, type HierarchyMove } from './sessionHierarchy';
 import { randomUUID } from 'crypto';
 import { safeHandle } from '../utils/ipcRegistry';
 import { SessionManager } from '@nimbalyst/runtime/ai/server';
@@ -160,6 +160,12 @@ interface SpawnSessionArgs {
    * caller's workstream.
    */
   isolated?: boolean;
+  /**
+   * When true, the new session goes beside the caller (under the caller's
+   * parent) instead of under it, still managed by the caller. For handoff
+   * chains where each session passes work to a successor.
+   */
+  besideCaller?: boolean;
   /**
    * Reasoning effort for the new session (e.g. spawn an
    * `openai-codex:gpt-6-astra` session at 'medium'). Clamped to the resolved
@@ -473,6 +479,8 @@ export class MetaAgentService {
       notifyParent?: boolean;
       /** Show `title` until the session names itself, instead of locking it in. */
       provisionalTitle?: boolean;
+      /** Place the new session beside the caller rather than under it; the caller still manages it. */
+      besideCaller?: boolean;
     }
   ): Promise<{
     sessionId: string;
@@ -661,8 +669,11 @@ export class MetaAgentService {
         worktreeId = parentSession.worktreeId;
         worktreePath = parentSession.worktreePath ?? null;
       }
-      const treeParentId = args.parentSessionIdOverride === null ? null
-        : parentSession && (parentSession.worktreeId ?? null) === (worktreeId ?? null) ? metaSessionId : null;
+      // Beside the caller = under the caller's own parent (top level for a root caller).
+      const besideCallerParentId = parentSession?.parentSessionId ?? null;
+      const preferredParentId = args.parentSessionIdOverride === null ? null
+        : !parentSession || (parentSession.worktreeId ?? null) !== (worktreeId ?? null) ? null
+        : args.besideCaller ? besideCallerParentId : metaSessionId;
 
       // NIM-858: do NOT auto-promote the spawning parent to agent_role='meta-agent'.
       // Spawned sessions keep their configured role; parentage carries the tree.
@@ -696,7 +707,7 @@ export class MetaAgentService {
         ...(args.parentSessionIdOverride === null && !args.useWorktree ? { isolated: true } : {}),
       };
 
-      await AISessionsRepository.create({
+      const treeParentId = await createUnderParentOrBeside(parentSessionId => AISessionsRepository.create({
         id: sessionId,
         provider,
         model: normalizedModel,
@@ -705,14 +716,14 @@ export class MetaAgentService {
         worktreeId: worktreeId ?? undefined,
         agentRole: 'standard',
         createdBySessionId: metaSessionId,
-        parentSessionId: treeParentId,
+        parentSessionId,
         // When the meta-agent (or any caller of spawn_session) supplies an
         // explicit title, treat the session as already named. claude-code reads
         // this flag (via documentContext.hasBeenNamed) to set hasOutOfBandNaming
         // and suppress in-band self-naming, so the child keeps the parent's title.
         hasBeenNamed: callerProvidedTitle,
         metadata: childMetadata,
-      });
+      }), preferredParentId, besideCallerParentId);
 
       const initialPrompt = args.prompt?.trim();
       const shouldBypassExecution = this.shouldBypassChildAgentExecutionForTests();
@@ -845,6 +856,7 @@ export class MetaAgentService {
       model: effectiveModel,
       effortLevel: args.effortLevel,
       parentSessionIdOverride: workstreamId,
+      besideCaller: args.besideCaller === true,
       // Default is fire-and-forget: kicking off work in a fresh session is the
       // common /launch-new-session use case (escape a long parent context).
       notifyParent: notifyOnComplete ? undefined : false,

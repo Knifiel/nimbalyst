@@ -25,7 +25,7 @@ import { SQLiteDatabase } from '../../database/sqlite/SQLiteDatabase';
 import { createPGLiteSessionStore } from '../PGLiteSessionStore';
 import { OWNER_METADATA_MERGE_SQL } from '../extensionSessions/sessionOwnership';
 import { migrateSessionTrees } from '../sessionTreeMigration';
-import { readSessionSubtree, findSessionTreeRoot, onHierarchyMove } from '../sessionHierarchy';
+import { readSessionSubtree, findSessionTreeRoot, onHierarchyMove, MAX_SESSION_DEPTH } from '../sessionHierarchy';
 import { applyMobileSessionParent } from '../ai/mobileSessionHierarchy';
 
 import { AISessionsRepository } from '@nimbalyst/runtime/storage/repositories/AISessionsRepository';
@@ -96,15 +96,15 @@ it('rolls back lifted children if deletion fails, and rejects stale undo snapsho
   expect((await store.get('leaf'))?.parentSessionId).toBe('root');
 });
 
-it('rejects cycles and moves whose whole subtree would exceed depth eight', async () => {
+it('rejects cycles and moves whose whole subtree would exceed the depth bound', async () => {
   const store = createPGLiteSessionStore(sqlite);
-  for (let i = 0; i <= 8; i++) {
+  for (let i = 0; i <= MAX_SESSION_DEPTH; i++) {
     await store.create({ id: `n${i}`, provider: 'claude-code', workspaceId: '/p', parentSessionId: i ? `n${i - 1}` : null });
   }
-  await expect(store.updateMetadata('n0', { parentSessionId: 'n8' })).rejects.toThrow(/cycle/i);
+  await expect(store.updateMetadata('n0', { parentSessionId: `n${MAX_SESSION_DEPTH}` })).rejects.toThrow(/cycle/i);
   await store.create({ id: 'branch', provider: 'claude-code', workspaceId: '/p' });
   await store.create({ id: 'tip', provider: 'claude-code', workspaceId: '/p', parentSessionId: 'branch' });
-  await expect(store.updateMetadata('branch', { parentSessionId: 'n7' })).rejects.toThrow(/depth/i);
+  await expect(store.updateMetadata('branch', { parentSessionId: `n${MAX_SESSION_DEPTH - 1}` })).rejects.toThrow(/depth/i);
   expect((await store.get('branch'))?.parentSessionId).toBeNull();
 });
 
@@ -166,7 +166,7 @@ it('routes phone snapshots through production authority and publishes canonical 
   await store.create({ id: 'child', provider: 'claude-code', workspaceId: '/p', parentSessionId: 'root', createdBySessionId: 'root' });
   await sqlite.query("INSERT INTO worktrees (id, workspace_id, name, path, branch) VALUES ('wt', '/p', 'wt', '/p/wt', 'tree-test')");
   await store.create({ id: 'foreign', provider: 'claude-code', workspaceId: '/p', worktreeId: 'wt' });
-  for (let depth = 0; depth <= 8; depth++) await store.create({ id: `deep-${depth}`, provider: 'claude-code', workspaceId: '/p', parentSessionId: depth ? `deep-${depth - 1}` : null });
+  for (let depth = 0; depth <= MAX_SESSION_DEPTH; depth++) await store.create({ id: `deep-${depth}`, provider: 'claude-code', workspaceId: '/p', parentSessionId: depth ? `deep-${depth - 1}` : null });
   vi.mocked(AISessionsRepository.getStore).mockReturnValue(store);
   vi.mocked(AISessionsRepository.get).mockImplementation(id => store.get(id));
   vi.mocked(AISessionsRepository.updateMetadata).mockImplementation((id, patch) => store.updateMetadata(id, patch));
@@ -194,7 +194,7 @@ it('routes phone snapshots through production authority and publishes canonical 
     expect(await phoneMove('child', 'foreign')).toMatchObject({ parentSessionId: 'other', createdBySessionId: 'other' });
     expect(await phoneMove('child', null)).toMatchObject({ parentSessionId: null, createdBySessionId: null });
     expect((await store.get('child'))?.createdBySessionId).toBeNull();
-    expect(await phoneMove('child', 'deep-8')).toMatchObject({ parentSessionId: null, createdBySessionId: null });
+    expect(await phoneMove('child', `deep-${MAX_SESSION_DEPTH}`)).toMatchObject({ parentSessionId: null, createdBySessionId: null });
     expect((await store.get('child'))?.parentSessionId).toBeNull();
   } finally { authorityUnsubscribe(); publishUnsubscribe(); }
 });

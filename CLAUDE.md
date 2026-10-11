@@ -30,6 +30,12 @@ In a parallel batch, the integrating session owns the inventory; slices report t
 
 Before launching parallel work, list the files each slice will touch and confirm the sets are disjoint — including shared files like `CHANGELOG.md`, `package.json`, barrels, and central registries, which a source-only check misses. If two slices need the same file, they are one slice. Slices never run the full gate; the orchestrator runs it once. See [parallel-sessions.md](./.claude/rules/parallel-sessions.md).
 
+### Never Push to Contributor Branches, Approve PRs, or Skip Hooks
+
+**The only push an agent makes is `git push origin main`.** Never push to a contributor's branch or fork, never merge `main` into a PR branch, never run `gh pr review --approve` or `gh pr merge`, never use `--no-verify` or force-push. Contributions land by merging the PR head into local `main` (see [/land-contribution](./.claude/commands/land-contribution.md)). A failing pre-push gate means stop and report, including for "corrective" pushes.
+
+Past incident (2026-10-10): a landing session merged main into two contributors' PR branches, pushed both, approved one from the maintainer's account, and skipped the hook to undo it. A four-file PR showed up on public main as a 2729-file merge commit and had to be force-pushed away. A local-config allowlist in `.githooks/pre-push` (`nimbalyst.pushAllowUrl` / `nimbalyst.pushAllowRefs`) now refuses other destinations on the maintainer's machine.
+
 ### Write and Run Tests for Behavioral Changes
 
 **Any change to runtime behavior ships with a unit test** — a new test, or an extension of an existing one. Pure refactors already covered by tests, formatting, docs, and config-only changes are exempt. Before pushing, run the gate locally: `pnpm typecheck && pnpm test:prepush`.

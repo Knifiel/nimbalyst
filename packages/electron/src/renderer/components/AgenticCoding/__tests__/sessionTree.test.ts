@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildSessionTree,
+  MAX_TREE_DEPTH,
   mergedTreeHeader,
   sessionMoveError,
   sessionTreeRootId,
@@ -60,17 +61,18 @@ describe('session tree projection', () => {
     ]);
   });
   it('resolves deep tab roots and rejects cycles, containers, cross-worktree and subtree depth overflow', () => {
+    const D = MAX_TREE_DEPTH;
     const rows = new Map(
-      Array.from({ length: 9 }, (_, i) => row(String(i), i ? String(i - 1) : null)).map((r) => [r.id, r])
+      Array.from({ length: D + 1 }, (_, i) => row(String(i), i ? String(i - 1) : null)).map((r) => [r.id, r])
     );
     rows.set('branch', row('branch'));
     rows.set('leaf', row('leaf', 'branch'));
-    expect(sessionTreeRootId('8', rows)).toBe('0');
-    expect(sessionMoveError(rows, '0', '8')).toMatch(/descendant/);
-    expect(sessionMoveError(rows, 'branch', '7')).toMatch(/8 levels/);
-    expect(sessionMoveError(rows, 'branch', '6')).toBeNull();
+    expect(sessionTreeRootId(String(D), rows)).toBe('0');
+    expect(sessionMoveError(rows, '0', String(D))).toMatch(/descendant/);
+    expect(sessionMoveError(rows, 'branch', String(D - 1))).toMatch(new RegExp(`${D} levels`));
+    expect(sessionMoveError(rows, 'branch', String(D - 2))).toBeNull();
     rows.set('foreign', row('foreign', null, { worktreeId: 'other' }));
     expect(sessionMoveError(rows, 'branch', 'foreign')).toMatch(/same worktree/);
-    expect(sessionMoveError(rows, '8', null)).toBeNull();
+    expect(sessionMoveError(rows, String(D), null)).toBeNull();
   });
 });

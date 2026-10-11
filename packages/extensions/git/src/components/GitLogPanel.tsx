@@ -1139,6 +1139,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
                 key={repo}
                 repoPath={repo}
                 label={repoLabels(changesRepos)[repo] ?? repo}
+                hostWorkspacePath={workspacePath}
                 withLog={withLog}
                 onWorkspaceEvent={subscribeToWorkspaceEvents}
                 onShowOutput={() => setActiveTab('output')}
@@ -1151,6 +1152,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
         ) : (
           <ChangesTab
             workspacePath={repoPath}
+            hostWorkspacePath={workspacePath}
             withLog={withLog}
             onWorkspaceEvent={subscribeToWorkspaceEvents}
             onShowOutput={() => setActiveTab('output')}
@@ -1183,6 +1185,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
 function RepoChangesSection({
   repoPath,
   label,
+  hostWorkspacePath,
   withLog,
   onWorkspaceEvent,
   onShowOutput,
@@ -1215,6 +1218,7 @@ function RepoChangesSection({
       {!collapsed && (
         <ChangesTab
           workspacePath={repoPath}
+          hostWorkspacePath={hostWorkspacePath}
           withLog={withLog}
           onWorkspaceEvent={onWorkspaceEvent}
           onShowOutput={onShowOutput}

@@ -91,7 +91,15 @@ export function reconcileTranscriptMessages(
           prior.id === message.id && prior.transcriptGeneration === message.transcriptGeneration,
       ),
   );
+  // A local error row has no saved twin to acknowledge it. Keep it while it is
+  // the latest thing in the transcript and retire it once a later row is saved;
+  // otherwise it stays pinned below every later turn (#1663).
+  const newestCanonical = ordered.reduce((newest, message) => {
+    const time = messageTime(message);
+    return time > newest ? time : newest;
+  }, 0);
   const pending = [...optimistic.values()].filter((message) => {
+    if (message.type !== 'user_message') return messageTime(message) >= newestCanonical;
     const match = acknowledgements.findIndex(
       (persisted) =>
         persisted.type === message.type &&

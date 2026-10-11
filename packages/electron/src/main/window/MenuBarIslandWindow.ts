@@ -61,6 +61,8 @@ let dragging: { origin: { x: number; y: number }; displayId: number } | null = n
 let ignoringMouse = true;
 /** The fleet's half of the frame. `expanded` and `anchor` are main's, added on push. */
 let latestState: Omit<MenuBarIslandState, 'expanded' | 'anchor'> | null = null;
+/** Set once the app is quitting; never cleared, the process is on its way out. */
+let shutDown = false;
 let onSelectSession: ((sessionId: string, workspacePath: string) => void) | null = null;
 let onNewSession: (() => void) | null = null;
 let onOpenApp: (() => void) | null = null;
@@ -373,6 +375,8 @@ function handleDisplayChange(): void {
 export function showMenuBarIsland(state: Omit<MenuBarIslandState, 'expanded' | 'anchor'>): void {
   if (!isMenuBarIslandSupported()) return;
 
+  // A window built mid-quit keeps Electron from ever finishing the quit.
+  if (shutDown) return;
   latestState = state;
 
   if (!islandWindow || islandWindow.isDestroyed()) {
@@ -383,6 +387,12 @@ export function showMenuBarIsland(state: Omit<MenuBarIslandState, 'expanded' | '
   if (islandRendererReady && !islandWindow.isVisible()) islandWindow.showInactive();
   startPolling();
   pushState();
+}
+
+/** Close the island for good: the app is quitting or restarting. */
+export function shutdownMenuBarIsland(): void {
+  shutDown = true;
+  closeMenuBarIsland();
 }
 
 /** Tear the island down -- style switched away, or fleet status turned off. */

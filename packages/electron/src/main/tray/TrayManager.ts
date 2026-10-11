@@ -69,6 +69,7 @@ import {
   closeMenuBarIsland,
   isMenuBarIslandSupported,
   showMenuBarIsland,
+  shutdownMenuBarIsland,
 } from '../window/MenuBarIslandWindow';
 
 export type { TraySessionInfo, PromptKind } from './fleetSnapshot';
@@ -500,6 +501,7 @@ export class TrayManager {
     this.lingerTimers.clear();
 
     this.teardownStrip();
+    shutdownMenuBarIsland();
     this.stopFleetActivity();
 
     if (this.tray) {

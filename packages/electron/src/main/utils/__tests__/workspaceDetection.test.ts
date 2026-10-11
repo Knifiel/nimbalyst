@@ -300,7 +300,7 @@ describe('getAdditionalDirectoriesForWorkspace', () => {
     // Real filesystem fixture so the sync fs.readdirSync path is exercised
     // end-to-end. The function is called from a synchronous loader and must
     // tolerate a missing _worktrees dir without blowing up.
-    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nim-add-dirs-'));
+    tmpRoot = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nim-add-dirs-')));
     projectPath = path.join(tmpRoot, 'project');
     fs.mkdirSync(projectPath);
     worktreesDir = path.join(tmpRoot, 'project_worktrees');
@@ -334,6 +334,26 @@ describe('getAdditionalDirectoriesForWorkspace', () => {
 
     expect(getAdditionalDirectoriesForWorkspace(cwd, { includeSiblingWorktrees: false }).sort())
       .toEqual([attached, fs.realpathSync.native(projectPath)].sort());
+  });
+
+  it.each([false, true])('preserves direct worktree attachments alongside inherited folders (symlink: %s)', (symlink) => {
+    const cwd = path.join(worktreesDir, 'proud-gorge');
+    createLinkedWorktree(projectPath, cwd, 'proud-gorge');
+    let openedRoot = tmpRoot;
+    if (symlink) {
+      openedRoot = path.join(tmpRoot, 'alias');
+      fs.symlinkSync(tmpRoot, openedRoot, 'junction');
+    }
+    const openedWorktree = path.join(openedRoot, 'project_worktrees', 'proud-gorge');
+    const inherited = path.join(tmpRoot, 'inherited');
+    const direct = path.join(tmpRoot, 'direct');
+    const shared = path.join(tmpRoot, 'shared');
+    for (const dir of [inherited, direct, shared]) fs.mkdirSync(dir);
+    attachedFoldersByWorkspace.set(path.join(openedRoot, 'project'), [inherited, shared]);
+    attachedFoldersByWorkspace.set(openedWorktree, [direct, shared]);
+
+    expect(getAdditionalDirectoriesForWorkspace(openedWorktree, { includeSiblingWorktrees: false }).sort())
+      .toEqual([direct, inherited, shared, fs.realpathSync.native(projectPath)].sort());
   });
 
   it('returns an empty list for a project with no worktrees and no extension marker', () => {

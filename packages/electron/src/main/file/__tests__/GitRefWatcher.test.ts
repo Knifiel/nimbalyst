@@ -27,10 +27,10 @@ const {
 }));
 
 vi.mock('simple-git', () => ({
-  default: () => ({
-    status: mockStatus,
-    log: mockLog,
-  }),
+  default: () => {
+    const git = { status: mockStatus, log: mockLog, env: () => git };
+    return git;
+  },
 }));
 
 // Pretend `<workspace>/.git` is a regular directory.

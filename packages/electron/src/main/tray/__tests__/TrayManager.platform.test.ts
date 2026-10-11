@@ -155,6 +155,7 @@ vi.mock('../../window/MenuBarIslandWindow', () => ({
   isMenuBarIslandWindow: vi.fn(() => false),
   showMenuBarIsland: showMenuBarIslandMock,
   closeMenuBarIsland: closeMenuBarIslandMock,
+  shutdownMenuBarIsland: vi.fn(),
 }));
 
 vi.mock('../../utils/logger', () => ({

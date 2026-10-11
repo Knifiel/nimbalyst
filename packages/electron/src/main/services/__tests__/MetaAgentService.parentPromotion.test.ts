@@ -86,6 +86,7 @@ vi.mock('../ai/claudeCliLauncherSingleton', () => ({
 import { AISessionsRepository } from '@nimbalyst/runtime/storage/repositories/AISessionsRepository';
 import { AgentMessagesRepository } from '@nimbalyst/runtime/storage/repositories/AgentMessagesRepository';
 import { MetaAgentService } from '../MetaAgentService';
+import { SessionDepthLimitError } from '../sessionHierarchy';
 import { database } from '../../database/PGLiteDatabaseWorker';
 
 const STANDARD_PARENT = {
@@ -156,6 +157,19 @@ describe('MetaAgentService parent agent_role promotion (NIM-858)', () => {
     expect(calls).toHaveLength(2);
     for (const [child] of calls) expect(child).toMatchObject({ parentSessionId: 'standard-parent', createdBySessionId: 'standard-parent' });
     expect(AISessionsRepository.updateMetadata).not.toHaveBeenCalled();
+  });
+
+  it('places a besideCaller spawn, or one past the depth bound, under the caller\'s parent while the caller manages it', async () => {
+    const service = MetaAgentService.getInstance();
+    (service as any).aiService = { queuePromptForSession: vi.fn(), triggerQueuedPromptProcessingForSession: vi.fn() };
+    vi.mocked(AISessionsRepository.get).mockResolvedValue({ ...STANDARD_PARENT, parentSessionId: 'grandparent' } as any);
+    await (service as any).spawnSession('standard-parent', '/workspace/path', { prompt: 'take over', besideCaller: true });
+    vi.mocked(AISessionsRepository.create).mockRejectedValueOnce(new SessionDepthLimitError('Session hierarchy depth exceeds 256'));
+    const fallback = JSON.parse(await (service as any).spawnSession('standard-parent', '/workspace/path', { prompt: 'take over' }));
+    const calls = vi.mocked(AISessionsRepository.create).mock.calls.map(([child]) => child as any);
+    expect(calls.map(child => child.parentSessionId)).toEqual(['grandparent', 'standard-parent', 'grandparent']);
+    for (const child of calls) expect(child.createdBySessionId).toBe('standard-parent');
+    expect(fallback.parentSessionId).toBe('grandparent');
   });
 
   it('reports nested orchestrator completion to its current manager', async () => {
