@@ -17,16 +17,17 @@ import { countLiveInteractivePrompts } from '../tools/interactivePromptLiveness'
 import { attachInteractivePromptCall } from '../tools/interactivePromptKeepalive';
 import { settleReasonFromResponse, shouldTerminalizePrompt } from '../tools/interactivePromptAbandonment';
 
-const seams = vi.hoisted(() => ({ persistResult: vi.fn(), pending: vi.fn(), activity: vi.fn() }));
+type FakeWindow = { isDestroyed: () => boolean; webContents: { send: (channel: string, data: unknown) => void } };
+const seams = vi.hoisted(() => ({ persistResult: vi.fn(), pending: vi.fn(), activity: vi.fn(), cli: true, windows: [] as FakeWindow[] }));
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events');
-  return { ipcMain: new EventEmitter(), BrowserWindow: { getAllWindows: () => [] } };
+  return { ipcMain: new EventEmitter(), BrowserWindow: { getAllWindows: () => seams.windows } };
 });
 vi.mock('@nimbalyst/runtime/storage/repositories/AgentMessagesRepository', () => ({ AgentMessagesRepository: { listTail: async () => [] } }));
-vi.mock('@nimbalyst/runtime/storage/repositories/AISessionsRepository', () => ({ AISessionsRepository: { get: async () => ({ provider: 'claude-code-cli' }) } }));
+vi.mock('@nimbalyst/runtime/storage/repositories/AISessionsRepository', () => ({ AISessionsRepository: { get: async () => ({ provider: seams.cli ? 'claude-code-cli' : 'claude-code' }) } }));
 vi.mock('@nimbalyst/runtime/ai/server/SessionStateManager', () => ({ getSessionStateManager: () => ({ updateActivity: async (...args: unknown[]) => { seams.activity(...args); }, isSessionActive: () => true }) }));
 vi.mock('../../services/ai/pendingPromptPersistence', () => ({ setSessionPendingPrompt: async (...args: unknown[]) => { seams.pending(...args); } }));
-vi.mock('../tools/interactivePromptTranscript', () => ({ isClaudeCliSession: async () => true, persistInteractivePromptToolResult: seams.persistResult }));
+vi.mock('../tools/interactivePromptTranscript', () => ({ isClaudeCliSession: async () => seams.cli, persistInteractivePromptToolResult: seams.persistResult }));
 vi.mock('../tools/codexToolCallResolver', () => ({ resolveToolUseIdFromMcpRequest: async (req: { params: { _meta: { toolUseId: string } } }) => req.params._meta.toolUseId }));
 
 describe('shouldTerminalizePrompt', () => {
@@ -220,5 +221,44 @@ describe('connected AskUserQuestion lifecycle', () => {
       ipc.removeAllListeners();
     }
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+// An SDK session's "waiting for your response" flag is raised by the
+// waiting_for_input status this handler sets, and only a terminal session event
+// lowers it. A turn kept alive by background tasks can run for an hour after
+// the answer, so the settle has to tell the renderer itself.
+describe('AskUserQuestion in an SDK session', () => {
+  it('tells every window once no question is left waiting', async () => {
+    vi.clearAllMocks();
+    const ipc = ipcMain as unknown as EventEmitter;
+    const sessionId = 'sdk-indicator';
+    const sent: Array<[string, unknown]> = [];
+    seams.cli = false;
+    seams.windows = [{ isDestroyed: () => false, webContents: { send: (channel, data) => { sent.push([channel, data]); } } }];
+    const ask = (toolUseId: string) => handleAskUserQuestion(
+      { questions: [{ header: 'Choice', question: 'Select', options: [{ label: 'A', description: 'Option A' }] }] },
+      sessionId,
+      { params: { _meta: { toolUseId } } },
+    );
+    try {
+      const first = ask('q1');
+      const second = ask('q2');
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(seams.activity).toHaveBeenCalledWith({ sessionId, status: 'waiting_for_input' });
+
+      ipc.emit(`ask-user-question-response:${sessionId}:q1`, null, { answers: { Choice: 'A' }, respondedBy: 'desktop' });
+      await first;
+      // q2 still blocks the session.
+      expect(sent).toEqual([]);
+
+      ipc.emit(`ask-user-question-response:${sessionId}:q2`, null, { answers: { Choice: 'A' }, respondedBy: 'desktop' });
+      await second;
+      expect(sent).toEqual([['ai:askUserQuestionAnswered', { sessionId, questionId: 'q2' }]]);
+    } finally {
+      seams.cli = true;
+      seams.windows = [];
+      ipc.removeAllListeners();
+    }
   });
 });

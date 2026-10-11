@@ -287,6 +287,23 @@ export async function handleAskUserQuestion(
           : {};
       const respondedBy = result?.respondedBy || "desktop";
 
+      // NIM-850: the resolved broadcast. The renderer never clears the flag
+      // mid-turn on its own — session:streaming intentionally doesn't — so
+      // without it "waiting for your response" stays up until the turn ends.
+      // Mirrors PromptForUserInput's ai:requestUserInputResolved. Sent on
+      // abandonment too: nothing is blocked on this question any more, whether
+      // or not it still stands.
+      const broadcastResolved = () => {
+        for (const w of BrowserWindow.getAllWindows()) {
+          if (!w.isDestroyed()) {
+            w.webContents.send("ai:askUserQuestionAnswered", {
+              sessionId,
+              questionId,
+            });
+          }
+        }
+      };
+
       // NIM-806: mirror the start write — the external CLI never emits a
       // tool_result block, so persist a synthetic one to flip the widget out of
       // its pending state (ClaudeCliPromptSurface drops answered prompts).
@@ -294,6 +311,9 @@ export async function handleAskUserQuestion(
       // question cannot leave a session stuck showing "awaiting input".
       if (sessionId && !hasLiveInteractivePrompt(sessionId)) {
         void setSessionPendingPrompt(sessionId, false);
+        // Other providers raised the flag through the waiting_for_input status
+        // above, not per question, so it comes down only once no prompt is left.
+        if (!isCliSession) broadcastResolved();
       }
       if (isCliSession && sessionId) {
         // Only a real response closes the widget out. An abandoned call leaves
@@ -314,21 +334,9 @@ export async function handleAskUserQuestion(
           });
         }
 
-        // NIM-850: the resolved broadcast. For claude-code-cli the renderer
-        // otherwise never clears the flag mid-turn — session:streaming
-        // intentionally doesn't, and there was no resolved broadcast — so
-        // "Thinking…" stayed suppressed until the turn ended. Mirrors
-        // PromptForUserInput's ai:requestUserInputResolved. Sent on abandonment
-        // too: nothing is blocked on this session any more, whether or not the
-        // question still stands.
-        for (const w of BrowserWindow.getAllWindows()) {
-          if (!w.isDestroyed()) {
-            w.webContents.send("ai:askUserQuestionAnswered", {
-              sessionId,
-              questionId,
-            });
-          }
-        }
+        // The CLI renderer was told about each question (ai:askUserQuestion
+        // above), so it takes this one down and keeps any other still open.
+        broadcastResolved();
       }
 
       if (cancelled) {

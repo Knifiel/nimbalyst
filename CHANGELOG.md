@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The pull request panel no longer reports the GitHub CLI as signed out when `gh auth status` is slow to answer.
 - Cmd+Alt+W (Ctrl+Alt+W on Windows and Linux) now opens the new-worktree dialog, like the New Worktree menu item it is shown next to, instead of creating a worktree with a generated name
 - In a project spanning several repositories, pulling or pushing one of them from the title bar shows its progress and names the repository, and no longer greys out pull and push for the others while it runs
+- A Claude Code session no longer keeps showing "Waiting for your response" after you answer its question while it carries on working.
 
 ### Removed
 <!-- Removed features go here -->
