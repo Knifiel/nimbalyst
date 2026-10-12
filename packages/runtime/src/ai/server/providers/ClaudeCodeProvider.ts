@@ -146,6 +146,7 @@ import { buildTurnQuery, prepareTurnAttachments, resolveTurnPaths } from './clau
 import { buildTurnCompleteUsage, finishTurn, handleTurnError, type TurnEpilogueHost } from './claudeCode/turnEpilogue';
 import { fromDbBoolean } from '../../../core/dbBoolean';
 import { applyTaskListMutation, sortTaskList, type TaskListItem } from './claudeCode/taskListReconstruct';
+import { exitPlanModeDenialReason, type ExitPlanModeResponse } from '../../exitPlanModeDeferral';
 
 
 /**
@@ -478,7 +479,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
 
   // ExitPlanMode confirmation response type
   private pendingExitPlanModeConfirmations: Map<string, {
-    resolve: (response: { approved: boolean; clearContext?: boolean; feedback?: string }) => void;
+    resolve: (response: ExitPlanModeResponse) => void;
     reject: (error: Error) => void;
   }> = new Map();
 
@@ -2732,7 +2733,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     const planSummary = input?.plan || '';
 
     // Create a promise that will be resolved when user responds via the widget
-    const confirmationPromise = new Promise<{ approved: boolean; clearContext?: boolean; feedback?: string }>((resolve, reject) => {
+    const confirmationPromise = new Promise<ExitPlanModeResponse>((resolve, reject) => {
       this.pendingExitPlanModeConfirmations.set(requestId, { resolve, reject });
 
       if (options.signal) {
@@ -2793,12 +2794,9 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
         this.currentMode = 'agent';
         return { behavior: 'allow', updatedInput: input };
       } else {
-        const feedbackText = response.feedback
-          ? `\n\nUser feedback: "${response.feedback}"`
-          : '';
         return {
           behavior: 'deny',
-          message: `The user chose to continue planning.${feedbackText}`,
+          message: exitPlanModeDenialReason(response),
         };
       }
     } catch (error) {
@@ -2820,7 +2818,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
    */
   public resolveExitPlanModeConfirmation(
     requestId: string,
-    response: { approved: boolean; clearContext?: boolean; feedback?: string },
+    response: ExitPlanModeResponse,
     sessionId?: string,
     respondedBy: 'desktop' | 'mobile' = 'desktop'
   ): void {

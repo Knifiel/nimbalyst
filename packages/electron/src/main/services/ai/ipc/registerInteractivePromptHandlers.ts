@@ -14,6 +14,7 @@ import { setSessionPendingPrompt } from '.././pendingPromptPersistence';
 import { type AIServiceContext } from './AIServiceContext';
 import { ProviderFactory } from '@nimbalyst/runtime/ai/server';
 import { type AIProviderType } from '@nimbalyst/runtime/ai/server/types';
+import type { ExitPlanModeResponse } from '@nimbalyst/runtime/ai/exitPlanModeDeferral';
 import { ipcMain } from 'electron';
 
 /**
@@ -33,7 +34,7 @@ export function registerInteractivePromptHandlers(ctx: AIServiceContext): void {
     ctx.sendMessageHandler(event, message, { promptOrigin: 'interactive-question' }, sessionId, workspacePath),
   );
   // Handle ExitPlanMode confirmation response from renderer
-  safeHandle('ai:exitPlanModeConfirmResponse', async (event, requestId: string, sessionId: string, response: { approved: boolean; clearContext?: boolean; feedback?: string }) => {
+  safeHandle('ai:exitPlanModeConfirmResponse', async (event, requestId: string, sessionId: string, response: ExitPlanModeResponse) => {
     logger.main.info(`[AIService] ExitPlanMode confirmation response: requestId=${requestId}, approved=${response.approved}, clearContext=${response.clearContext}, hasFeedback=${!!response.feedback}`);
 
     // Use repository directly - we just need session metadata (provider type),
