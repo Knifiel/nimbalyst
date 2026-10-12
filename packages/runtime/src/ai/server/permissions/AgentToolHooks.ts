@@ -17,6 +17,7 @@ import { parseBashForFileOps } from './BashCommandAnalyzer';
 import { generateToolPattern, buildToolDescription } from './toolPermissionHelpers';
 import { getPatternDisplayName } from '../types';
 import type { TrustChecker } from '../providers/ProviderPermissionMixin';
+import { exitPlanModeDenialReason, type ExitPlanModeResponse } from '../../exitPlanModeDeferral';
 
 /**
  * Configuration options for AgentToolHooks service
@@ -77,7 +78,7 @@ export interface AgentToolHooksOptions {
    * Get pending ExitPlanMode confirmations map
    */
   getPendingExitPlanModeConfirmations?: () => Map<string, {
-    resolve: (value: { approved: boolean; clearContext?: boolean; feedback?: string }) => void;
+    resolve: (value: ExitPlanModeResponse) => void;
     reject: (reason?: any) => void;
   }>;
 
@@ -153,7 +154,7 @@ export class AgentToolHooks {
   private readonly getCurrentMode?: () => 'planning' | 'agent' | 'auto' | undefined;
   private readonly setCurrentMode?: (mode: 'planning' | 'agent' | 'auto' | undefined) => void;
   private readonly getPendingExitPlanModeConfirmations?: () => Map<string, {
-    resolve: (value: { approved: boolean; clearContext?: boolean; feedback?: string }) => void;
+    resolve: (value: ExitPlanModeResponse) => void;
     reject: (reason?: any) => void;
   }>;
   private readonly getSessionApprovedPatterns?: () => Set<string>;
@@ -662,7 +663,7 @@ export class AgentToolHooks {
     const planSummary = toolInput?.plan || '';
 
     // Create a promise that will be resolved when user responds
-    const confirmationPromise = new Promise<{ approved: boolean; clearContext?: boolean; feedback?: string }>((resolve, reject) => {
+    const confirmationPromise = new Promise<ExitPlanModeResponse>((resolve, reject) => {
       this.getPendingExitPlanModeConfirmations!().set(requestId, { resolve, reject });
 
       // Set up abort handler - persist cancellation to DB to avoid orphaned pending prompts
@@ -735,16 +736,13 @@ export class AgentToolHooks {
           }
         };
       } else {
-        // User denied - keep in planning mode
-        // Include feedback in the denial reason if provided
-        const feedbackText = response.feedback
-          ? `\n\nUser feedback: "${response.feedback}"`
-          : '';
+        // User denied - keep in planning mode, or implement in another session.
+        // The reason carries the feedback or the deferral.
         return {
           hookSpecificOutput: {
             hookEventName: 'PreToolUse' as const,
             permissionDecision: 'deny' as const,
-            permissionDecisionReason: `The user chose to continue planning.${feedbackText}`
+            permissionDecisionReason: exitPlanModeDenialReason(response)
           }
         };
       }
