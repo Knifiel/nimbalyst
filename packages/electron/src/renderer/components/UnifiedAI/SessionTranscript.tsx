@@ -19,6 +19,7 @@ import React, { useCallback, useRef, useImperativeHandle, forwardRef, useEffect,
 import { useAtom, useSetAtom, useAtomValue } from 'jotai';
 import { store, registerInteractiveWidgetHost, unregisterInteractiveWidgetHost } from '@nimbalyst/runtime/store';
 import type { SessionData, ChatAttachment, TranscriptViewMessage } from '@nimbalyst/runtime/ai/server/types';
+import type { ExitPlanModeDeferral } from '@nimbalyst/runtime/ai/exitPlanModeDeferral';
 import { agentCapabilitiesForProviderType } from '@nimbalyst/runtime/ai/server/agentCapabilities';
 import type { ToolCallDiffLoadResult } from '@nimbalyst/runtime/ai/server/transcript';
 import { AgentTranscriptPanel } from '@nimbalyst/runtime/ui/AgentTranscript/components/AgentTranscriptPanel';
@@ -193,6 +194,19 @@ function summarizeTeammates(
 
 function emitSessionRenderTrace(event: string, payload: Record<string, unknown>): void {
   // console.info(`[RenderTrace][SessionTranscript] ${event} ${JSON.stringify(payload)}`);
+}
+
+// The plan card names the worktree a plan was handed to. The name is only a
+// label, so a failed read leaves the card saying "new worktree".
+async function readWorktreeName(worktreeId: string | null | undefined): Promise<string | null> {
+  if (!worktreeId) return null;
+  try {
+    const result = await window.electronAPI.invoke('worktree:get', worktreeId);
+    return result?.worktree?.name || null;
+  } catch (error) {
+    console.warn('[SessionTranscript] Could not read the new worktree\'s name:', error);
+    return null;
+  }
 }
 
 function makeOptimisticUserMessage(
@@ -1720,13 +1734,15 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
     }));
   }, [workspacePath]);
 
-  const stopExitPlanModeSession = useCallback(async (requestId: string, confirmSessionId: string) => {
+  // deferredTo is set when the plan is implemented in another session; the
+  // provider records it in the tool result so the plan card says so.
+  const stopExitPlanModeSession = useCallback(async (requestId: string, confirmSessionId: string, deferredTo?: ExitPlanModeDeferral) => {
     // Mark the prompt as cancelled in DB so it doesn't reappear
     await respondToPrompt({
       sessionId: confirmSessionId,
       promptId: requestId,
       promptType: 'exit_plan_mode_request',
-      response: { approved: false, cancelled: true },
+      response: { approved: false, cancelled: true, deferredTo },
     });
 
     // Cancel the entire agent session - this will abort the waiting ExitPlanMode request
@@ -1762,7 +1778,7 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
       });
 
       openSessionWithDraft(newSessionId, implementationPrompt);
-      await stopExitPlanModeSession(requestId, confirmSessionId);
+      await stopExitPlanModeSession(requestId, confirmSessionId, { kind: 'session' });
 
       posthog?.capture('exit_plan_mode_response', {
         decision: 'start_new_session',
@@ -1779,8 +1795,8 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
   // worktree the way the New Worktree dialog does (the user's repositories, the
   // project's setup step), opens its session, and queues the implementation
   // prompt once the setup command finishes. The planning session stops only
-  // after the launch succeeded.
-  const handleExitPlanModeStartWorktreeSession = useCallback(async (requestId: string, confirmSessionId: string, planFilePath: string) => {
+  // after the launch succeeded. Resolves with the new worktree's name.
+  const handleExitPlanModeStartWorktreeSession = useCallback(async (requestId: string, confirmSessionId: string, planFilePath: string): Promise<{ worktreeName: string | null }> => {
     if (!workspacePath) {
       throw new Error('Cannot start a worktree session without workspacePath');
     }
@@ -1788,18 +1804,20 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
       planFilePath,
       basePath: sessionWorktreePath || workspacePath,
     });
-    await window.electronAPI.invoke('action-prompts:launch-new-session', {
+    const launch = await window.electronAPI.invoke('action-prompts:launch-new-session', {
       workspacePath,
       parentSessionId: confirmSessionId,
       prompt: implementationPrompt,
       title: 'Implement plan',
       config: { foreground: true, autoSubmit: true, worktree: true },
     });
-    await stopExitPlanModeSession(requestId, confirmSessionId);
+    const worktreeName = await readWorktreeName(launch?.worktreeId);
+    await stopExitPlanModeSession(requestId, confirmSessionId, { kind: 'worktree', worktreeName });
     posthog?.capture('exit_plan_mode_response', {
       decision: 'start_worktree_session',
       is_worktree: !!worktreeId,
     });
+    return { worktreeName };
   }, [workspacePath, sessionWorktreePath, worktreeId, posthog, stopExitPlanModeSession]);
 
   const handleExitPlanModeCancel = useCallback(async (requestId: string, confirmSessionId: string) => {
@@ -1889,9 +1907,8 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
       },
       // Offered only where worktrees work: the project is a git repository
       exitPlanModeStartWorktreeSession: isGitRepo
-        ? async (requestId: string, planFilePath: string) => {
-          await handleExitPlanModeStartWorktreeSession(requestId, sessionId, planFilePath);
-        }
+        ? (requestId: string, planFilePath: string) =>
+          handleExitPlanModeStartWorktreeSession(requestId, sessionId, planFilePath)
         : undefined,
       exitPlanModeDeny: async (requestId: string, feedback?: string) => {
         await handleExitPlanModeDeny(requestId, sessionId, feedback);
