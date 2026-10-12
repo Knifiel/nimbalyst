@@ -175,7 +175,9 @@ export interface InteractiveWidgetHost {
      * worktrees leave it out and the widget does not offer it. Resolves with the
      * new worktree's name, or null when it could not be read.
      */
-    exitPlanModeStartWorktreeSession?(requestId: string, planFilePath: string): Promise<{ worktreeName: string | null }>;
+    exitPlanModeStartWorktreeSession?(requestId: string, planFilePath: string): Promise<{
+        worktreeName: string | null;
+    }>;
     /**
      * Deny exit and continue planning, optionally with feedback
      */
