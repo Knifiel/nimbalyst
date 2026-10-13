@@ -2,9 +2,10 @@
  * Electron wiring for `consoleLinkRouter`: the one router instance, the
  * window's answer channel, and the deep-link entry.
  */
-import { shell, type BrowserWindow, type WebContents } from 'electron';
+import type { BrowserWindow, WebContents } from 'electron';
 
 import { safeOn } from '../../utils/ipcRegistry';
+import { systemShell } from '../../utils/systemShell';
 import {
   CONSOLE_LINK_RESULT_CHANNEL,
   createConsoleLinkRouter,
@@ -13,7 +14,7 @@ import {
 
 const router = createConsoleLinkRouter({
   openExternal: (url) => {
-    void shell.openExternal(url);
+    void systemShell.openExternal(url);
   },
 });
 
