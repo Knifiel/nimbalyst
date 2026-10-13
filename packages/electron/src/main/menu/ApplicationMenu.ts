@@ -21,7 +21,8 @@
  * - Recent items change
  * - Windows are opened/closed/focused
  */
-import { Menu, BrowserWindow, app, dialog, shell, nativeTheme } from 'electron';
+import { Menu, BrowserWindow, app, dialog, nativeTheme } from 'electron';
+import { systemShell } from '../utils/systemShell';
 import { basename, join } from 'path';
 import * as path from 'path';
 import { existsSync } from 'fs';
@@ -1310,7 +1311,7 @@ export async function createApplicationMenu() {
                             fs.writeFileSync(logPath, `=== Nimbalyst Debug Log ===\nNo debug messages yet.\n\nDebug logging is only active in development mode.\nTo enable debug logging in production, set NODE_ENV=development\n`);
                         }
 
-                        shell.openPath(logPath).catch((err: any) => {
+                        systemShell.openPath(logPath).catch((err: any) => {
                             console.error('Failed to open debug log:', err);
                             dialog.showErrorBox('Error', `Could not open debug log at: ${logPath}`);
                         });
@@ -1330,7 +1331,7 @@ export async function createApplicationMenu() {
                             fs.writeFileSync(logPath, `=== Nimbalyst Main Log ===\nNo log messages yet.\n\nThis log contains main process and application logs.\n`);
                         }
 
-                        shell.openPath(logPath).catch((err: any) => {
+                        systemShell.openPath(logPath).catch((err: any) => {
                             console.error('Failed to open main log:', err);
                             dialog.showErrorBox('Error', `Could not open main log at: ${logPath}`);
                         });
@@ -1435,7 +1436,7 @@ export async function createApplicationMenu() {
                     label: 'Open User Data Directory',
                     click: async () => {
                         const userDataPath = app.getPath('userData');
-                        shell.openPath(userDataPath).catch((err: any) => {
+                        systemShell.openPath(userDataPath).catch((err: any) => {
                             console.error('Failed to open user data directory:', err);
                             dialog.showErrorBox('Error', `Could not open user data directory at: ${userDataPath}`);
                         });
@@ -1711,7 +1712,7 @@ export async function createApplicationMenu() {
                             helpType: 'docs',
                             context: 'menu',
                         });
-                        shell.openExternal('https://docs.nimbalyst.com/');
+                        systemShell.openExternal('https://docs.nimbalyst.com/');
                     }
                 },
                 {
@@ -1721,7 +1722,7 @@ export async function createApplicationMenu() {
                             helpType: 'chrome_extension',
                             context: 'menu',
                         });
-                        shell.openExternal('https://chromewebstore.google.com/detail/nimbalyst-web-clipper/fdbmklnnkalihoblphakoebgmieljkbb');
+                        systemShell.openExternal('https://chromewebstore.google.com/detail/nimbalyst-web-clipper/fdbmklnnkalihoblphakoebgmieljkbb');
                     }
                 },
                 // Extension SDK Documentation - only show when Extension Development Kit is enabled
@@ -1783,7 +1784,7 @@ export async function createApplicationMenu() {
                             helpType: 'github_issues',
                             context: 'menu',
                         });
-                        shell.openExternal('https://github.com/nimbalyst/nimbalyst/issues');
+                        systemShell.openExternal('https://github.com/nimbalyst/nimbalyst/issues');
                     }
                 },
                 {
@@ -1793,7 +1794,7 @@ export async function createApplicationMenu() {
                             helpType: 'github_discussions',
                             context: 'menu',
                         });
-                        shell.openExternal('https://github.com/nimbalyst/nimbalyst/discussions');
+                        systemShell.openExternal('https://github.com/nimbalyst/nimbalyst/discussions');
                     }
                 },
                 { type: 'separator' },
@@ -1804,7 +1805,7 @@ export async function createApplicationMenu() {
                             label: 'Join Discord',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'discord', context: 'menu' });
-                                shell.openExternal('https://discord.gg/ubZDt4esEn');
+                                systemShell.openExternal('https://discord.gg/ubZDt4esEn');
                             }
                         },
                         { type: 'separator' },
@@ -1812,35 +1813,35 @@ export async function createApplicationMenu() {
                             label: 'YouTube',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'youtube', context: 'menu' });
-                                shell.openExternal('https://youtube.com/@nimbalyst');
+                                systemShell.openExternal('https://youtube.com/@nimbalyst');
                             }
                         },
                         {
                             label: 'LinkedIn',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'linkedin', context: 'menu' });
-                                shell.openExternal('https://linkedin.com/company/nimbalyst');
+                                systemShell.openExternal('https://linkedin.com/company/nimbalyst');
                             }
                         },
                         {
                             label: 'X (Twitter)',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'x', context: 'menu' });
-                                shell.openExternal('https://x.com/nimbalyst');
+                                systemShell.openExternal('https://x.com/nimbalyst');
                             }
                         },
                         {
                             label: 'TikTok',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'tiktok', context: 'menu' });
-                                shell.openExternal('https://www.tiktok.com/@nimbalyst');
+                                systemShell.openExternal('https://www.tiktok.com/@nimbalyst');
                             }
                         },
                         {
                             label: 'Instagram',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'instagram', context: 'menu' });
-                                shell.openExternal('https://www.instagram.com/nimbalyst');
+                                systemShell.openExternal('https://www.instagram.com/nimbalyst');
                             }
                         },
                     ]
@@ -1880,7 +1881,7 @@ export async function createApplicationMenu() {
                             helpType: 'docs',
                             context: 'menu',
                         });
-                        shell.openExternal('https://docs.nimbalyst.com/');
+                        systemShell.openExternal('https://docs.nimbalyst.com/');
                     }
                 },
                 {
@@ -1890,7 +1891,7 @@ export async function createApplicationMenu() {
                             helpType: 'chrome_extension',
                             context: 'menu',
                         });
-                        shell.openExternal('https://chromewebstore.google.com/detail/nimbalyst-web-clipper/fdbmklnnkalihoblphakoebgmieljkbb');
+                        systemShell.openExternal('https://chromewebstore.google.com/detail/nimbalyst-web-clipper/fdbmklnnkalihoblphakoebgmieljkbb');
                     }
                 },
                 // Extension SDK Documentation - only show when Extension Development Kit is enabled
@@ -1952,7 +1953,7 @@ export async function createApplicationMenu() {
                             helpType: 'github_issues',
                             context: 'menu',
                         });
-                        shell.openExternal('https://github.com/nimbalyst/nimbalyst/issues');
+                        systemShell.openExternal('https://github.com/nimbalyst/nimbalyst/issues');
                     }
                 },
                 {
@@ -1962,7 +1963,7 @@ export async function createApplicationMenu() {
                             helpType: 'github_discussions',
                             context: 'menu',
                         });
-                        shell.openExternal('https://github.com/nimbalyst/nimbalyst/discussions');
+                        systemShell.openExternal('https://github.com/nimbalyst/nimbalyst/discussions');
                     }
                 },
                 { type: 'separator' },
@@ -1973,7 +1974,7 @@ export async function createApplicationMenu() {
                             label: 'Join Discord',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'discord', context: 'menu' });
-                                shell.openExternal('https://discord.gg/ubZDt4esEn');
+                                systemShell.openExternal('https://discord.gg/ubZDt4esEn');
                             }
                         },
                         { type: 'separator' },
@@ -1981,35 +1982,35 @@ export async function createApplicationMenu() {
                             label: 'YouTube',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'youtube', context: 'menu' });
-                                shell.openExternal('https://youtube.com/@nimbalyst');
+                                systemShell.openExternal('https://youtube.com/@nimbalyst');
                             }
                         },
                         {
                             label: 'LinkedIn',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'linkedin', context: 'menu' });
-                                shell.openExternal('https://linkedin.com/company/nimbalyst');
+                                systemShell.openExternal('https://linkedin.com/company/nimbalyst');
                             }
                         },
                         {
                             label: 'X (Twitter)',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'x', context: 'menu' });
-                                shell.openExternal('https://x.com/nimbalyst');
+                                systemShell.openExternal('https://x.com/nimbalyst');
                             }
                         },
                         {
                             label: 'TikTok',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'tiktok', context: 'menu' });
-                                shell.openExternal('https://www.tiktok.com/@nimbalyst');
+                                systemShell.openExternal('https://www.tiktok.com/@nimbalyst');
                             }
                         },
                         {
                             label: 'Instagram',
                             click: async () => {
                                 AnalyticsService.getInstance().sendEvent('help_accessed', { helpType: 'instagram', context: 'menu' });
-                                shell.openExternal('https://www.instagram.com/nimbalyst');
+                                systemShell.openExternal('https://www.instagram.com/nimbalyst');
                             }
                         },
                     ]
