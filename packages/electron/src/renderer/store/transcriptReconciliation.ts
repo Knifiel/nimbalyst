@@ -98,6 +98,19 @@ export function reconcileTranscriptMessages(
     const time = messageTime(message);
     return time > newest ? time : newest;
   }, 0);
+  // A copy no saved row acknowledged (its send failed, or a retry of the same
+  // text acknowledged the failed copy instead) is orphaned once a later prompt
+  // has been saved and answered: sends are serial, so nothing saved can still
+  // be on its way for it. Without this it stays pinned below every turn (#1608).
+  const newestReply = ordered.reduce(
+    (newest, message) =>
+      message.type === 'user_message' ? newest : Math.max(newest, messageTime(message)),
+    0,
+  );
+  const answeredPrompt = ordered.reduce((newest, message) => {
+    const time = messageTime(message);
+    return message.type === 'user_message' && time < newestReply && time > newest ? time : newest;
+  }, 0);
   const pending = [...optimistic.values()].filter((message) => {
     if (message.type !== 'user_message') return messageTime(message) >= newestCanonical;
     const match = acknowledgements.findIndex(
@@ -107,7 +120,7 @@ export function reconcileTranscriptMessages(
           optimisticAcknowledgmentText(message.text) &&
         messageTime(persisted) >= messageTime(message),
     );
-    if (match < 0) return true;
+    if (match < 0) return messageTime(message) >= answeredPrompt;
     acknowledgements.splice(match, 1);
     return false;
   });

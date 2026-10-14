@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The pull request panel no longer reports the GitHub CLI as signed out when `gh auth status` is slow to answer.
 - A Claude Code session no longer keeps showing "Waiting for your response" after you answer its question while it carries on working.
 - After you start a new session to implement a plan, the planning session's plan card says "Deferred to new session" instead of "Denied"
+- A prompt left at the bottom of the transcript (for example after a failed or retried send, such as `/compact`) no longer stays below later replies
 
 ### Removed
 <!-- Removed features go here -->

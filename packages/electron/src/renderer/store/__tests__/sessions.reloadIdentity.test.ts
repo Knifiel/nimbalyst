@@ -345,6 +345,44 @@ describe('canonical generation load/reload reconciliation', () => {
       await run(store, { sessionId: id, workspacePath: '/repo' });
       expect(store.get(sessionStoreAtom(id))!.messages.map((m) => m.id)).toEqual([1, 2, 3]);
     });
+    // #1608: a copy no saved row acknowledges (its send failed, or a retry of
+    // the same text was matched to the failed copy instead) stayed pinned below
+    // every later turn. Sends are serial, so an answered later prompt retires it.
+    it.each([
+      { variant: 'a failed send', copies: [2000], laterText: 'Next request' },
+      { variant: 'a retried send', copies: [2000, 2500], laterText: '/compact' },
+    ])(`${name} retires an unacknowledged prompt copy once a later prompt is answered: $variant`, async ({ variant, copies, laterText }) => {
+      const store = createStore();
+      const id = `optimistic-orphan-${name}-${variant}`;
+      const prompt = {
+        ...message(1, 0, 7, 'First request'),
+        type: 'user_message' as const,
+        createdAt: new Date(1000),
+      };
+      const pending = copies.map((time, i) => ({
+        ...makeMessage(-7 - i, '/compact'),
+        type: 'user_message' as const,
+        createdAt: new Date(time),
+      }));
+      let snapshot: TranscriptViewMessage[] = [prompt];
+      vi.stubGlobal('window', {
+        electronAPI: {
+          aiLoadSession: vi.fn(async () =>
+            makeSession({ id, model: 'claude:test', messages: snapshot }),
+          ),
+        },
+      });
+      store.set(sessionStoreAtom(id), makeSession({ id, messages: [prompt, ...pending] }));
+      await run(store, { sessionId: id, workspacePath: '/repo' });
+      expect(store.get(sessionStoreAtom(id))!.messages.map((m) => m.id)).toEqual([1, ...pending.map((m) => m.id)]);
+      snapshot = [
+        prompt,
+        { ...message(2, 1, 7, laterText), type: 'user_message', createdAt: new Date(3000) },
+        { ...message(3, 2, 7, 'Answer'), createdAt: new Date(4000) },
+      ];
+      await run(store, { sessionId: id, workspacePath: '/repo' });
+      expect(store.get(sessionStoreAtom(id))!.messages.map((m) => m.id)).toEqual([1, 2, 3]);
+    });
     it(`${name} rejects an older snapshot arriving after newer streamed messages`, async () => {
       const store = createStore();
       const id = `generation-stale-${name}`;
