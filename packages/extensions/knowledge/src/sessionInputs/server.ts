@@ -12,7 +12,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -143,4 +143,14 @@ function main(): void {
   });
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+/** Whether this file is the process entry. Node resolves symlinks in `import.meta.url` but not in argv (macOS `/tmp` is `/private/tmp`). */
+export function isEntry(argv1: string | undefined, moduleUrl: string): boolean {
+  if (!argv1) return false;
+  try {
+    return realpathSync(path.resolve(argv1)) === realpathSync(fileURLToPath(moduleUrl));
+  } catch {
+    return false;
+  }
+}
+
+if (isEntry(process.argv[1], import.meta.url)) main();

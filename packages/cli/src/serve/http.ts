@@ -77,4 +77,28 @@ export async function readJson<T>(req: IncomingMessage): Promise<T> {
   }
 }
 
+/** Content types a cross-site form can send without a CORS preflight; a raw upload refuses them. */
+const SIMPLE_CONTENT_TYPES = ['application/x-www-form-urlencoded', 'multipart/form-data', 'text/plain'];
+
+/** Reads a raw upload body of at most `maxBytes`. The content-type check is the same CSRF guard as `readJson`. */
+export async function readBytes(req: IncomingMessage, maxBytes: number): Promise<Uint8Array> {
+  const type = (req.headers['content-type'] ?? '').toLowerCase();
+  if (!type || SIMPLE_CONTENT_TYPES.some((simple) => type.startsWith(simple))) {
+    throw new HttpError(415, 'unsupported-media-type', 'Send the file as application/octet-stream or its own type');
+  }
+  if (Number(req.headers['content-length'] ?? 0) > maxBytes) throw tooLarge(maxBytes);
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > maxBytes) throw tooLarge(maxBytes);
+    chunks.push(chunk as Buffer);
+  }
+  return new Uint8Array(Buffer.concat(chunks));
+}
+
+function tooLarge(maxBytes: number): HttpError {
+  return new HttpError(413, 'too-large', `Files over ${Math.round(maxBytes / (1024 * 1024))} MB cannot be attached here`);
+}
+
 export { BASE_HEADERS };

@@ -57,6 +57,12 @@ describe('LocalWikiService', () => {
     expect(snapshot.exists).toBe(true);
     expect(snapshot.items.map((item) => item.title)).toEqual(['Pricing']);
     expect(await service.pageFilePath(project, id!)).toBe(path.join(root, 'Pricing.md'));
+
+    // A file dropped into the page lands in its own hidden folder; a file outside the wiki is refused.
+    const { link } = await service.storeAttachment(project, path.join(root, 'Pricing.md'), 'deck.pdf', new Uint8Array([1, 2]));
+    expect(link).toBe('Pricing/.assets/deck.pdf');
+    expect(fs.readFileSync(path.join(root, 'Pricing', '.assets', 'deck.pdf'))).toEqual(Buffer.from([1, 2]));
+    await expect(service.storeAttachment(project, path.join(project, 'README.md'), 'x.pdf', new Uint8Array([1]))).rejects.toThrow(/not a page/);
   });
 
   // Before type descriptions were routed to the database, describing a Personal

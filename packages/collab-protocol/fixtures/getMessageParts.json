@@ -1,0 +1,8 @@
+{
+  "type": "getMessageParts",
+  "transferId": "0123456789abcdef0123456789abcdef",
+  "indexes": [
+    0,
+    1
+  ]
+}

@@ -1,5 +1,5 @@
 import React, { forwardRef, useCallback, useEffect } from "react";
-import { useAtom, useAtomValue } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import type { ChatAttachment } from "@nimbalyst/runtime/ai/server/types";
 import { AIInput, type AIInputRef } from "./AIInput";
 import {
@@ -9,6 +9,7 @@ import {
   sessionDraftLocalModifiedAtAtom,
   canPersistSessionDraft,
 } from "../../store/atoms/sessions";
+import { sessionPromptSuggestionAtom } from "../../store/atoms/promptSuggestion";
 
 // Props for the input wrapper — same as AIInput minus the value/onChange
 // pair (which the wrapper owns) and attachments handling (we wire it up
@@ -64,12 +65,25 @@ export const SessionAIInput = forwardRef<AIInputRef, SessionAIInputProps>(
       sessionDraftLocalModifiedAtAtom(sessionId)
     );
 
+    const promptSuggestion = useAtomValue(sessionPromptSuggestionAtom(sessionId));
+    const setPromptSuggestion = useSetAtom(sessionPromptSuggestionAtom(sessionId));
+    const clearPromptSuggestion = useCallback(
+      () => setPromptSuggestion(null),
+      [setPromptSuggestion]
+    );
+
+    // A suggestion answers the turn that just ended; once another turn runs it is stale.
+    useEffect(() => {
+      if (rest.isLoading) clearPromptSuggestion();
+    }, [rest.isLoading, clearPromptSuggestion]);
+
     const handleChange = useCallback(
       (value: string) => {
+        if (value) clearPromptSuggestion();
         setDraftInputRaw(value);
         setDraftLocalModifiedAt(Date.now());
       },
-      [setDraftInputRaw, setDraftLocalModifiedAt]
+      [setDraftInputRaw, setDraftLocalModifiedAt, clearPromptSuggestion]
     );
 
     // Debounced persistence of draft input to database — survives restarts.
@@ -110,6 +124,7 @@ export const SessionAIInput = forwardRef<AIInputRef, SessionAIInputProps>(
         attachments={enableAttachments ? draftAttachments : undefined}
         onAttachmentAdd={enableAttachments ? onAttachmentAdd : undefined}
         onAttachmentRemove={enableAttachments ? onAttachmentRemove : undefined}
+        promptSuggestion={promptSuggestion}
         {...rest}
       />
     );

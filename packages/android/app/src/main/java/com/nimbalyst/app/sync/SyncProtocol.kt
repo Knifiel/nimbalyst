@@ -159,6 +159,7 @@ data class CreateWorktreeResponse(
 )
 
 data class SessionSyncRequest(
+    val sinceRevision: Long? = null,
     val type: String = "syncRequest",
     val sinceSeq: Int? = null,
     /** Message id cursor; the server accepts either this or [sinceSeq]. */
@@ -377,6 +378,24 @@ data class IndexBroadcast(
     val fromConnectionId: String? = null,
 )
 
+/**
+ * A session's live context-window usage, relayed by the server and never
+ * stored. `encryptedContext`/`contextIv` decrypt to [ClientMetadata] JSON
+ * holding only `currentContext`.
+ */
+data class LiveSessionContext(
+    val sessionId: String,
+    val encryptedContext: String,
+    val contextIv: String,
+    val at: Long,
+)
+
+data class SessionContextBroadcast(
+    val type: String,
+    val update: LiveSessionContext,
+    val fromConnectionId: String? = null,
+)
+
 data class IndexDeleteBroadcast(
     val type: String,
     val sessionId: String,
@@ -471,6 +490,7 @@ data class ServerErrorMessage(
 )
 
 data class SessionSyncResponse(
+    val revisionCursor: Long? = null,
     val type: String,
     val messages: List<ServerMessageEntry> = emptyList(),
     val metadata: SessionRoomMetadata? = null,
@@ -479,6 +499,9 @@ data class SessionSyncResponse(
 )
 
 data class ServerMessageEntry(
+    val projectionVersion: Int? = null,
+    val revision: Long? = null,
+    val payload: SessionPayloadReference? = null,
     val id: String,
     val sequence: Int,
     val createdAt: Long,
@@ -490,6 +513,7 @@ data class ServerMessageEntry(
 )
 
 data class AppendMessageRequest(
+    val expectedRevision: Long? = null,
     val type: String = "appendMessage",
     val message: ServerMessageEntry,
 )

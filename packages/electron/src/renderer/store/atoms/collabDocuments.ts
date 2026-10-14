@@ -7,6 +7,7 @@
  */
 
 import { atom } from 'jotai';
+import { store } from '@nimbalyst/runtime/store';
 import type { TeamSyncProvider as TeamSyncProviderType } from '@nimbalyst/runtime/sync';
 import {
   CollabScopeResolutionError,
@@ -154,6 +155,19 @@ export function invalidateElectronCollabScopes(): void {
   }
 }
 
+/**
+ * Re-resolve one workspace's team scope when it has no running team session.
+ *
+ * For "the team directory changed" (main matched the workspace to a team):
+ * a window that settled on "no team" re-asks, while one already showing the
+ * team's pages keeps its live session instead of being torn down.
+ */
+export function invalidateElectronCollabScopeWithoutTeam(scopeKey: string): void {
+  if (getCollabDocsSession(scopeKey)) return;
+  const host = hostsByScope.get(scopeKey);
+  if (host instanceof ElectronCollabHost) host.invalidateScope();
+}
+
 export function getElectronCollabHost(scope: CollabScope): ElectronCollabHost {
   return getOrCreateElectronHost(scope.scopeKey);
 }
@@ -218,14 +232,25 @@ export async function resolveDesktopCollabScope(scopeKey: string): Promise<{
   }
 }
 
+/**
+ * Why a scope's team pages failed to start, or null. Pages shows it with a
+ * Retry; a pending link to the scope fails with it instead of waiting forever.
+ */
+export const teamPagesStartErrorAtomFamily = atomFamily((_scopeKey: string) => atom<string | null>(null));
+
 export async function initSharedDocuments(scope: CollabScope): Promise<void> {
   const session = getElectronCollabDocsSession(scope);
   try {
     await session.start();
   } catch (error) {
     console.error('[collabDocuments] Failed to initialize team sync:', error);
+    // The session is still the scope's; a later start (Retry) replaces this.
+    if (getCollabDocsSession(scope.scopeKey) === session) {
+      store.set(teamPagesStartErrorAtomFamily(scope.scopeKey), error instanceof Error ? error.message : String(error));
+    }
     return;
   }
+  store.set(teamPagesStartErrorAtomFamily(scope.scopeKey), null);
   const provider = getTeamSyncProvider(scope);
   if (!provider) return;
   void pendingDocRegistrations.flush(scope.scopeKey, provider)
@@ -369,6 +394,7 @@ export function destroyTeamSync(scope: CollabScope): void {
 export function pruneCollabDocumentsScopeState(scopeKey: string): void {
   pruneCollabDocsSession(scopeKey);
   hostsByScope.delete(scopeKey);
+  teamPagesStartErrorAtomFamily.remove(scopeKey);
   if (isPersonalCollabScopeKey(scopeKey)) return;
   const personalScopeKey = personalCollabScopeKey(scopeKey);
   pruneCollabDocsSession(personalScopeKey);

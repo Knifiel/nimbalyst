@@ -21,7 +21,7 @@
  */
 
 import { randomUUID } from "crypto";
-import simpleGit from "simple-git";
+import { createGit } from "../gitClient";
 import { asPersonalMemberId, type PersonalMemberId } from "@nimbalyst/runtime/auth/jwtScopes";
 
 import type {
@@ -1004,8 +1004,8 @@ export function createDefaultNodeEnvironment(): SandboxNodeEnvironment {
     revokeNodeCredential: (nodeId) => grant().revoke(nodeId),
 
     git: {
-      remoteUrl: (workspacePath) => simpleGit(workspacePath).raw(["remote", "get-url", "origin"]),
-      branch: (workspacePath) => simpleGit(workspacePath).revparse(["--abbrev-ref", "HEAD"]),
+      remoteUrl: (workspacePath) => createGit(workspacePath).raw(["remote", "get-url", "origin"]),
+      branch: (workspacePath) => createGit(workspacePath).revparse(["--abbrev-ref", "HEAD"]),
     },
 
     async requestRemoteSession({ requestId, projectId, prompt, targetDeviceId }) {

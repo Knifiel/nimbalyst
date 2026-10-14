@@ -17,7 +17,7 @@ const h = vi.hoisted(() => ({
   deviceInfo: undefined as undefined | (() => {deviceId: string}),
 }));
 vi.mock('@nimbalyst/runtime/sync', () => ({
-  setSyncImageCompressor: vi.fn(), setSyncClientInfo: vi.fn(),
+  setSyncImageCompressor: vi.fn(), setSyncLocalImageLoader: vi.fn(), setSyncClientInfo: vi.fn(),
   deriveEncryptionKey: vi.fn(async () => ({})), personalSyncEncryptionSalt: vi.fn(),
   createCollabV3Sync: (config: {getDeviceInfo: typeof h.deviceInfo}) => { h.deviceInfo = config.getDeviceInfo; return ({ getPersonalSyncWriteGate: () => h.gate, onPersonalSyncWriteGateChange: (cb: typeof h.gateChanged) => { h.gateChanged = cb; return () => {}; }, onDeviceStatusChange: (cb: typeof h.joined) => { h.joined = cb; }, syncSettings: h.sentSettings }); },
   createSyncedSessionStore: (store: unknown) => store, createMessageSyncHandler: vi.fn(),

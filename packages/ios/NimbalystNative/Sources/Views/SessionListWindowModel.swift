@@ -314,6 +314,7 @@ final class SessionListWindowModel: ObservableObject {
     private func fail(_ failure: SessionListLoadFailure) {
         state = .failed
         self.failure = failure
+        DiagnosticsLog.shared.record(area: "sessionList.\(failure.stage.rawValue)", summary: "Couldn't load sessions", detail: failure.detail)
         AnalyticsManager.shared.capture("mobile_session_load_error", properties: failure.analyticsProperties)
     }
 

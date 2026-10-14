@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { access, mkdtemp, mkdir, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdtemp, mkdir, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { CsvParseError, initWiki, LocalWiki, openWiki, parseCsv, stringifyCsv } from '../index.js';
@@ -61,6 +62,33 @@ describe('move and rename', () => {
     const snap = await wiki!.snapshot();
     expect(snap.pages.find((p) => p.id === 'P')).toMatchObject({ parentId: 'A', path: 'Archive/Acme Corp/Pricing.md' });
     expect(snap.issues).toEqual([]);
+  });
+
+  it('stores attachments in the page folder, dedupes them, and keeps their links through a rename and move', async () => {
+    await put('Q3 Plan.md', '---\nid: Q\n---\n');
+    await put('Archive.md', '---\nid: R\n---\n');
+    await open();
+    const bytes = new TextEncoder().encode('%PDF');
+    const first = await wiki!.storeAttachment('Q', 'spec v2.pdf', bytes);
+    expect(first).toEqual({ path: 'Q3 Plan/.assets/spec v2.pdf', link: 'Q3%20Plan/.assets/spec%20v2.pdf' });
+    expect(await wiki!.storeAttachment('Q', 'spec v2.pdf', bytes)).toEqual(first);
+    expect((await wiki!.storeAttachment('Q', '../spec v2.pdf', new TextEncoder().encode('other'))).path).toBe('Q3 Plan/.assets/spec v2 (2).pdf');
+    // The hidden folder is not a page, and the page has no children.
+    const snap = await wiki!.snapshot();
+    expect(snap.pages.map((p) => p.title).sort()).toEqual(['Archive', 'Q3 Plan']);
+
+    await wiki!.writeBody('Q', `![shot](Q3%20Plan/.assets/shot.png) and [spec](${first.link}) and [web](https://x.test/Q3%20Plan/a)\n`, null);
+    await wiki!.command({ type: 'update-document-title', documentId: 'Q', title: 'Q4 Plan' });
+    await wiki!.command({ type: 'move-document', documentId: 'Q', parentFolderId: 'R' });
+    expect(await read('Archive/Q4 Plan.md')).toContain('![shot](Q4%20Plan/.assets/shot.png) and [spec](Q4%20Plan/.assets/spec%20v2.pdf) and [web](https://x.test/Q3%20Plan/a)');
+    expect(await exists(path.join(root, 'Archive/Q4 Plan/.assets/spec v2.pdf'))).toBe(true);
+
+    // A page's links resolve to files inside the wiki, never its bookkeeping or anything outside.
+    expect(await wiki!.resolvePageFile('Q', 'Q4 Plan/.assets/spec v2.pdf')).toBe(path.join(root, 'Archive/Q4 Plan/.assets/spec v2.pdf'));
+    expect(await wiki!.resolvePageFile('R', 'Archive/Q4 Plan/.assets/spec v2.pdf')).toBe(path.join(root, 'Archive/Q4 Plan/.assets/spec v2.pdf'));
+    expect(await wiki!.resolvePageFile('Q', '../../outside.txt')).toBeNull();
+    expect(await wiki!.resolvePageFile('Q', '../.nimbalyst-wiki.yaml')).toBeNull();
+    expect(await wiki!.resolvePageFile('Q', 'Q4 Plan/.assets/missing.png')).toBeNull();
   });
 });
 
@@ -391,6 +419,21 @@ describe('table types', () => {
     await rm(path.join(root, '..', `${path.basename(root)}-types`), { recursive: true, force: true });
   });
 
+  it('keeps a wikiId another instance stored when placing a table', async () => {
+    const typesDir = await withPartnerType();
+    await put('Ops.md', '---\nid: O\n---\n');
+    await open({ typesDir });
+    const other = await openWiki(root, { typesDir });
+    const id = await other.wikiId();
+    other.close();
+    expect(id).toMatch(/^[0-9A-Z]{26}$/);
+    await wiki!.command({ type: 'set-type-placement', typeId: 'partner', parentFolderId: 'O', sortOrder: 500 });
+    const reopened = await openWiki(root, { typesDir });
+    expect(await reopened.wikiId()).toBe(id);
+    reopened.close();
+    expect(await read('.nimbalyst-wiki.yaml')).toContain('order: 500');
+  });
+
   it('round-trips rows with quotes, newlines, commas and ; through the CSV', async () => {
     const typesDir = await withPartnerType();
     await put('Ops.md', '---\nid: O\n---\n');
@@ -447,9 +490,175 @@ describe('table types', () => {
     expect(await readFile(path.join(typesDir, 'partner.yaml'), 'utf8')).toContain('storage: pages\n');
     expect((await wiki!.trackerSnapshot('partner')).items.map((i) => i.title).sort()).toEqual(['Globex', 'Initech']);
   });
+
+  it('converts a nested table with a commented storage line, keeping ids, every field value and activity', async () => {
+    const typesDir = await withPartnerType('table   # or pages');
+    await put('Ops.md', '---\nid: O\n---\n');
+    await put('Ops/Partners.csv', 'id,title,tier,tags,seats,owner,extra\nR1,Globex,gold,a;b\\;c,12,O,kept\nR2,"Say ""hi""",,,,,\n');
+    await open({ typesDir });
+    await wiki!.trackerCommand('partner', { type: 'update-item', input: { itemId: 'R1', updates: { tier: 'silver' } } });
+    const before = (await wiki!.trackerSnapshot('partner')).items.map(({ id, title, fields }) => ({ id, title, fields }));
+
+    expect((await wiki!.convertTableToPages('partner')).typeFileUpdated).toBe(true);
+    expect(await readFile(path.join(typesDir, 'partner.yaml'), 'utf8')).toContain('storage: pages   # or pages\n');
+    expect(await ls('Ops')).toEqual(['Globex.md', 'Globex.activity.jsonl', 'Say -hi-.md'].sort());
+    const after = await wiki!.trackerSnapshot('partner');
+    expect(after.storage).toBe('pages');
+    expect(after.items.map(({ id, title, fields }) => ({ id, title, fields })).sort((a, b) => a.id.localeCompare(b.id))).toEqual(
+      before.map(({ id, title, fields }) => ({ id, title, fields: Object.fromEntries(Object.entries(fields).filter(([k]) => k !== 'title')) })),
+    );
+    expect(after.items.every((item) => item.parentId === 'O')).toBe(true);
+    expect((await wiki!.readActivity('R1')).map((e) => e.action)).toEqual(['update']);
+  });
+
+  it('reports a wiki type field whose name the tracker model keeps for item metadata', async () => {
+    const typesDir = await withPartnerType('pages');
+    await writeFile(path.join(typesDir, 'competitor.yaml'), 'type: competitor\nstorage: pages\nfields:\n  - name: activity\n    type: select\n  - name: threat\n    type: select\n');
+    await writeFile(path.join(typesDir, 'bug.yaml'), 'type: bug\nfields:\n  - name: source\n    type: string\n');
+    await put('Acme.md', '---\nid: A\ntype: competitor\nactivity: active\n---\n');
+    await open({ typesDir });
+    const issues = (await wiki!.snapshot()).issues.filter((issue) => issue.code === 'reserved-field');
+    // Only wiki types: an app type's items never pass through the wiki.
+    expect(issues).toEqual([expect.objectContaining({ path: path.join(typesDir, 'competitor.yaml'), message: expect.stringContaining('"activity"') })]);
+    // The value stays in the file and in the library's model; nothing is dropped on read.
+    expect((await wiki!.trackerSnapshot('competitor')).items[0].fields).toEqual({ activity: 'active' });
+  });
+
+  it('stops a conversion whose activity log cannot be read, before anything goes to trash', async () => {
+    const typesDir = await withPartnerType();
+    await put('Partners.csv', 'id,title\nR1,Globex\n');
+    await put('Partners.activity.jsonl', '{"at":"x","itemId":"R1","action":"create"}\n');
+    await open({ typesDir });
+    await chmod(path.join(root, 'Partners.activity.jsonl'), 0o000);
+    try {
+      await expect(wiki!.convertTableToPages('partner')).rejects.toThrow();
+    } finally {
+      await chmod(path.join(root, 'Partners.activity.jsonl'), 0o644);
+    }
+    expect(await ls()).toContain('Partners.csv');
+    expect(await ls()).toContain('Partners.activity.jsonl');
+    expect(await readFile(path.join(typesDir, 'partner.yaml'), 'utf8')).toContain('storage: table\n');
+  });
+
+  it('resumes a conversion that failed at the type file: one page per id, activity copied once', async () => {
+    const typesDir = await withPartnerType();
+    await put('Partners.csv', 'id,title,tier\nR1,Acme,gold\nR2,Globex,\n');
+    await put('Partners.activity.jsonl', '{"at":"x","itemId":"R1","action":"create"}\n');
+    await open({ typesDir });
+    await chmod(typesDir, 0o555);
+    try {
+      await expect(wiki!.convertTableToPages('partner')).rejects.toThrow();
+    } finally {
+      await chmod(typesDir, 0o755);
+    }
+    // Partial output: the pages exist, the CSV and type are untouched.
+    expect(await ls()).toContain('Partners.csv');
+    await put('Acme.md', (await read('Acme.md')) + 'Notes added between the two runs.\n');
+
+    expect((await wiki!.convertTableToPages('partner')).created).toEqual(['R1', 'R2']);
+    expect(await ls()).toEqual(['Acme.activity.jsonl', 'Acme.md', 'Globex.md']);
+    expect(await read('Acme.md')).toBe('---\nid: R1\ntype: partner\norder: 1000\ntier: gold\n---\nNotes added between the two runs.\n');
+    expect((await wiki!.readActivity('R1')).map((e) => e.action)).toEqual(['create']);
+    expect((await wiki!.trackerSnapshot('partner')).items.map((i) => i.id).sort()).toEqual(['R1', 'R2']);
+  });
+
+  it('refuses to resume over a partial page whose fields were edited since, naming the page and fields', async () => {
+    const typesDir = await withPartnerType();
+    await put('Partners.csv', 'id,title,tier\nR1,Acme,gold\nR2,Globex,\n');
+    await open({ typesDir });
+    await chmod(typesDir, 0o555);
+    try {
+      await expect(wiki!.convertTableToPages('partner')).rejects.toThrow();
+    } finally {
+      await chmod(typesDir, 0o755);
+    }
+    const edited = (await read('Acme.md')).replace('tier: gold', 'tier: silver').replace('---\n', '---\nnote: keep me\n');
+    await put('Acme.md', edited);
+
+    await expect(wiki!.convertTableToPages('partner')).rejects.toThrow(/Acme\.md.*(note.*tier|tier.*note)/s);
+    expect(await read('Acme.md')).toBe(edited);
+    expect(await ls()).toContain('Partners.csv');
+    expect(await readFile(path.join(typesDir, 'partner.yaml'), 'utf8')).toContain('storage: table\n');
+  });
+
+  it('refuses to resume over a partial page renamed since, rather than undoing the rename', async () => {
+    const typesDir = await withPartnerType();
+    await put('Partners.csv', 'id,title,tier\nR1,Acme,gold\n');
+    await open({ typesDir });
+    await chmod(typesDir, 0o555);
+    try {
+      await expect(wiki!.convertTableToPages('partner')).rejects.toThrow();
+    } finally {
+      await chmod(typesDir, 0o755);
+    }
+    await wiki!.command({ type: 'update-document-title', documentId: 'R1', title: 'Acme Corp' });
+    const renamed = await read('Acme Corp.md');
+
+    await expect(wiki!.convertTableToPages('partner')).rejects.toThrow(/Acme Corp\.md \(title\)/);
+    expect(await ls()).toEqual(['Acme Corp.md', 'Partners.csv']);
+    expect(await read('Acme Corp.md')).toBe(renamed);
+    expect(await readFile(path.join(typesDir, 'partner.yaml'), 'utf8')).toContain('storage: table\n');
+  });
+
+  it('refuses to convert when the type file cannot be flipped, leaving the CSV in place', async () => {
+    const typesDir = await withPartnerType();
+    await writeFile(path.join(typesDir, 'partner.yaml'), 'type: partner\ndisplayNamePlural: Partners\n"storage": "table"\nfields: [{ name: title }]\n');
+    await put('Partners.csv', 'id,title\nR1,Globex\n');
+    await open({ typesDir });
+    await expect(wiki!.convertTableToPages('partner')).rejects.toThrow(/storage/);
+    expect(await ls()).toEqual(['Partners.csv']);
+  });
 });
 
 describe('watch', () => {
+  it('starts watching a types folder created after watch began, and says when types changed', async () => {
+    const typesDir = path.join(root, '..', `${path.basename(root)}-late-types`);
+    const watched = new Map<string, () => void>();
+    await open({
+      typesDir,
+      debounceMs: 5,
+      typesPollMs: 5,
+      // As fs.watch: a folder that does not exist cannot be watched.
+      watchFactory: (dir, onEvent) => {
+        if (!existsSync(dir)) throw new Error('ENOENT');
+        watched.set(dir, onEvent);
+        return { close: () => watched.delete(dir) };
+      },
+    });
+    const changes: unknown[] = [];
+    const stop = wiki!.watch((change) => changes.push(change));
+    try {
+      expect([...watched.keys()]).toEqual([root]);
+      await mkdir(typesDir);
+      await writeFile(path.join(typesDir, 'partner.yaml'), 'type: partner\nstorage: table\n');
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect([...watched.keys()].sort()).toEqual([root, typesDir].sort());
+      expect(wiki!.typeDefs().map((def) => def.typeId)).toEqual(['partner']);
+      expect(changes).toEqual([{ changedIds: [], removedIds: [], tableTypes: [], typesChanged: true }]);
+
+      await writeFile(path.join(typesDir, 'partner.yaml'), 'type: partner\nstorage: pages\n');
+      watched.get(typesDir)!();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(changes).toHaveLength(2);
+      expect(wiki!.typeDefs()[0].storage).toBe('pages');
+    } finally {
+      stop();
+      await rm(typesDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports an edit made while the watcher was still starting, which the watcher never saw', async () => {
+    await put('A.md', '---\nid: A\n---\n');
+    // As FSEvents under load: the watch is open, but a change made right away is never delivered.
+    await open({ debounceMs: 5, watchCatchUpMs: [20], watchFactory: () => ({ close() {} }) });
+    const changes: unknown[] = [];
+    const stop = wiki!.watch((change) => changes.push(change));
+    await put('A.md', '---\nid: A\n---\nedited right after the watch began\n');
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(changes).toEqual([{ changedIds: ['A'], removedIds: [], tableTypes: [] }]);
+    stop();
+  });
+
   it('debounces file events into one change notification', async () => {
     let fire: () => void = () => {};
     await put('A.md', '---\nid: A\n---\n');

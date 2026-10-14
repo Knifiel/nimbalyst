@@ -86,6 +86,13 @@ export interface SetPageTypeDependencies {
   /** Open the item where the page's tab was, closing that tab. */
   openItem(itemId: string, pageId: string): void;
   wait(ms: number): Promise<void>;
+  /**
+   * Why the team's server cannot hold an item of this type yet, or null when
+   * it can. A host whose type list can run ahead of the server (desktop, where
+   * a YAML type may never have been pushed) supplies it; a host that lists only
+   * the server's types does not need to. Asked for the team lane only.
+   */
+  teamTypeProblem?(typeId: string): Promise<string | null>;
 }
 
 export type SetPageTypeOutcome =
@@ -134,6 +141,18 @@ export async function setPageType(
 
   if (page.documentType !== 'markdown') {
     return { status: 'refused', message: 'Only a text page can be given a type.' };
+  }
+
+  // An item of a type the room does not hold publishes, but nobody else can
+  // read it as that type; trashing the page would leave its text only here.
+  if (lane === 'team' && dependencies.teamTypeProblem) {
+    let problem: string | null;
+    try {
+      problem = await dependencies.teamTypeProblem(typeId);
+    } catch (error) {
+      problem = `Could not check the type with the team's server (${errorText(error)}).`;
+    }
+    if (problem) return { status: 'refused', message: `${problem} The page is unchanged.` };
   }
 
   let copy: PageCopy;

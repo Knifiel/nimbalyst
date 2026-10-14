@@ -1,5 +1,5 @@
-import simpleGit, { SimpleGit, SimpleGitOptions } from 'simple-git';
-import { GIT_INHERITED_ENV_UNSAFE } from './gitInheritedEnvUnsafe';
+import type { SimpleGit, SimpleGitOptions } from 'simple-git';
+import { createGit } from './gitClient';
 
 /**
  * A simple-git instance for background reads (status, branch lookups) that
@@ -9,10 +9,8 @@ import { GIT_INHERITED_ENV_UNSAFE } from './gitInheritedEnvUnsafe';
  *
  * GIT_OPTIONAL_LOCKS=0 is the environment form of `--no-optional-locks`, which
  * simple-git cannot pass. `core.optionalLocks` is NOT a git config key; passing
- * it via `config` is silently ignored. Supplying any env makes simple-git scan
- * it, hence the unsafe flags (see gitInheritedEnvUnsafe).
+ * it via `config` is silently ignored. createGit allows that environment.
  */
 export function simpleGitReadOnly(baseDir: string, options?: Partial<SimpleGitOptions>): SimpleGit {
-  return simpleGit(baseDir, { ...options, unsafe: GIT_INHERITED_ENV_UNSAFE })
-    .env({ ...process.env, GIT_OPTIONAL_LOCKS: '0' });
+  return createGit(baseDir, options, { ...process.env, GIT_OPTIONAL_LOCKS: '0' });
 }

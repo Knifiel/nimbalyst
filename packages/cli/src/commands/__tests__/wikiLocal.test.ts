@@ -185,4 +185,19 @@ describe('nim wiki over a local folder', () => {
     expect(await runLocalTracker(parseArgs(['tracker', 'get', 'NIM-12', ...ws]))).toBeNull();
     expect(await runLocalTracker(parseArgs(['tracker', 'list', ...ws]))).toBeNull();
   });
+
+  it('converts a table type to pages, keeping row ids', async () => {
+    const project = scratch();
+    mkdirSync(path.join(project, '.nimbalyst', 'trackers'), { recursive: true });
+    writeFileSync(path.join(project, '.nimbalyst', 'trackers', 'partner.yaml'), 'type: partner\ndisplayNamePlural: Partners\nstorage: table\n');
+    const ws = ['--workspace', project];
+    expect((await nim('wiki', 'init', ...ws)).code).toBe(0);
+    writeFileSync(path.join(project, 'nimbalyst-local', 'wiki', 'Partners.csv'), 'id,title,tier\nP1,Globex,gold\n');
+
+    expect((await nim('wiki', 'convert-type', 'partner', ...ws)).code).toBe(2);
+    const converted = await nim('wiki', 'convert-type', 'partner', '--to', 'pages', '--json', ...ws);
+    expect(converted.code).toBe(0);
+    expect(JSON.parse(converted.out)).toEqual({ type: 'partner', storage: 'pages', converted: ['P1'] });
+    expect(readFileSync(path.join(project, 'nimbalyst-local', 'wiki', 'Globex.md'), 'utf8')).toBe('---\nid: P1\ntype: partner\norder: 2000\ntier: gold\n---\n');
+  });
 });

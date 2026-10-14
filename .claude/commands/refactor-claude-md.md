@@ -27,21 +27,21 @@ You are helping refactor a CLAUDE.md file to reduce its size while preserving gu
 
 5. **Create the files** in this order:
    - Extract content to `docs/[NAME].md`
-   - Create `.claude/rules/[name].md` with appropriate globs and `@imports`
-   - Update CLAUDE.md to replace extracted content with brief reference
-   - Update the Documentation Reference table if it exists
+   - Create `.claude/rules/[name].md` with a `paths:` frontmatter and a link to the doc
+   - Update CLAUDE.md to replace extracted content with a one-line rule plus the link
+   - Update the "Read before working in an area" table if it exists
 
-6. **For path-scoped rules**, use this format:
+6. **For path-scoped rules**, use this format. Claude Code scopes rules with `paths:`; `globs:` and `imports:` are not recognized and the rule would load unconditionally with no doc attached.
    ```markdown
    ---
-   globs:
-     - "pattern1/**/*"
-     - "pattern2/**/*"
-   imports:
-     - docs/DOC_NAME.md
+   paths:
+     - "pattern1/**"
+     - "pattern2/**/*.tsx"
    ---
 
-   Brief reminder text with 2-3 key points referencing the imported doc.
+   Read [docs/DOC_NAME.md](../../docs/DOC_NAME.md) before changing these files. Key points:
+
+   - two or three one-line points
    ```
 
 ## Key Principles

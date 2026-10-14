@@ -399,6 +399,28 @@ describe('buildGridColumns', () => {
       link.props.onClick({ preventDefault: vi.fn(), stopPropagation: vi.fn() });
       expect(onOpenDetail).toHaveBeenCalledWith('gcs_1');
     });
+
+    it('opens from the title only where the host asks, so tracker grids keep click-to-select', () => {
+      const titleCell = (keyLink: Parameters<typeof buildGridColumns>[1]['keyLink']) => {
+        registerType();
+        const [column] = buildGridColumns(columnsFor(['title']), {
+          trackerType: gridType,
+          isRowEditable: () => true,
+          keyLink,
+        });
+        return (column.cellTemplate as any)(h, {
+          model: { title: 'Roadmap', [ROW_ITEM_ID]: 'gcs_1' },
+        });
+      };
+      const onOpenDetail = vi.fn();
+
+      expect(titleCell({ onOpenDetail }).props.class).toBe('tracker-grid-cell-text');
+
+      const [link] = titleCell({ onOpenDetail, titleOpens: true }).children;
+      expect(link.children).toBe('Roadmap');
+      link.props.onClick({ preventDefault: vi.fn(), stopPropagation: vi.fn() });
+      expect(onOpenDetail).toHaveBeenCalledWith('gcs_1');
+    });
   });
 });
 

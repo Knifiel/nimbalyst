@@ -9,10 +9,19 @@ let nextId = 1;
 
 export class PagesToolError extends CliError {
   readonly toolCode?: string;
-  constructor(code: (typeof ExitCode)[keyof typeof ExitCode], message: string, toolCode?: string) {
+  /** `rate_limited` only: how long the server asked us to wait (Retry-After), when it said. */
+  readonly retryAfterMs?: number;
+  constructor(code: (typeof ExitCode)[keyof typeof ExitCode], message: string, toolCode?: string, retryAfterMs?: number) {
     super(code, message);
     this.toolCode = toolCode;
+    this.retryAfterMs = retryAfterMs;
   }
+}
+
+/** Retry-After in seconds (the only form our server sends), as ms; undefined when absent or junk. */
+function retryAfterMs(res: Response): number | undefined {
+  const seconds = Number(res.headers.get('retry-after'));
+  return Number.isFinite(seconds) && seconds >= 0 ? Math.min(seconds, 120) * 1000 : undefined;
 }
 
 /** Server tool error codes, by what the caller can do about them. */
@@ -100,6 +109,10 @@ export async function callTool<T = any>(server: string, name: string, args: Reco
     },
     body: JSON.stringify({ jsonrpc: '2.0', id: nextId++, method: 'tools/call', params: { name, arguments: args } }),
   });
+  // The per-user budget (40 calls / 10 s) answers 429 before any JSON-RPC.
+  if (res.status === 429) {
+    throw new PagesToolError(ExitCode.CONNECTION, `${name}: rate limited by ${server}; try again shortly.`, 'rate_limited', retryAfterMs(res));
+  }
   let body: any;
   try {
     body = await readRpcBody(res);

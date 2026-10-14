@@ -1,0 +1,9 @@
+{
+  "type": "sessionContextUpdate",
+  "update": {
+    "sessionId": "a9724085-1664-4183-8554-bacab2816579",
+    "encryptedContext": "c3ludGhldGljLWNvbnRleHQtY2lwaGVydGV4dA==",
+    "contextIv": "c3ludGhldGljLWl2",
+    "at": 1789232405000
+  }
+}

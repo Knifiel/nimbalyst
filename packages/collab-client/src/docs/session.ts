@@ -125,6 +125,16 @@ const visibleFoldersByScope = atomFamily((scopeKey: string) => {
   );
 });
 const statusByScope = atomFamily((_scopeKey: string) => atom<CollabDocsUIStatus>('disconnected'));
+/**
+ * Set from the snapshot: the lists hold the full index as of the current
+ * connection. Cleared when the connection drops, since pages created while
+ * offline are missing from the held rows until the next reply.
+ */
+const indexLoadedByScope = atomFamily((_scopeKey: string) => atom(false));
+/** Why the index cannot be reached: reconnects keep dropping before it arrives. */
+const indexUnavailableByScope = atomFamily((_scopeKey: string) => atom<string | null>(null));
+/** Connection attempts that drop before the index reply before Pages calls it unreachable. */
+const INDEX_UNREACHABLE_AFTER_FAILED_ATTEMPTS = 2;
 const hasTeamByScope = atomFamily((_scopeKey: string) => atom(false));
 const orgIdByScope = atomFamily((_scopeKey: string) => atom<string | null>(null));
 const userIdByScope = atomFamily((_scopeKey: string) => atom<string | null>(null));
@@ -801,6 +811,9 @@ class CollabDocsSessionImpl implements CollabDocsSession {
   private personalStateUnsubscribe: (() => void) | null = null;
   private receiptUnsubscribe: (() => void) | null = null;
   private startPromise: Promise<void> | null = null;
+  /** A connection is under way that has not delivered the index yet. */
+  private indexAttemptOpen = false;
+  private failedIndexAttempts = 0;
   private migratedFolders = false;
   private disposed = false;
   /**
@@ -849,6 +862,9 @@ class CollabDocsSessionImpl implements CollabDocsSession {
     sessionsByScope.delete(this.scope.scopeKey);
     store.set(statusByScope(this.scope.scopeKey), 'disconnected');
     store.set(hasTeamByScope(this.scope.scopeKey), false);
+    // A replacement session on this key has to load its own index.
+    store.set(indexLoadedByScope(this.scope.scopeKey), false);
+    store.set(indexUnavailableByScope(this.scope.scopeKey), null);
   }
 
   persistViewPreferences(): void {
@@ -1523,6 +1539,13 @@ class CollabDocsSessionImpl implements CollabDocsSession {
         // not drop a converted tree back to folders.
         if (change.snapshot.pageTree) store.set(pageTreeByScope(scopeKey), true);
         store.set(pageFieldsByScope(scopeKey), change.snapshot.pageFields === true);
+        // After the lists above, so a reader that sees it also sees the rows.
+        if (change.snapshot.indexLoaded) {
+          this.indexAttemptOpen = false;
+          this.failedIndexAttempts = 0;
+          store.set(indexUnavailableByScope(scopeKey), null);
+          store.set(indexLoadedByScope(scopeKey), true);
+        }
         // Path-in-title folders become folder rows; a page tree has none.
         if (!this.isPageTree()) void this.migrateVirtualFolders();
         break;
@@ -1581,8 +1604,25 @@ class CollabDocsSessionImpl implements CollabDocsSession {
       }
       case 'status':
         store.set(statusByScope(scopeKey), change.status);
+        this.observeIndexTransport(change.status);
     }
     this.recomputeUnread();
+  }
+
+  private observeIndexTransport(status: CollabDocsUIStatus): void {
+    const scopeKey = this.scope.scopeKey;
+    if (status === 'connecting' || status === 'syncing') {
+      this.indexAttemptOpen = true;
+      return;
+    }
+    if (status === 'connected') return;
+    store.set(indexLoadedByScope(scopeKey), false);
+    if (!this.indexAttemptOpen) return;
+    this.indexAttemptOpen = false;
+    this.failedIndexAttempts += 1;
+    if (this.failedIndexAttempts >= INDEX_UNREACHABLE_AFTER_FAILED_ATTEMPTS) {
+      store.set(indexUnavailableByScope(scopeKey), "Your team's page index could not be reached.");
+    }
   }
 
   /**
@@ -1904,6 +1944,22 @@ export function getFavoriteDocumentIdsForScopeKey(scopeKey: string): string[] {
   return store.get(favoritesByScope(scopeKey));
 }
 
+/**
+ * True once the scope's index delivered its full list, so a page absent from
+ * `getLinkableSharedDocumentsForScopeKey` is absent rather than still loading.
+ */
+export const sharedIndexLoadedForScopeAtom = (scopeKey: string) => indexLoadedByScope(scopeKey);
+
+/**
+ * Why the scope's index cannot be reached, or null: repeated connections
+ * dropped before it arrived. Cleared when it does.
+ */
+export const sharedIndexUnavailableForScopeAtom = (scopeKey: string) => indexUnavailableByScope(scopeKey);
+
+export function isSharedIndexLoadedForScopeKey(scopeKey: string): boolean {
+  return store.get(indexLoadedByScope(scopeKey));
+}
+
 export function setCollabScopeAvailability(scopeKey: string, available: boolean): void {
   store.set(hasTeamByScope(scopeKey), available);
 }
@@ -1934,6 +1990,8 @@ export function pruneCollabDocsSession(scopeKey: string): void {
   pageTreeByScope.remove(scopeKey);
   pageFieldsByScope.remove(scopeKey);
   statusByScope.remove(scopeKey);
+  indexLoadedByScope.remove(scopeKey);
+  indexUnavailableByScope.remove(scopeKey);
   hasTeamByScope.remove(scopeKey);
   orgIdByScope.remove(scopeKey);
   userIdByScope.remove(scopeKey);

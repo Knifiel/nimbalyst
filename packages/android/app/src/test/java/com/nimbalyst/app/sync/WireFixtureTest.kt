@@ -27,6 +27,15 @@ class WireFixtureTest {
     private val fixtures = File("../../collab-protocol/fixtures")
 
     private val kotlinTypes: Map<String, Class<*>> = mapOf(
+        "appendMessagePart.json" to SessionPayloadAppendPart::class.java,
+        "getMessageParts.json" to SessionPayloadGetParts::class.java,
+        "getMessageProjection.json" to SessionProjectionRequest::class.java,
+        "messageProjectionState.json" to SessionProjectionResponse::class.java,
+        "sessionPayloadReady.json" to SessionPayloadReady::class.java,
+        "messagePayloadPart.json" to SessionPayloadPartMessage::class.java,
+        "messagePartAck.json" to SessionPayloadPartAck::class.java,
+        "messageAppendAck.json" to SessionMessageAppendAck::class.java,
+
         "indexUpdate.json" to IndexUpdateMessage::class.java,
         "indexClientMetadataPatch.desktop.json" to IndexClientMetadataPatchMessage::class.java,
         "clientMetadata.desktop.json" to ClientMetadata::class.java,
@@ -56,6 +65,7 @@ class WireFixtureTest {
         "indexSyncRequest.json" to IndexSyncRequest::class.java,
         "indexSyncResponse.json" to IndexSyncResponse::class.java,
         "indexDeleteBroadcast.json" to IndexDeleteBroadcast::class.java,
+        "sessionContextBroadcast.json" to SessionContextBroadcast::class.java,
         "appendMessage.json" to AppendMessageRequest::class.java,
         "messageBroadcast.json" to MessageBroadcast::class.java,
         "syncRequest.json" to SessionSyncRequest::class.java,
@@ -154,6 +164,7 @@ class WireFixtureTest {
             "fileIndexUpdate.json" to "desktop publishes file metadata",
             "fileIndexDelete.json" to "desktop publishes file metadata",
             "voiceToolResponse.json" to "voice is out of scope on Android",
+            "sessionContextUpdate.json" to "desktop's leg; Android consumes the broadcast",
         )
 
         /** Fields Android deliberately does not model, per fixture. */

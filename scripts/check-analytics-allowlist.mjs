@@ -50,6 +50,16 @@ const CALL_SITE = /(?:sendEvent|sendTeamAnalyticsEvent|trackTeamAnalyticsEvent|c
 // annotation or an unrelated internal message, neither of which reaches PostHog.
 const EVENT_KEY = /\b(?:capture(?:Immediate)?\(\s*|invoke\(\s*["']analytics:track["']\s*,\s*)\{[^{}]*?\bevent:\s*["']([a-z$][a-z0-9_$]*)["']/g;
 
+/**
+ * Event mappers (`*EventMapper.ts`) build a `{ name: 'foo', properties }`
+ * descriptor and pass `name` to `sendEvent` as a variable, so CALL_SITE never
+ * sees them. That is how `migration_completed`/`_failed`/`_refused` and the
+ * three `database_recovery_*` events went unclassified and were dropped at
+ * ingestion from 2026-09-04, leaving the SQLite migration with no outcome data.
+ */
+export const EVENT_MAPPER_FILE = /EventMapper\.[cm]?[jt]s$/;
+const MAPPER_NAME = /\bname:\s*["']([a-z][a-z0-9_]*)["']/g;
+
 export const TEAM_SCHEMA_FILE = 'packages/electron/src/shared/analytics/teamAnalytics.ts';
 export const ALLOW_LIST_FILE = 'packages/electron/src/shared/analytics/posthogIngestAllowList.ts';
 export const INIT_CONFIG_FILE = 'packages/electron/src/renderer/index.tsx';
@@ -135,8 +145,9 @@ export function parseList(src, name) {
   return new Set([...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]));
 }
 
-export function collectSourceEventNames(src) {
-  return [CALL_SITE, EVENT_KEY].flatMap((re) => {
+export function collectSourceEventNames(src, file = '') {
+  const seams = EVENT_MAPPER_FILE.test(file) ? [CALL_SITE, EVENT_KEY, MAPPER_NAME] : [CALL_SITE, EVENT_KEY];
+  return seams.flatMap((re) => {
     re.lastIndex = 0;
     return [...src.matchAll(re)].map((m) => m[1]);
   });
@@ -149,7 +160,7 @@ export function collectEventNames() {
     for (const file of walk(join(repoRoot, root))) {
       const src = readFileSync(file, 'utf8');
       const where = relative(repoRoot, file);
-      for (const name of collectSourceEventNames(src)) if (!found.has(name)) found.set(name, where);
+      for (const name of collectSourceEventNames(src, file)) if (!found.has(name)) found.set(name, where);
     }
   }
   return found;

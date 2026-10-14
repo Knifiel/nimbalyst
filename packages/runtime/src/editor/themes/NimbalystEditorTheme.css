@@ -302,9 +302,21 @@
 
 /* ===== TABLES ===== */
 
+/* Wide tables scroll sideways inside this box instead of squeezing their
+   columns. The wrapper is also the size container for the narrow layouts
+   below, so they follow the editor's width rather than the viewport's. */
 .nim-table-scrollable-wrapper {
   overflow-x: auto;
-  margin: 0px 25px 30px 0px;
+  margin: 25px 0 30px 0;
+  container-type: inline-size;
+  container-name: nim-table;
+}
+
+/* Diff classes land on the node's outer element, now this wrapper. Their
+   `width: fit-content` would collapse a size container to zero width. */
+.nim-table-scrollable-wrapper.nim-diff-add,
+.nim-table-scrollable-wrapper.nim-diff-remove {
+  width: auto;
 }
 
 .nim-table-scrollable-wrapper > .nim-table {
@@ -407,10 +419,115 @@
   outline: none;
   overflow: auto;
   min-width: 50px;
+  /* The editor root inherits `word-break: break-word`, which lets a squeezed
+     column break inside words ("Pla/n"). Break between words instead and let
+     the wrapper scroll when the words do not fit. */
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
 .nim-table-cell > * {
   overflow: inherit;
+}
+
+/* Sticky first column: the row label stays visible while scrolling sideways.
+   Opaque background so scrolled cells do not show through. */
+.nim-table-scrollable-wrapper tr > .nim-table-cell:first-child {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 1;
+  background-color: var(--nim-table-cell);
+}
+
+/* Collapsed borders do not travel with a sticky cell; draw its right edge on
+   top of the shared border so the column stays delimited while scrolled. */
+.nim-table-scrollable-wrapper tr > .nim-table-cell:first-child::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  inset-inline-end: 0;
+  width: 1px;
+  background-color: var(--nim-table-border);
+  pointer-events: none;
+}
+
+.nim-table-scrollable-wrapper tr > .nim-table-cell-header:first-child {
+  background-color: var(--nim-table-header);
+}
+
+.nim-table-scrollable-wrapper .nim-table-row-striping tr:nth-child(even) > .nim-table-cell:first-child {
+  background-color: var(--nim-table-stripe);
+}
+
+/* Narrow editors: give sentence-length columns a usable width (up to ~12em)
+   instead of the longest single word; short columns stay short. */
+@container nim-table (max-width: 640px) {
+  .nim-table-cell > * {
+    width: max-content;
+    max-width: 12em;
+  }
+}
+
+/* Phone-width editors: body rows become cards, one "header: value" per line,
+   with the first cell as the card title. TableCardLayoutPlugin sets
+   data-nim-table-cards only on tables with a header row (others keep the
+   horizontal scroll) and data-nim-table-editing on the table holding the
+   selection, so editing always happens in the normal grid. */
+@container nim-table (max-width: 480px) {
+  .nim-table[data-nim-table-cards]:not([data-nim-table-editing]) {
+    display: block;
+    width: auto !important;
+  }
+
+  .nim-table[data-nim-table-cards]:not([data-nim-table-editing]) > colgroup,
+  .nim-table[data-nim-table-cards]:not([data-nim-table-editing]) tr:first-of-type {
+    display: none;
+  }
+
+  /* A row resized in the grid carries an inline height; cards size to content. */
+  .nim-table[data-nim-table-cards]:not([data-nim-table-editing]) tr {
+    display: block;
+    height: auto !important;
+    margin-bottom: 12px;
+    border: 1px solid var(--nim-table-border);
+    border-radius: 6px;
+    overflow: hidden;
+    background-color: var(--nim-table-cell);
+  }
+
+  .nim-table[data-nim-table-cards]:not([data-nim-table-editing]) tr > .nim-table-cell {
+    display: block;
+    position: relative;
+    min-width: 0;
+    border: 0;
+    border-top: 1px solid var(--nim-table-border);
+    background-color: transparent;
+  }
+
+  .nim-table[data-nim-table-cards]:not([data-nim-table-editing]) tr > .nim-table-cell:first-child {
+    border-top: 0;
+    font-weight: 600;
+    background-color: var(--nim-table-header);
+  }
+
+  .nim-table[data-nim-table-cards]:not([data-nim-table-editing]) tr > .nim-table-cell:first-child::before {
+    display: none;
+  }
+
+  .nim-table[data-nim-table-cards]:not([data-nim-table-editing]) .nim-table-cell > * {
+    width: auto;
+    max-width: none;
+  }
+
+  .nim-table[data-nim-table-cards]:not([data-nim-table-editing]) tr > .nim-table-cell[data-label]:not(:first-child)::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 2px;
+    font-size: 0.8em;
+    font-weight: 600;
+    color: var(--nim-text-muted);
+  }
 }
 
 .nim-table-cell-resizer {

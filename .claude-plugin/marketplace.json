@@ -9,7 +9,7 @@
     {
       "name": "nimbalyst-wiki",
       "source": "./plugins/nimbalyst-wiki",
-      "description": "Your project's Nimbalyst Wiki from Claude Code, on the team server or as local files: read it for context and record decisions where they belong."
+      "description": "A local wiki your agents write for you, so you can think, organize, and set direction. Capture decisions, track typed pages, edit locally, and optionally share with your team."
     }
   ]
 }

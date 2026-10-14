@@ -113,7 +113,10 @@ export const COLLAB_BUNDLE_EAGER_GZIP_BUDGET_BYTES = {
   // 2026-10-03: 188,280 bytes after typed pages and type pages moved into
   // collab-client for the web console, console links, and the page links
   // query; their views and editors load on demand. Reset with ~4% headroom.
-  'trackers-ui': 196_000,
+  // 2026-10-13: 196,016 bytes. No new eager module: schema define refusals
+  // now always settle with a readable reason (a new `serverError` notice
+  // string and the store's settle paths). Reset with ~2% headroom.
+  'trackers-ui': 200_000,
   // Deliberately tight. This entry is a WebSocket client over the protocol
   // package and nothing else; anything that makes it jump has dragged a UI
   // graph in behind it.

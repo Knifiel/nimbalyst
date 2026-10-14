@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-07T20:43:35.913Z",
+  "generatedAt": "2026-10-14T06:06:37.440Z",
   "extensions": [
     {
       "id": "com.nimbalyst.animation",
       "name": "Animation",
       "description": "Author step-based animations for technical explainer diagrams",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "author": "Nimbalyst",
       "categories": [
         "diagrams"
@@ -33,10 +33,10 @@
         "filesystem"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.animation/1.1.0",
-      "checksum": "49066894356143d15544fc88d32c803b1e6eb5bbcf64e073e99e534361eb5f51",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.animation/1.1.1",
+      "checksum": "e08900cee8230fd874c79bfbd4504a772b5419019724d2e45c9e90e85b5c214f",
       "repositoryUrl": "",
-      "changelog": "1.1.0: Frames can show real product UI: an html part draws markup you write inline or keep in a file beside the animation, regions inside it animate on their own, and the document names the palette it renders under so the stage and every export match.",
+      "changelog": "1.1.1: Animations embed inline in the agent transcript, and exports finish and reveal the exported file.\n1.1.0: Frames can show real product UI: an html part draws markup you write inline or keep in a file beside the animation, regions inside it animate on their own, and the document names the palette it renders under so the stage and every export match.",
       "tagline": "Animate technical diagrams step by step",
       "longDescription": "Build animated explainer diagrams from a named scene and an ordered list of steps. Scrub the timeline, drag a step boundary to retime it, click any part of the scene to put it in chat context, and let an agent make the edits.",
       "highlights": [
@@ -93,7 +93,7 @@
       "id": "com.nimbalyst.automations",
       "name": "Automations",
       "description": "Schedule recurring AI-powered tasks with file-based automation definitions",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "author": "Nimbalyst",
       "categories": [
         "ai-tools"
@@ -114,10 +114,10 @@
         "ai"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.automations/1.0.2",
-      "checksum": "6b641fae1789edfaa00b88a5583f8379abc2d94d0adccd7262d543a70105ed58",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.automations/1.0.3",
+      "checksum": "31138ed698539b7f604448feff40723254ae4054e0333cb75fed9b16d3968529",
       "repositoryUrl": "",
-      "changelog": "1.0.2: Scheduled interval automations now fire on time.\n1.0.1: Reliable automation status detection on Windows and consistent skill namespacing.",
+      "changelog": "1.0.3: A disabled automation no longer fires on its schedule, automations no longer rerun after a restart or overwrite their own report, output settings are respected, a hand-edited schedule no longer stops the scheduler, and Codex automations run with subscription auth.\n1.0.2: Scheduled interval automations now fire on time.\n1.0.1: Reliable automation status detection on Windows and consistent skill namespacing.",
       "tagline": "Run recurring AI workflows from markdown automation definitions",
       "longDescription": "Define recurring automations in markdown and let Nimbalyst run them on a schedule. Use them for routine reviews, status updates, content refreshes, and any repeatable AI workflow that should happen without starting a new session manually.",
       "highlights": [
@@ -132,7 +132,7 @@
       "id": "com.nimbalyst.browser",
       "name": "Browser",
       "description": "Native in-app browser surface for previewing HTML files and viewing live URLs",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "author": "Nimbalyst",
       "categories": [
         "data"
@@ -151,8 +151,8 @@
         "filesystem"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.browser/1.0.1",
-      "checksum": "47522d386d864e48344a5af632b30c4c97cc16e772040f1796be0f000228a86b",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.browser/1.0.2",
+      "checksum": "e6d39bd38534603d328e37df9461ca25a1146faf5b1511c82c1698a61e927f1e",
       "repositoryUrl": "",
       "changelog": "",
       "tagline": "Preview HTML files and browse live URLs without leaving Nimbalyst",
@@ -173,7 +173,7 @@
       "id": "com.nimbalyst.calc-sheets",
       "name": "Calc Sheets",
       "description": "Line-oriented calculation worksheets with units, formulas, and live result gutters",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "author": "Nimbalyst",
       "categories": [
         "data"
@@ -194,14 +194,15 @@
         "filesystem"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.calc-sheets/1.0.2",
-      "checksum": "227fe5a97706d4ca31f708fbd47b4d3dfdde66d0487bb44816e94b153f634c35",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.calc-sheets/1.0.3",
+      "checksum": "7a8821b6531fd65a845faf08592d39bb47a5b537f0ade0e03abe303f6bf25a60",
       "repositoryUrl": "",
-      "changelog": "1.0.2: The results column in a shared calc sheet stays in sync with the document.",
+      "changelog": "1.0.3: Mix prose with formulas in a sheet, plus dependency security updates.\n1.0.2: The results column in a shared calc sheet stays in sync with the document.",
       "tagline": "Reusable business-model worksheets with live results",
-      "longDescription": "Open .calc.md files in a dedicated editor built for line-oriented assumptions, formulas, units, assertions, and quick business modeling. Calc Sheets stay text-first, embed inside markdown documents, and show live results in a calculator-style gutter.",
+      "longDescription": "Open .calc.md files in a dedicated editor built for line-oriented assumptions, formulas, units, assertions, and quick business modeling. Mix calculations with narrative markdown source while live results stay focused in a calculator-style gutter.",
       "highlights": [
         "Line-based worksheets instead of grid-heavy spreadsheets",
+        "Narrative markdown stays readable without becoming a calculation error",
         "Live result gutter with unit-aware evaluation",
         "Custom editor embeds directly inside markdown documents",
         "YAML frontmatter for currency, units, and display defaults"
@@ -214,7 +215,7 @@
       "id": "com.nimbalyst.canvas",
       "name": "Project Canvas",
       "description": "Authoring guidance for Project Canvas boards",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "Nimbalyst",
       "categories": [
         "diagrams",
@@ -243,8 +244,8 @@
         "ai"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.canvas/1.0.0",
-      "checksum": "c561e0746f98902cbd907f6d1307ae16264b9dff5962deca361b388e4df0a7e1",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.canvas/1.0.1",
+      "checksum": "ab2b2e7326350cae461cc0196678171a952dcaac1114bb38a4fb4f3a72a17607",
       "repositoryUrl": "",
       "changelog": "",
       "tagline": "An infinite board whose cards are live editors on your real files",
@@ -262,7 +263,7 @@
       "id": "com.nimbalyst.csv-spreadsheet",
       "name": "CSV Spreadsheet",
       "description": "Edit CSV files with a spreadsheet interface and formula support",
-      "version": "1.1.3",
+      "version": "1.3.0",
       "author": "Nimbalyst",
       "categories": [
         "data"
@@ -289,14 +290,16 @@
         "filesystem"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.csv-spreadsheet/1.1.3",
-      "checksum": "4a8cf249c636263acae886f86d180182525a024c6ae3862c1086490401675bb7",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.csv-spreadsheet/1.3.0",
+      "checksum": "203b1f3984df2d9905f3b531880f490cc643cc15df2b0887f73cd1ff956f1362",
       "repositoryUrl": "",
-      "changelog": "1.1.3: Editing a shared spreadsheet in a browser no longer reports a save it did not make.\n1.1.2: A collaborator editing a cell stays visible while they type.\n1.1.1: Shared spreadsheets keep every edit.\n1.1.0: Formulas now compute live and survive a save, plus find and replace, per-column filters, selections that cross frozen columns, right-aligned numbers, and AI tools for analyzing data and applying formulas.\n1.0.2: See collaborator presence in shared spreadsheets, share selected cells with AI, and reopen shared documents more reliably.\n1.0.1: Collaborative editing support, currency/percent/number cell formatting, and full ISO date rendering.",
+      "changelog": "1.3.0: Style any range of cells with bold, italic, underline, colors, and alignment; date formulas now do arithmetic; and formatting a shared sheet no longer overwrites a collaborator's.\n1.2.0: Date and time, checkbox, link, and tracker-item columns, more number and date formats, type detection, and type-aware sorting and filtering.\n1.1.3: Editing a shared spreadsheet in a browser no longer reports a save it did not make.\n1.1.2: A collaborator editing a cell stays visible while they type.\n1.1.1: Shared spreadsheets keep every edit.\n1.1.0: Formulas now compute live and survive a save, plus find and replace, per-column filters, selections that cross frozen columns, right-aligned numbers, and AI tools for analyzing data and applying formulas.\n1.0.2: See collaborator presence in shared spreadsheets, share selected cells with AI, and reopen shared documents more reliably.\n1.0.1: Collaborative editing support, currency/percent/number cell formatting, and full ISO date rendering.",
       "tagline": "Visual CSV editing with formulas and column formatting",
       "longDescription": "Open CSV and TSV files in a full spreadsheet interface with formula support, column resizing, frozen rows/columns, and sortable headers. Edit data visually while the underlying CSV stays clean and git-friendly. Toggle to source mode to see and edit the raw text.",
       "highlights": [
         "Spreadsheet UI for CSV and TSV files",
+        "Typed columns: dates and times, currency, checkboxes, links, and tracker items",
+        "Cell and range styling with colors, weight, and alignment",
         "Formula support with cell references",
         "Frozen rows and columns, sortable headers",
         "Source mode toggle for raw CSV editing"
@@ -310,7 +313,7 @@
       "id": "com.nimbalyst.datamodellm",
       "name": "DatamodelLM",
       "description": "AI-assisted data modeling with visual entity-relationship diagrams",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "author": "Nimbalyst",
       "categories": [
         "data"
@@ -338,10 +341,10 @@
         "ai"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.datamodellm/1.0.3",
-      "checksum": "618e13aa5247d419818f3eb770ced073d63a1f0a7eb70eb3516c304993ca7155",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.datamodellm/1.0.4",
+      "checksum": "b2820cb0c4437e14a6d7c8a16b7b780b1e31cc9af9afd29a9cefbfeb5e24b29b",
       "repositoryUrl": "",
-      "changelog": "1.0.3: Shared data models keep every edit.\n1.0.2: Share selected model elements with AI and reopen shared documents more reliably.\n1.0.1: Collaborative editing support, light-theme readability fixes, and more reliable external file edits.",
+      "changelog": "1.0.4: See teammates' selections in shared data models, improved Prisma diagram layout and relationship routing, and formatting survives undo in shared models.\n1.0.3: Shared data models keep every edit.\n1.0.2: Share selected model elements with AI and reopen shared documents more reliably.\n1.0.1: Collaborative editing support, light-theme readability fixes, and more reliable external file edits.",
       "tagline": "Visual database schema design with Prisma syntax",
       "longDescription": "Design database schemas visually as entity-relationship diagrams backed by real Prisma syntax. Drag entities around the canvas, define fields and relations, and switch to source mode to edit the Prisma schema directly. The AI can generate schemas from descriptions or modify existing ones.",
       "highlights": [
@@ -358,7 +361,7 @@
       "id": "com.nimbalyst.developer",
       "name": "Developer Tools",
       "description": "Advanced git operations and developer workflows",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "author": "Nimbalyst",
       "categories": [
         "other"
@@ -373,8 +376,8 @@
         "ai"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.developer/1.0.2",
-      "checksum": "7c471b30cd8c0052ce5f15614006e2967dd30a82289cbbb50292a04eec01e9fc",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.developer/1.0.3",
+      "checksum": "91426f7ad680d930b7612483df50bd28577339c698f2e932c93b31423e86c076",
       "repositoryUrl": "",
       "changelog": "",
       "tagline": "",
@@ -433,7 +436,7 @@
       "id": "com.nimbalyst.excalidraw",
       "name": "Excalidraw",
       "description": "Excalidraw diagram editor with AI-assisted editing",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "author": "Nimbalyst",
       "categories": [
         "diagrams"
@@ -461,10 +464,10 @@
         "ai"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.excalidraw/1.0.3",
-      "checksum": "f15b16024218048509c71d6578c6ada9babec3e12b4ea58e7aa05491d693ca59",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.excalidraw/1.0.4",
+      "checksum": "3b628683343fb238a19028350526425a6762ae88bf39fb653a98612e664a7364",
       "repositoryUrl": "",
-      "changelog": "1.0.3: Shared drawings keep every edit.\n1.0.2: Share selected diagram elements with AI, with improved Mermaid imports and arrow labels.\n1.0.1: Shared-document collaboration fixes, Mermaid image import fix, and more reliable AI edits to open diagrams.",
+      "changelog": "1.0.4: Open shared drawings in the web console, agents can edit shared drawings without opening a tab, and embedded drawings hide editor chrome until selected.\n1.0.3: Shared drawings keep every edit.\n1.0.2: Share selected diagram elements with AI, with improved Mermaid imports and arrow labels.\n1.0.1: Shared-document collaboration fixes, Mermaid image import fix, and more reliable AI edits to open diagrams.",
       "tagline": "Hand-drawn style diagrams with AI-assisted editing",
       "longDescription": "Create architecture diagrams, flowcharts, wireframes, and freeform sketches using the Excalidraw canvas. The AI can create and modify diagrams from natural language descriptions, import Mermaid syntax, and lay out complex systems visually. Switch between the visual canvas and source mode for direct JSON editing.",
       "highlights": [
@@ -481,7 +484,7 @@
       "id": "com.nimbalyst.git",
       "name": "Git",
       "description": "Git log viewer with push, pull, and rebase support",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "author": "Nimbalyst",
       "categories": [
         "developer-tools"
@@ -508,10 +511,10 @@
         "filesystem"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.git/1.0.2",
-      "checksum": "3d92158e761d84d38b2080432b68eda004350d3ccb085d21259652e6cae2ccd7",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.git/1.0.3",
+      "checksum": "1b099a1bd209ea4f2fef4bc482d1fe0e6c8f49b1acc64725018434d1816e7bab",
       "repositoryUrl": "",
-      "changelog": "1.0.2: Keep command output across reloads, search Git history more effectively, and group Windows paths consistently.\n1.0.1: Redesigned Changes pane with inline diff peek, per-workspace tab memory, detached-HEAD handling, and Output log fixes.",
+      "changelog": "1.0.3: One flat Changes tab, per-repository git in projects that span several folders, the AI session behind each commit in the Log, running git commands shown in the title bar, and Refresh now reloads the Changes tab.\n1.0.2: Keep command output across reloads, search Git history more effectively, and group Windows paths consistently.\n1.0.1: Redesigned Changes pane with inline diff peek, per-workspace tab memory, detached-HEAD handling, and Output log fixes.",
       "tagline": "Visual git log with push, pull, and branch management",
       "longDescription": "Browse your commit history in a visual log panel, inspect diffs, push and pull changes, and manage branches. Integrates into the bottom panel with a keyboard shortcut for quick access.",
       "highlights": [
@@ -526,7 +529,7 @@
       "id": "com.nimbalyst.github-issues-importer",
       "name": "GitHub Issues Importer",
       "description": "Import GitHub issues into the Nimbalyst tracker as native items that link back to their source. Uses your installed GitHub CLI (gh) for auth and access.",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "Nimbalyst",
       "categories": [
         "developer-tools",
@@ -546,8 +549,8 @@
         "network"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.github-issues-importer/1.0.0",
-      "checksum": "30b1aa393da479d314c3b5a0cdd9c501321505106f895da31274bdb8ec91d772",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.github-issues-importer/1.0.1",
+      "checksum": "bb83d8e1da5223bb8d5da594dae7eea4b5eab449d2a0755d8663bd4215ea226a",
       "repositoryUrl": "",
       "changelog": "",
       "tagline": "Import GitHub issues into your tracker",
@@ -559,7 +562,7 @@
       "id": "com.nimbalyst.image-generation",
       "name": "Image Generation",
       "description": "AI-powered image generation with support for sketches, diagrams, and illustrations",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "author": "Nimbalyst",
       "categories": [
         "ai-tools"
@@ -588,10 +591,10 @@
         "network"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.image-generation/1.0.2",
-      "checksum": "3839f20c3cc5ed73f8606d79fd477c098d47bd542111e13a55294d70a80eef54",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.image-generation/1.0.3",
+      "checksum": "0d9c17ed8b59c8fca03654bc9abe44118dbdb2c936f82accb7ee4305f0717d81",
       "repositoryUrl": "",
-      "changelog": "1.0.2: Compatibility with the latest Nimbalyst runtime.\n1.0.1: Light-theme readability and external file edit fixes.",
+      "changelog": "1.0.3: Dependency security updates.\n1.0.2: Compatibility with the latest Nimbalyst runtime.\n1.0.1: Light-theme readability and external file edit fixes.",
       "tagline": "Generate images from text prompts with multiple style options",
       "longDescription": "Create sketches, diagrams, illustrations, and other images by describing what you want. Manage multiple generations in a project file, compare variations, and iterate on prompts. Configurable style presets and generation settings.",
       "highlights": [
@@ -608,7 +611,7 @@
       "id": "com.nimbalyst.ios-dev",
       "name": "iOS Development Tools",
       "description": "Tools for iOS development including XcodeGen, simulator management, and deployment",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "author": "Nimbalyst",
       "categories": [
         "other"
@@ -623,8 +626,8 @@
         "ai"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.ios-dev/0.1.1",
-      "checksum": "244188787ec3848df22daefaa0c928ecdab8fbb6992996d5251fbd33f1c5a622",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.ios-dev/0.1.2",
+      "checksum": "18829a63d99cdd4e04f14afeef9419133d17393a5e1e3cba41db00a7b1167f18",
       "repositoryUrl": "",
       "changelog": "",
       "tagline": "",
@@ -679,7 +682,7 @@
       "id": "com.nimbalyst.memory",
       "name": "Nimbalyst Memory",
       "description": "Local project-knowledge + facts brain. Indexes your markdown (design docs, plans, CLAUDE.md, trackers, voice-memory) into a rebuildable shadow index and serves fast hybrid retrieval + facts to AI agents over MCP. Voice-agent grounding lands in a later phase.",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "author": "Nimbalyst",
       "categories": [
         "developer-tools",
@@ -701,8 +704,8 @@
         "ai"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.memory/0.1.1",
-      "checksum": "9732ff307a46f1dbd4523d890c8c8395bd67333ee89e946d653e63592491d92e",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.memory/0.1.2",
+      "checksum": "81c90e42a1eb040d5b72ad8e62904eaf6b928723246f2a21115a7fae1c4d407b",
       "repositoryUrl": "",
       "changelog": "",
       "tagline": "A local project brain for your AI agents",
@@ -714,7 +717,7 @@
       "id": "com.nimbalyst.mindmap",
       "name": "Nimbalyst Mindmap",
       "description": "A freeform spatial mindmap editor with AI-assisted editing",
-      "version": "1.0.4",
+      "version": "1.0.5",
       "author": "Nimbalyst",
       "categories": [
         "diagrams"
@@ -735,8 +738,8 @@
         "filesystem"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.mindmap/1.0.4",
-      "checksum": "c189172540b85e28d65c51a5f143edfefb7fbae94046bdfeffb023b3f1828933",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.mindmap/1.0.5",
+      "checksum": "a43d53b5bedba517ab2832f99e2230a62d59c2abc7e6a703220a71ab7303826f",
       "repositoryUrl": "",
       "changelog": "",
       "tagline": "Freeform spatial mindmap editor with AI-assisted editing",
@@ -754,7 +757,7 @@
       "id": "com.nimbalyst.mockuplm",
       "name": "MockupLM",
       "description": "Visual UX mockup creation with HTML/CSS for planning and design",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "author": "Nimbalyst",
       "categories": [
         "diagrams"
@@ -783,10 +786,10 @@
         "ai"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.mockuplm/1.0.3",
-      "checksum": "1110e91d7c66ae451fc9241d19daadda8a9d30361a6e88413d3a2e8a15e31c17",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.mockuplm/1.0.4",
+      "checksum": "d602b6df6a8a41b1442358e901436613233f7ef54eca0ab29456c7e0eab139e7",
       "repositoryUrl": "",
-      "changelog": "1.0.3: Shared mockups keep every edit and gain a source pane. Sharing a mockup project is turned off until its screens sync.\n1.0.2: Share selected mockup screens with AI and render shared mockup links more reliably.\n1.0.1: Share to Team collaboration for mockups and projects, shared viewer and diff review fixes.",
+      "changelog": "1.0.4: Open shared mockups in the web console, comment on a spot in a shared mockup, and see the mockups a feedback request compares.\n1.0.3: Shared mockups keep every edit and gain a source pane. Sharing a mockup project is turned off until its screens sync.\n1.0.2: Share selected mockup screens with AI and render shared mockup links more reliably.\n1.0.1: Share to Team collaboration for mockups and projects, shared viewer and diff review fixes.",
       "tagline": "AI-generated UI mockups rendered as live HTML/CSS",
       "longDescription": "Design UI mockups by describing what you want in natural language. The AI generates complete HTML/CSS mockups that render as live previews in the editor. Iterate on designs visually or switch to source mode to hand-edit the HTML. Great for planning features, communicating designs, and rapid prototyping.",
       "highlights": [
@@ -796,15 +799,14 @@
         "Rapid iteration on UI concepts without design tools"
       ],
       "fileTypes": [
-        ".mockup.html",
-        ".mockupproject"
+        ".mockup.html"
       ]
     },
     {
       "id": "com.nimbalyst.namenym",
       "name": "Namenym",
       "description": "AI-powered brand naming tool for Nimbalyst",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "author": "Nimbalyst",
       "categories": [
         "ai-tools"
@@ -827,8 +829,8 @@
         "network"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.namenym/0.1.2",
-      "checksum": "f32fef392b739d21c39a64320f1e64b31609a14675c7dd099a6b386900144b81",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.namenym/0.1.3",
+      "checksum": "64e479aa658c76c37db5f245a35451bb5a083ed444bc0fafc89aa32390345ef0",
       "repositoryUrl": "",
       "changelog": "",
       "tagline": "AI-powered brand naming and domain brainstorming",
@@ -846,7 +848,7 @@
       "id": "com.nimbalyst.pdf-viewer",
       "name": "PDF Viewer",
       "description": "View PDF files directly in Nimbalyst",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "author": "Nimbalyst Team",
       "categories": [
         "data"
@@ -871,10 +873,10 @@
         "filesystem"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.pdf-viewer/1.0.2",
-      "checksum": "ac022bf232b89abdf1b6ad1a4735560e9a7961b650a0c9f8e6e668cf31bfa3a1",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.pdf-viewer/1.0.3",
+      "checksum": "ee71e9979c57595ad2112f094cbc69f3587784346d89bf276c69bf3a54bf13b8",
       "repositoryUrl": "",
-      "changelog": "1.0.2: Compatibility with the latest Nimbalyst runtime.\n1.0.1: Smaller bundle and more reliable external file edits.",
+      "changelog": "1.0.3: Landscape PDFs render with correctly sized pages.\n1.0.2: Compatibility with the latest Nimbalyst runtime.\n1.0.1: Smaller bundle and more reliable external file edits.",
       "tagline": "View PDF documents directly in the editor",
       "longDescription": "Open and read PDF files without leaving Nimbalyst. Renders PDF pages with full fidelity, supporting multi-page documents, zoom, and page navigation.",
       "highlights": [
@@ -890,7 +892,7 @@
       "id": "com.nimbalyst.planning",
       "name": "Planning",
       "description": "Structured planning and tracking with YAML frontmatter",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "author": "Nimbalyst",
       "categories": [
         "ai-tools"
@@ -911,10 +913,10 @@
         "ai"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.planning/1.0.1",
-      "checksum": "60769a343d90b1974f59bada8fe0b53f7ec7db589e185fb4a40e82e92805dad8",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.planning/1.0.2",
+      "checksum": "e9e8651ab27808e6e6bab49c83c710b305ac733eb2ae875da4937c67d9b2d47c",
       "repositoryUrl": "",
-      "changelog": "1.0.1: Session spawning improvements: sibling sessions, isolated mode, model and worktree inheritance.",
+      "changelog": "1.0.2: New /planning:nimbalyst-coach command reviews your project and recent sessions and suggests extensions, features, and agent-instruction changes.",
       "tagline": "Structured plan, implement, and tracker workflows for AI sessions",
       "longDescription": "Planning adds the structured workflows behind Nimbalyst's design, implementation, and tracker commands. Use it to create plan documents, execute them with progress tracking, and manage bugs, tasks, and decisions with consistent YAML-backed structure.",
       "highlights": [
@@ -929,7 +931,7 @@
       "id": "com.nimbalyst.playwright",
       "name": "Playwright",
       "description": "Test runner, trace viewer, and screenshot automation for Playwright",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "author": "Nimbalyst",
       "categories": [
         "other"
@@ -944,8 +946,8 @@
         "ai"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.playwright/0.1.2",
-      "checksum": "1bbd4ed2c398eb349909a2ab80907aa9a18fb6d86058d7fe3e981b82d7207e4f",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.playwright/0.1.3",
+      "checksum": "407694f929ad277bf5d9c8ce142e0027c983359af364426aea47c0cdf37ef972",
       "repositoryUrl": "",
       "changelog": "",
       "tagline": "",
@@ -1013,7 +1015,7 @@
       "id": "com.nimbalyst.slides",
       "name": "Nimbalyst Slides",
       "description": "Presentation editor with live reveal.js preview",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "author": "Nimbalyst",
       "categories": [
         "diagrams"
@@ -1035,10 +1037,10 @@
         "ai"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.slides/1.0.3",
-      "checksum": "b16e127c9593b2865c03920e7b86b41c4fc6af307c6d055782b144bb7640b8aa",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.slides/1.0.4",
+      "checksum": "989a32ee78239a1b00ae4958ee0ec59ebc98cda43a89a12c6c4bb73c2f647aa4",
       "repositoryUrl": "",
-      "changelog": "1.0.3: Share a presentation with your team and edit it together in real time.\n1.0.2: Share the selected slide with AI and browse presentations in the shared viewer.\n1.0.1: Professional theme tier with grouped picker, and slide embeds in the transcript.",
+      "changelog": "1.0.4: Maintenance build.\n1.0.3: Share a presentation with your team and edit it together in real time.\n1.0.2: Share the selected slide with AI and browse presentations in the shared viewer.\n1.0.1: Professional theme tier with grouped picker, and slide embeds in the transcript.",
       "tagline": "Presentation editor with live reveal.js preview",
       "longDescription": "Create slide decks in markdown with a split-view editor. Write your content on the left, see the live reveal.js presentation on the right. Supports 12 themes, transitions, speaker notes, and fragments.",
       "highlights": [
@@ -1054,7 +1056,7 @@
       "id": "com.nimbalyst.sqlite-browser",
       "name": "SQLite Browser",
       "description": "Browse and query SQLite databases with AI assistance",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "author": "Nimbalyst",
       "categories": [
         "data"
@@ -1082,10 +1084,10 @@
         "ai"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.sqlite-browser/1.0.2",
-      "checksum": "18b6ad0539da2d1e270276e4ba38953cf3e44345a39729ce8c462470ba28913e",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.sqlite-browser/1.0.3",
+      "checksum": "a20f3d1ffdb9f799d3189c10778e94eb29f21678b4b913830ca3e0602e5e2f93",
       "repositoryUrl": "",
-      "changelog": "1.0.2: Compatibility with the latest Nimbalyst runtime.\n1.0.1: More reliable AI edits and inline embeds for edited files.",
+      "changelog": "1.0.3: Browsing SQLite databases works again.\n1.0.2: Compatibility with the latest Nimbalyst runtime.\n1.0.1: More reliable AI edits and inline embeds for edited files.",
       "tagline": "Browse and query SQLite databases with AI assistance",
       "longDescription": "Open any SQLite database file and browse tables, run queries, and explore data visually. The AI can write SQL queries, analyze table structures, and help you understand your data. Supports .db, .sqlite, .sqlite3, and .db3 files.",
       "highlights": [

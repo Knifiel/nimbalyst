@@ -410,6 +410,24 @@ export class LocalWikiService {
     return page?.path ? path.join(wiki.root, ...page.path.split('/')) : null;
   }
 
+  /**
+   * Stores a file dropped into the page whose markdown file is `pageFilePath`
+   * as an attachment beside it (`@nimbalyst/local-wiki` storeAttachment).
+   * Returns the link to write in the page.
+   */
+  async storeAttachment(workspacePath: string, pageFilePath: string, fileName: string, bytes: Uint8Array): Promise<{ link: string }> {
+    const ws = requireWorkspace(workspacePath);
+    requireId(pageFilePath, 'pageFilePath');
+    requireId(fileName, 'fileName');
+    if (!(bytes instanceof Uint8Array)) throw new Error('bytes must be a Uint8Array');
+    const wiki = await this.requireWiki(ws);
+    const page = (await wiki.snapshot()).pages.find((candidate) =>
+      candidate.path && candidate.trashedAt === null && path.join(wiki.root, ...candidate.path.split('/')) === pageFilePath);
+    if (!page) throw new Error(`${pageFilePath} is not a page of the local wiki`);
+    const { link } = await wiki.storeAttachment(page.id, fileName, bytes);
+    return { link };
+  }
+
   dispose(): void {
     this.disposed = true;
     for (const entry of this.entries.values()) {
@@ -445,7 +463,12 @@ export function initLocalWikiService(): void {
     instance.trackerCommand(workspacePath, typeId, command));
   safeHandle('local-wiki:search', async (_event, workspacePath: string, request: PageSearchRequest) =>
     instance.search(workspacePath, request ?? { query: '' }));
-  safeHandle('local-wiki:set-editor-types', async (_event, table: Record<string, string>) => instance.setEditorTypes(table));
+  safeHandle(
+    'local-wiki:store-attachment',
+    async (_event, workspacePath: string, pageFilePath: string, fileName: string, bytes: Uint8Array) =>
+      instance.storeAttachment(workspacePath, pageFilePath, fileName, bytes),
+  );
+  safeHandle('local-wiki:set-editor-types',async (_event, table: Record<string, string>) => instance.setEditorTypes(table));
   registerPersonalPagesExportIpc(instance);
   onTrackerSchemaLoadFailuresChanged((workspacePath) => instance.announceChange(workspacePath));
   void logLegacyPersonalPagesHeartbeat();

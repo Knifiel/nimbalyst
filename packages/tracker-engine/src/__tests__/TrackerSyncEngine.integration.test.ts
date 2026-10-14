@@ -361,6 +361,64 @@ describe.each(PERSISTENCE_BACKENDS)('TrackerSyncEngine ($name)', backend => {
     a.engine.destroy();
   });
 
+  describe('a schema mutation the room never acks still settles', () => {
+    // The room swallows every schema mutation; `answer` decides what, if
+    // anything, comes back instead of an ack.
+    async function connectDeafSchemaEngine(answer: (ws: { deliver(data: string): void }) => void) {
+      const server = createFakeServer();
+      const settled: Array<{ type: string; accepted: boolean; error?: { code: string } }> = [];
+      let sent = false;
+      const built = await buildEngine({
+        room: server.room,
+        encryptionKey: key,
+        serverConnect: () => {
+          const ws = server.connect();
+          const relay = ws as unknown as { onSendFromClient: ((data: string) => void) | null; deliver(data: string): void };
+          const forward = relay.onSendFromClient;
+          relay.onSendFromClient = (data) => {
+            if ((JSON.parse(data) as { type: string }).type === 'trackerSchemaMutation') {
+              sent = true;
+              queueMicrotask(() => answer(relay));
+              return;
+            }
+            forward?.(data);
+          };
+          return ws;
+        },
+      });
+      const pending = [{ type: 'customer', model: schemaModelJson('customer'), deleted: false }];
+      built.config.schemaSync = {
+        listUnsynced: async () => pending,
+        applyRemote: async () => {},
+        onSettled: (outcome) => { settled.push(outcome); },
+      };
+      await built.engine.connect();
+      await waitUntil(() => sent);
+      return { ...built, settled };
+    }
+
+    it('on a trackerError that names no mutation', async () => {
+      // The room's catch-all for an exception thrown while handling a message.
+      const a = await connectDeafSchemaEngine((ws) => ws.deliver(JSON.stringify({
+        type: 'trackerError', code: 'parse_error', message: 'Failed to parse message: boom',
+      })));
+      await waitUntil(() => a.settled.length === 1);
+      expect(a.settled[0]).toMatchObject({ type: 'customer', accepted: false, error: { code: 'parse_error' } });
+      a.engine.destroy();
+    });
+
+    it('when access ends or the engine is destroyed', async () => {
+      const a = await connectDeafSchemaEngine(() => {});
+      expect(a.settled).toHaveLength(0);
+      a.engine.terminateAccess({ reason: 'tracker-access-revoked', closeCode: 4003, message: 'revoked' });
+      expect(a.settled).toEqual([expect.objectContaining({ type: 'customer', accepted: false })]);
+
+      const b = await connectDeafSchemaEngine(() => {});
+      b.engine.destroy();
+      expect(b.settled).toEqual([expect.objectContaining({ type: 'customer', accepted: false })]);
+    });
+  });
+
   it('applies schema deliveries one at a time, in arrival order', async () => {
     // A slow apply of an older delivery that finishes after a newer one would
     // leave the older content on disk and the older syncId in the host's gate.

@@ -17,13 +17,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const sendEvent = vi.fn();
+const canEvaluateRemoteConfig = vi.fn(() => true);
 vi.mock('../../../services/analytics/AnalyticsService', () => ({
-  AnalyticsService: { getInstance: () => ({ sendEvent }) },
+  AnalyticsService: { getInstance: () => ({ sendEvent, canEvaluateRemoteConfig }) },
 }));
 
 import {
   buildMigrationDryRunCompletedProperties,
   emitMigrationOutcome,
+  emitRolloutDecision,
   resetMigrationEventDedupeForTests,
 } from '../migrationEventMapper';
 import type { MigrationOutcome } from '../migrationOutcome';
@@ -75,6 +77,7 @@ const failed: MigrationOutcome = {
 
 beforeEach(() => {
   sendEvent.mockClear();
+  canEvaluateRemoteConfig.mockReturnValue(true);
   resetMigrationEventDedupeForTests();
 });
 
@@ -179,5 +182,35 @@ describe('emitMigrationOutcome', () => {
     );
 
     expect(unboundedNumericProperties).toEqual([]);
+  });
+});
+
+describe('emitRolloutDecision', () => {
+  const decision = {
+    configVersion: 'sqlite-ramp-1',
+    evaluatedChannel: 'alpha',
+    sourceBytesBucket: 'lt_256mib',
+    decision: 'attempt_auto',
+    skipReason: 'none',
+  } as const;
+
+  it('reports undelivered so autoMigrate retries instead of writing its dedupe marker', () => {
+    // An install whose PostHog client is not up yet (or is opted out) would
+    // otherwise be marked as reported and vanish from the cohort denominator.
+    canEvaluateRemoteConfig.mockReturnValue(false);
+
+    expect(emitRolloutDecision(decision)).toBe(false);
+    expect(sendEvent).not.toHaveBeenCalled();
+  });
+
+  it('emits the ramp-gate contract properties when the client can deliver', () => {
+    expect(emitRolloutDecision(decision)).toBe(true);
+    expect(sendEvent).toHaveBeenCalledWith('migration_rollout_decision', {
+      configVersion: 'sqlite-ramp-1',
+      evaluated_channel: 'alpha',
+      source_bytes_bucket: 'lt_256mib',
+      decision: 'attempt_auto',
+      skip_reason: 'none',
+    });
   });
 });

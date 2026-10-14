@@ -24,7 +24,31 @@ const CONTENT_TYPES: Record<string, string> = {
   '.ttf': 'font/ttf',
   '.wasm': 'application/wasm',
   '.txt': 'text/plain; charset=utf-8',
+  '.avif': 'image/avif',
+  '.bmp': 'image/bmp',
+  '.pdf': 'application/pdf',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg',
 };
+
+export function contentTypeFor(file: string): string {
+  return CONTENT_TYPES[path.extname(file).toLowerCase()] ?? 'application/octet-stream';
+}
+
+/**
+ * Streams a file from the wiki itself. Its content is the user's, not the
+ * app's, so it never runs as this origin: an SVG or HTML file opened directly
+ * gets a sandboxed, script-free document.
+ */
+export function streamWikiFile(res: ServerResponse, abs: string): void {
+  res.writeHead(200, {
+    ...BASE_HEADERS,
+    'Content-Type': contentTypeFor(abs),
+    'Content-Security-Policy': "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; media-src 'self'",
+  });
+  createReadStream(abs).pipe(res);
+}
 
 /** Inside `root`, or null for a path that tries to leave it. */
 function resolveInside(root: string, urlPath: string): string | null {
@@ -50,7 +74,7 @@ async function isFile(abs: string): Promise<boolean> {
 function stream(res: ServerResponse, abs: string, immutable: boolean): void {
   res.writeHead(200, {
     ...BASE_HEADERS,
-    'Content-Type': CONTENT_TYPES[path.extname(abs).toLowerCase()] ?? 'application/octet-stream',
+    'Content-Type': contentTypeFor(abs),
     // Vite puts a content hash in every asset name, so those can be cached; index.html cannot.
     'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-store',
   });

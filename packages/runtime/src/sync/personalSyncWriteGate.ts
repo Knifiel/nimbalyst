@@ -85,10 +85,3 @@ export function describePersonalSyncWriteGate(snapshot: PersonalSyncWriteGateSna
 export function boundSkippedRowCount(count: number): number {
   return Number.isFinite(count) ? Math.min(999_999, Math.max(0, Math.floor(count))) : 0;
 }
-
-export function describeSkippedSyncRows(count: number): string | null {
-  const bounded = boundSkippedRowCount(count);
-  return bounded > 0
-    ? `${bounded} synced ${bounded === 1 ? 'session was' : 'sessions were'} written with a different sync key and ${bounded === 1 ? 'is' : 'are'} not shown here. If your phone shows old sessions, re-pair it from this computer.`
-    : null;
-}

@@ -68,7 +68,7 @@ function pageCollector() {
 }
 
 describe('index replication mirror', () => {
-  it('counts only unreadable non-deleted sessions for the notice', () => {
+  it('counts only unreadable non-deleted sessions', () => {
     const mirror = createIndexReplicationMirror<Session, Project, File>();
     mirror.apply([
       { entity: 'session', id: 's', revision: 1, unreadable: true },

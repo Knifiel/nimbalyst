@@ -123,6 +123,15 @@ interface ChartConfig {
 // New schema types
 interface ImageContent {
   path: string;
+  /** Base64 bytes attached by desktop on the mobile sync path; the phone cannot read `path`. */
+  data?: string;
+  mimeType?: string;
+}
+
+/** Inline bytes win; otherwise a URL for the local file at `path`. */
+function imageSrc(image: ImageContent): string {
+  if (image.data) return `data:${image.mimeType || 'image/png'};base64,${image.data}`;
+  return localAssetUrl(image.path);
 }
 
 interface ChartContent {
@@ -534,6 +543,12 @@ const ImageDisplay: React.FC<{
       // Try to load the image via file protocol (for local files)
       // In Electron, we can use file:// protocol for local images
       try {
+        if (image.data) {
+          setImageData(imageSrc(image));
+          setLoading(false);
+          return;
+        }
+
         // First try using readFile if available (for base64 loading)
         if (readFile) {
           const result = await readFile(image.path);
@@ -573,7 +588,7 @@ const ImageDisplay: React.FC<{
         // `localAssetUrl` returns `nim-asset://` in Electron (the main window
         // runs with `webSecurity: true` and cannot load `file://`) and
         // `file://` for non-Electron consumers.
-        setImageData(localAssetUrl(image.path));
+        setImageData(imageSrc(image));
         setLoading(false);
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Unknown error';
@@ -587,7 +602,7 @@ const ImageDisplay: React.FC<{
     };
 
     loadImage();
-  }, [image.path, readFile]);
+  }, [image.path, image.data, image.mimeType, readFile]);
 
   if (loading) {
     return (
@@ -717,7 +732,7 @@ const Lightbox: React.FC<{
       contentClassName="h-[92dvh] w-[96vw] max-w-[1400px] overflow-hidden rounded-lg border border-nim bg-nim"
     >
       <ZoomableImageSurface
-        src={localAssetUrl(images[selectedIndex].image!.path)}
+        src={imageSrc(images[selectedIndex].image!)}
         alt={images[selectedIndex].description}
         copyFilePath={images[selectedIndex].image!.path}
         toolbarLabel={(

@@ -26,33 +26,15 @@ import { createProjectConfigSync } from './sync/projectConfigSync';
 import { projectConfigSources } from './sync/projectConfigSources';
 import { nextMobileSettingsVersion } from './sync/mobileSettingsVersion';
 import { createMobileJoinDetector } from './sync/mobileJoinDetector';
-import { resolveProjectPath } from '../utils/workspaceDetection';
+import { createEnabledProjectFilter, createLiveSessionSyncFilter, isSessionMidTurn } from './sync/projectSyncFilter';
 import { selectSessionsForIndexSync } from './sync/selectSessionsForIndexSync';
 import { setSleepPreventionMode, setSyncConnected, shutdownSleepPrevention, type PreventSleepMode } from './PowerSaveService';
 import { reconnectAllTrackerSyncs } from './TrackerSyncManager';
 import { BrowserWindow } from 'electron';
 import { timeStartupPhase } from '../utils/startupTiming';
-import { compressImageIfNeeded } from '../mcp/mcpImageCompression';
 import { resolveWorkspaceAttachmentStagingDirectory } from './attachments/attachmentStagingRoot';
-
-// Screenshots taken by a desktop session are only viewable on mobile if their
-// bytes ride along in the synced message -- there is no desktop -> mobile
-// attachment channel. Give the truncator a way to downscale the big ones
-// instead of dropping them (nativeImage lives in main, the truncator does not).
-//
-// The budget is much tighter than the MCP one: every screenshot permanently
-// occupies part of a SessionRoom's storage cap on the sync server. 150 KB at
-// 1600px still gives real zoom headroom on a phone.
-const MOBILE_SYNC_IMAGE_MAX_BYTES = 150 * 1024;
-const MOBILE_SYNC_IMAGE_MAX_DIMENSION = 1600;
-
-syncModule.setSyncImageCompressor((data, mimeType) => {
-  const { data: out, mimeType: outMime } = compressImageIfNeeded(data, mimeType, {
-    maxBytes: MOBILE_SYNC_IMAGE_MAX_BYTES,
-    maxDimension: MOBILE_SYNC_IMAGE_MAX_DIMENSION,
-  });
-  return { data: out, mimeType: outMime };
-});
+// Side effect: registers the mobile-sync image compressor and display_to_user image loader.
+import './sync/mobileSyncImages';
 
 function loadSyncModule() {
   return syncModule;
@@ -87,25 +69,6 @@ let incrementalSyncInFlight = false;
 let lastIncrementalSyncAt = 0;
 const MIN_INCREMENTAL_SYNC_INTERVAL = 5000; // 5 seconds minimum between syncs
 
-/**
- * Predicate handed to `getAllSessionsForSync` so reconciliation never loads
- * sessions from projects the user did not enable. An empty enabled list means
- * "sync nothing", which is what the per-session filter this replaced already
- * did.
- *
- * Sessions running in a git worktree may have a workspaceId of
- * ".../<project>_worktrees/<name>" rather than the parent project path the user
- * enabled in Settings > Sync. Claude sessions normally adopt the parent path via
- * adoptWorktreeForSession(), but the Codex provider currently does not, so a
- * Codex worktree session keeps the raw worktree path. Accept either form.
- * `resolveProjectPath` touches the disk, so this runs once per distinct
- * workspace path rather than once per session.
- */
-function createEnabledProjectFilter(): (workspaceId: string) => boolean {
-  const enabledProjectIds = new Set(store.get('sessionSync')?.enabledProjects ?? []);
-  return (workspaceId: string) =>
-    enabledProjectIds.has(workspaceId) || enabledProjectIds.has(resolveProjectPath(workspaceId));
-}
 
 // Event emitter for sync status changes
 type SyncStatusListener = (status: SessionSyncStatus) => void;
@@ -537,7 +500,10 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
     });
     logger.main.info('[SyncManager] Created CollabV3 sync provider with device:', initialDeviceInfo.name);
 
-    const messageSyncHandler = createMessageSyncHandler(provider, { outbox: {} });
+    const messageSyncHandler = createMessageSyncHandler(provider, {
+      outbox: {},
+      shouldSync: createLiveSessionSyncFilter(async (sessionId) => (await baseStore.get(sessionId))?.workspacePath),
+    });
 
     // Keep the Stytch session token alive while sync is active.
     // The WebSocket only refreshes JWT on reconnect, so if it stays connected
@@ -640,7 +606,7 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
         const localTime = performance.now() - localStart;
         // logger.main.info(`[SyncManager] Local has ${allLocalSessions.length} sessions (query took ${localTime.toFixed(1)}ms)`);
 
-        const { sessionsNeedingIndexUpdate, sessionsNeedingMessageSync } = selectSessionsForIndexSync(allLocalSessions, serverIndex);
+        const { sessionsNeedingIndexUpdate, sessionsNeedingMessageSync } = selectSessionsForIndexSync(allLocalSessions, serverIndex, Date.now(), isSessionMidTurn);
 
         const archiveMismatches = sessionsNeedingIndexUpdate.filter(s => {
           const server = serverSessionMap.get(s.id);
@@ -991,7 +957,7 @@ export async function triggerIncrementalSync(): Promise<void> {
     const localTime = performance.now() - localStart;
     // logger.main.info(`[SyncManager] Triggered sync: local has ${allLocalSessions.length} sessions (query took ${localTime.toFixed(1)}ms)`);
 
-    const { sessionsNeedingIndexUpdate, sessionsNeedingMessageSync } = selectSessionsForIndexSync(allLocalSessions, serverIndex);
+    const { sessionsNeedingIndexUpdate, sessionsNeedingMessageSync } = selectSessionsForIndexSync(allLocalSessions, serverIndex, Date.now(), isSessionMidTurn);
 
     // logger.main.info(`[SyncManager] Triggered sync: ${sessionsNeedingIndexUpdate.length}/${allLocalSessions.length} sessions need update, ${sessionsNeedingMessageSync.length} need message sync (server has ${serverIndex.sessions.length})`);
 

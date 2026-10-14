@@ -238,6 +238,43 @@ export function isConsoleLink(href: string | null | undefined, options?: Console
 }
 
 /**
+ * A feedback request in the console: `/org/<org route key>/feedback/<requestId>`.
+ * Not a `ConsoleLinkTarget`: it is not a page, and everything that reads page
+ * links (references, embeds, transclusions) must keep ignoring it. The desktop
+ * reads it only to open the request in its Inbox instead of the browser.
+ *
+ * `orgRouteKey` is the console's org route segment: the org id, or its slug
+ * when the console minted the link. Desktop-minted links carry the id.
+ */
+export interface ConsoleFeedbackRequestLink {
+  orgRouteKey: string;
+  requestId: string;
+}
+
+export function buildConsoleFeedbackRequestLink(orgRouteKey: string, requestId: string, origin: string = CONSOLE_LINK_ORIGIN): string {
+  return `${origin}/org/${enc(orgRouteKey)}/feedback/${enc(requestId)}`;
+}
+
+export function parseConsoleFeedbackRequestLink(
+  href: string | null | undefined,
+  options: ConsoleLinkParseOptions = {},
+): ConsoleFeedbackRequestLink | null {
+  if (!href) return null;
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return null;
+  }
+  if (![CONSOLE_LINK_ORIGIN, ...(options.origins ?? [])].includes(url.origin)) return null;
+  const segments = url.pathname.split('/').slice(1);
+  if (segments.length !== 4 || segments[0] !== 'org' || segments[2] !== 'feedback') return null;
+  const orgRouteKey = dec(segments[1]!);
+  const requestId = dec(segments[3]!);
+  return orgRouteKey && requestId ? { orgRouteKey, requestId } : null;
+}
+
+/**
  * The app deep link for a console link: same path and query under
  * `nimbalyst://console`. The console's "Open in Nimbalyst" page navigates to
  * it; the desktop maps it back with `consoleLinkFromDeepLink` and opens it

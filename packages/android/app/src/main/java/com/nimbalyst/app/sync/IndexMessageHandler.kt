@@ -33,6 +33,8 @@ internal class IndexMessageHandler(
     /** The versioned replication driver for the current connection, if any. */
     private val replication: () -> IndexReplicationClient? = { null },
 ) {
+    private val liveContext = LiveSessionContextApplier(repository, gson)
+
     companion object {
         private const val TAG = "IndexMessageHandler"
 
@@ -90,6 +92,9 @@ internal class IndexMessageHandler(
             "createWorktreeResponseBroadcast" -> parse<CreateWorktreeResponseBroadcast>(message)
                 ?.let { commands.receiveWorktreeResponse(it.response) }
             "settingsSyncBroadcast" -> handleSettingsSyncBroadcast(message)
+            "sessionContextBroadcast" -> parse<SessionContextBroadcast>(message)?.let { broadcast ->
+                crypto()?.let { liveContext.apply(broadcast.update, it) }
+            }
             "devicesList" -> handleDevicesList(message)
             "deviceJoined" -> handleDeviceJoined(message)
             "deviceLeft" -> handleDeviceLeft(message)

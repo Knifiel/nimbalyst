@@ -209,6 +209,42 @@ export interface PlacedViewTypeSource {
   subscribe(listener: () => void): () => void;
 }
 
+/** What a host's upload hook stored: an image to show inline, or a file to link. */
+export interface UploadedEditorAsset {
+  kind: 'image' | 'file';
+  src: string;
+  name?: string;
+  altText?: string;
+}
+
+/** A page the `@` picker can link to, with the link as this host writes it. */
+export interface PageLinkOption {
+  id: string;
+  title: string;
+  /** The link destination, relative to the open page (`Personas/CMO.md`). */
+  href: string;
+  /** The link's title attribute; the local wiki writes `id=<id>`. */
+  linkTitle?: string;
+  folderPath?: string;
+  icon?: string;
+}
+
+/** An embedded file link (`[Label](diagram.excalidraw "width=800 height=600")`). */
+export interface FileEmbedRequest {
+  /** The link destination as written, relative to the document. */
+  src: string;
+  label: string;
+  /** Title attributes (`width`, `height`). */
+  attrs: Readonly<Record<string, string>>;
+}
+
+/** The host's pages for the `@` page-link picker. */
+export interface PageLinkSource {
+  list(): readonly PageLinkOption[];
+  createPage?(title: string): Promise<PageLinkOption>;
+  onError?(error: unknown): void;
+}
+
 export interface CollabEditorMountOptions {
   element: HTMLElement;
   source: CollabEditorSource;
@@ -236,6 +272,28 @@ export interface CollabEditorMountOptions {
    * view links. Omit it and the menu offers no placed views.
    */
   placedViewTypes?: PlacedViewTypeSource;
+  /**
+   * Stores a pasted or dropped file and says what to write for it: an image
+   * node or a link. Without it an in-memory document inlines images as data URLs.
+   */
+  onUploadAsset?: (file: File) => Promise<UploadedEditorAsset>;
+  /**
+   * Turns an image src written in the document into a URL this host can load,
+   * or null to leave it to the editor. Consulted after a team room's own
+   * `collab-asset://` resolver.
+   */
+  resolveImageSrc?: (src: string) => Promise<string | null>;
+  /**
+   * Pages linked by relative path. With it, `@` offers them and inserts a
+   * plain markdown link (`[Title](path.md "id=...")`).
+   */
+  pageLinks?: PageLinkSource;
+  /** Draws an embed of a file the document links to by path; null keeps the "unavailable" note. */
+  renderFileEmbed?: (embed: FileEmbedRequest) => ReactNode | null;
+  /** Cmd/Ctrl+F inside the document opens a find and replace bar above it. */
+  findInPage?: boolean;
+  /** Cmd/Ctrl+S inside the document; for hosts that write the document somewhere themselves. */
+  onSaveRequest?: () => void;
   onStateChange?(state: CollabEditorState): void;
   onPresenceChange?(presence: CollabEditorPresence): void;
   onWriteRejected?(rejection: CollabEditorWriteRejection): void;
@@ -413,6 +471,12 @@ export type WorkspaceFileLinkOpener = (rawHref: string, currentDocumentPath: str
  * editor swallows the click. Pass null to remove it.
  */
 export declare function setWorkspaceFileLinkOpener(opener: WorkspaceFileLinkOpener | null): void;
+/**
+ * Declares a file suffix (`.excalidraw`, `.mockup.html`) this host can render
+ * inline. A paragraph-isolated link to such a file then loads as an embed,
+ * which `renderFileEmbed` draws.
+ */
+export declare function registerEmbeddableExtension(ext: string): void;
 export { createNamedPageViewsController, type NamedPageViewsController } from './internal/runtime/src/editor/plugins/EmbedPlugin/namedPageViewsController';
 
 /** Page history: where the diff is in its change groups. */

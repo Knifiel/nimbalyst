@@ -36,6 +36,8 @@ export interface WikiTypeInfo {
   titleField: string;
   /** The type YAML as parsed, or null when it did not parse. */
   definition: Record<string, unknown> | null;
+  /** Problems in the type file to fix, such as a field name Nimbalyst reserves. Absent from older servers. */
+  problems?: string[];
 }
 
 export class WikiApiError extends Error {
@@ -74,15 +76,41 @@ export const wikiApi = {
   writeBody: async (pageId: string, markdown: string, expectedVersion: string | null) =>
     (await request<WriteBodyResult>('PUT', `/api/pages/${id(pageId)}/body`, { markdown, expectedVersion })).value,
   types: async () => (await request<{ types: WikiTypeInfo[] }>('GET', '/api/types')).value.types,
+  /** Table type to page storage: one page per row, ids kept. */
+  convertTypeToPages: async (typeId: string) =>
+    (await request<{ converted: string[] }>('POST', `/api/types/${id(typeId)}/convert`, { storage: 'pages' })).value.converted,
   trackerSnapshot: async (typeId: string) => (await request<LocalTrackerSnapshot>('GET', `/api/trackers/${id(typeId)}`)).value,
   trackerCommand: async (typeId: string, cmd: LocalTrackerCommand) =>
     (await request<LocalWikiCommandResult>('POST', `/api/trackers/${id(typeId)}/command`, cmd)).value,
   activity: async (itemId: string) => (await request<{ entries: ActivityEntry[] }>('GET', `/api/items/${id(itemId)}/activity`)).value.entries,
   search: async (q: string, limit?: number) =>
     (await request<{ hits: LocalSearchHit[] }>('GET', `/api/search?q=${encodeURIComponent(q)}${limit ? `&limit=${limit}` : ''}`)).value.hits,
+  /** Stores a file in the page's `.assets/` folder; `link` is what the page body writes. */
+  storeAttachment: async (pageId: string, name: string, file: Blob): Promise<{ path: string; link: string }> => {
+    const res = await fetch(`/api/pages/${id(pageId)}/attachments?name=${encodeURIComponent(name)}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: file,
+    });
+    const value = (await res.json().catch(() => null)) as { path: string; link: string; error?: { code?: string; message?: string } } | null;
+    if (!res.ok || !value) throw new WikiApiError(res.status, value?.error?.code ?? 'http', value?.error?.message ?? `Attaching ${name} failed with ${res.status}`);
+    return value;
+  },
+  /** URL of a file a page links to, given the link as written in the page (relative, possibly percent-encoded). */
+  pageFileUrl: (pageId: string, linkPath: string) =>
+    `/api/pages/${id(pageId)}/file?path=${encodeURIComponent(linkPath.split('/').map(safeDecode).join('/'))}`,
 };
 
-export type WikiFeedEvent = { type: 'change'; change: LocalWikiChange } | { type: 'ready' } | { type: 'down' };
+function safeDecode(part: string): string {
+  try {
+    return decodeURIComponent(part);
+  } catch {
+    return part;
+  }
+}
+
+export type WikiFeedEvent = { type: 'change'; change: LocalWikiChange } | { type: 'types' } | { type: 'ready' } | { type: 'down' };
 
 /**
  * One EventSource for the whole tab. `ready` fires on every (re)connect, so
@@ -117,6 +145,8 @@ class WikiChangeFeed {
         // A frame that does not parse is skipped; the next one carries the state.
       }
     });
+    // A type file changed: definitions, not items, so listeners reread /api/types.
+    source.addEventListener('types', () => this.emit({ type: 'types' }));
     source.onerror = () => this.emit({ type: 'down' });
     this.source = source;
   }

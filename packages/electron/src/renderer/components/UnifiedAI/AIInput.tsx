@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, KeyboardEvent, useState, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
+import { shouldAcceptPromptSuggestion } from './promptSuggestionKeys';
 import { GenericTypeahead, TypeaheadOption } from '../Typeahead/GenericTypeahead';
 import { extractTriggerMatch, getSlashTypeaheadScope, insertAtTrigger, type SlashTypeaheadScope, TriggerMatch } from '../Typeahead/typeaheadUtils';
 import { buildSlashCommandOptions, fetchSlashCommandEntries, type SlashCommandEntry } from '../Typeahead/slashCommandAutocomplete';
@@ -51,6 +52,8 @@ export interface AIInputProps {
   disabled?: boolean;
   isLoading?: boolean;
   placeholder?: string;
+  /** Predicted next prompt. Shown in place of the placeholder; Tab on an empty draft fills it in. */
+  promptSuggestion?: string | null;
   workspacePath?: string;
   /** Host catalogs replace local file/command discovery for remote sessions. */
   remoteSession?: boolean;
@@ -165,6 +168,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
     onCancel,
     disabled,
     isLoading,
+    promptSuggestion,
     placeholder = "Type your message... (Enter to send, Shift+Enter for new line, @ for files, @@ for sessions, / for commands)",
     workspacePath,
     remoteSession = false,
@@ -904,6 +908,14 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
         return;
       }
 
+      // Tab accepts the predicted next prompt into an empty draft; Enter then sends it as usual.
+      // After the typeahead block above so Tab inside a typeahead still selects its option.
+      if (promptSuggestion && shouldAcceptPromptSuggestion(e, { promptSuggestion, value, isLoading })) {
+        e.preventDefault();
+        onChange(promptSuggestion);
+        return;
+      }
+
       // Handle Shift+Tab to toggle plan mode (only for Claude Code provider)
       if (e.key === 'Tab' && e.shiftKey && provider === 'claude-code' && onModeChange && mode) {
         e.preventDefault();
@@ -1481,7 +1493,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
             onPaste={handlePaste}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
-            placeholder={placeholder}
+            placeholder={promptSuggestion && !value && !isLoading ? promptSuggestion : placeholder}
             disabled={disabled}
             rows={1}
             style={{

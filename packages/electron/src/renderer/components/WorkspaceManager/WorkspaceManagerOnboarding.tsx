@@ -6,6 +6,7 @@ import {
 } from '../UnifiedOnboarding/UnifiedOnboarding';
 import { persistOnboardingCompletion } from '../../utils/onboardingCompletion';
 import { WorkspaceManager } from './WorkspaceManager';
+import { ErrorToastContainer } from '../ErrorToast/ErrorToast';
 
 export interface WorkspaceManagerOnboardingProps {
   showOnboarding: boolean;
@@ -50,6 +51,9 @@ export const WorkspaceManagerOnboarding: React.FC<WorkspaceManagerOnboardingProp
         </div>
       )}
       <WorkspaceManager />
+      {/* Deep links main could not route are shown here when no project is
+          open (`initDeepLinkNoticeListeners`, started in index.tsx). */}
+      <ErrorToastContainer />
       {isOnboardingOpen && (
         <UnifiedOnboarding
           isOpen

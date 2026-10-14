@@ -54,7 +54,12 @@ vi.mock('../../../store/atoms/collabDocuments', async () => {
   const { atom } = await import('jotai');
   // One session per scope, like the real getter: a new atom per render never settles.
   const teamSession = { atoms: { sharedDocuments: atom([]) } };
+  const startErrors = new Map<string, ReturnType<typeof atom<string | null>>>();
   return {
+    teamPagesStartErrorAtomFamily: (scopeKey: string) => {
+      if (!startErrors.has(scopeKey)) startErrors.set(scopeKey, atom<string | null>(null));
+      return startErrors.get(scopeKey)!;
+    },
     initSharedDocuments: vi.fn(),
     getElectronCollabHostForScopeKey: () => ({
       resolveScope: () => hostMocks.resolveScope!(),
@@ -248,7 +253,7 @@ describe('CollabMode pinned tab persistence', () => {
     }];
     render(
       <TabsProvider workspacePath="/workspace" disablePersistence>
-        <CollabModeInner workspacePath="/workspace" teamScope={SCOPE} personalScope={PERSONAL_SCOPE} isActive onFileOpen={() => {}} />
+        <CollabModeInner workspacePath="/workspace" teamScope={SCOPE} teamUnavailable={null} onRetryTeamScope={() => {}} personalScope={PERSONAL_SCOPE} isActive onFileOpen={() => {}} />
         <TabProbe />
       </TabsProvider>,
     );
@@ -272,12 +277,110 @@ describe('CollabMode pinned tab persistence', () => {
     })));
   });
 
+  it('holds a deep link until the index names the page, then opens it in its own editor; a missing page is an error', async () => {
+    persistenceMocks.load.mockResolvedValue([]);
+    const { getDefaultStore } = await import('jotai');
+    const { sharedIndexLoadedForScopeAtom } = await import('@nimbalyst/collab-client/docs');
+    const { pendingCollabDocumentAtom } = await import('../../../store/atoms/collabDocuments');
+    const { errorNotificationService } = await import('../../../services/ErrorNotificationService');
+    const { store: runtimeStore } = await import('@nimbalyst/runtime/store');
+    const jotaiStore = getDefaultStore();
+    jotaiStore.set(sharedIndexLoadedForScopeAtom(SCOPE.scopeKey), false);
+    const { rerender } = render(
+      <TabsProvider workspacePath="/workspace" disablePersistence>
+        <CollabModeInner workspacePath="/workspace" teamScope={SCOPE} teamUnavailable={null} onRetryTeamScope={() => {}} personalScope={PERSONAL_SCOPE} isActive onFileOpen={() => {}} />
+      </TabsProvider>,
+    );
+    act(() => {
+      jotaiStore.set(pendingCollabDocumentAtom as any, { scopeKey: SCOPE.scopeKey, orgId: SCOPE.orgId, documentId: 'late-drawing' });
+    });
+    // Not indexed yet: no tab, and certainly not a markdown one.
+    await act(async () => { await Promise.resolve(); });
+    expect(openerMocks.open).not.toHaveBeenCalled();
+
+    linkable.documents = [{
+      documentId: 'late-drawing', teamProjectId: 'project-b', title: 'Late drawing', documentType: 'excalidraw',
+      createdBy: 'u', createdAt: 1, updatedAt: 1,
+    }];
+    act(() => { jotaiStore.set(sharedIndexLoadedForScopeAtom(SCOPE.scopeKey), true); });
+    await waitFor(() => expect(openerMocks.open).toHaveBeenCalledWith(expect.objectContaining({
+      documentId: 'late-drawing', documentType: 'excalidraw',
+    })));
+
+    openerMocks.open.mockClear();
+    act(() => {
+      jotaiStore.set(pendingCollabDocumentAtom as any, { scopeKey: SCOPE.scopeKey, orgId: SCOPE.orgId, documentId: 'gone' });
+    });
+    await waitFor(() => expect(errorNotificationService.showError).toHaveBeenCalledWith(
+      'Could not open shared page', expect.stringMatching(/not found/), expect.anything(),
+    ));
+    expect(openerMocks.open).not.toHaveBeenCalled();
+    expect(runtimeStore.set).toHaveBeenCalledWith(pendingCollabDocumentAtom, null);
+
+    // Reconnecting with the index unreachable: a link fails instead of waiting.
+    const { sharedIndexUnavailableForScopeAtom } = await import('@nimbalyst/collab-client/docs');
+    act(() => {
+      jotaiStore.set(sharedIndexLoadedForScopeAtom(SCOPE.scopeKey), false);
+      jotaiStore.set(sharedIndexUnavailableForScopeAtom(SCOPE.scopeKey), "Your team's page index could not be reached.");
+      jotaiStore.set(pendingCollabDocumentAtom as any, { scopeKey: SCOPE.scopeKey, orgId: SCOPE.orgId, documentId: 'offline-new' });
+    });
+    await waitFor(() => expect(errorNotificationService.showError).toHaveBeenCalledWith(
+      'Could not open shared page', "Your team's page index could not be reached.", expect.anything(),
+    ));
+    expect(openerMocks.open).not.toHaveBeenCalled();
+    act(() => { jotaiStore.set(sharedIndexUnavailableForScopeAtom(SCOPE.scopeKey), null); });
+
+    // Signed out: the link fails with the reason instead of waiting for a team.
+    vi.mocked(runtimeStore.set).mockClear();
+    act(() => {
+      jotaiStore.set(pendingCollabDocumentAtom as any, { scopeKey: SCOPE.scopeKey, orgId: SCOPE.orgId, documentId: 'any' });
+    });
+    rerender(
+      <TabsProvider workspacePath="/workspace" disablePersistence>
+        <CollabModeInner
+          workspacePath="/workspace"
+          teamScope={null}
+          teamUnavailable={{ message: 'Not authenticated. Sign in first.', retryable: false }}
+          onRetryTeamScope={() => {}}
+          personalScope={PERSONAL_SCOPE}
+          isActive
+          onFileOpen={() => {}}
+        />
+      </TabsProvider>,
+    );
+    await waitFor(() => expect(errorNotificationService.showError).toHaveBeenCalledWith(
+      'Could not open shared page', 'Not authenticated. Sign in first.',
+    ));
+    expect(runtimeStore.set).toHaveBeenCalledWith(pendingCollabDocumentAtom, null);
+  });
+
+  it('shows why team pages failed with a Retry that asks again', async () => {
+    persistenceMocks.load.mockResolvedValue([]);
+    const onRetry = vi.fn();
+    render(
+      <TabsProvider workspacePath="/workspace" disablePersistence>
+        <CollabModeInner
+          workspacePath="/workspace"
+          teamScope={null}
+          teamUnavailable={{ message: 'Team directory request timed out', retryable: true }}
+          onRetryTeamScope={onRetry}
+          personalScope={PERSONAL_SCOPE}
+          isActive
+          onFileOpen={() => {}}
+        />
+      </TabsProvider>,
+    );
+    expect(screen.getByTestId('team-pages-error-banner').textContent).toContain('Team directory request timed out');
+    act(() => { screen.getByRole('button', { name: 'Retry' }).click(); });
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
   it('restores persisted pin state and tab order, then writes both back', async () => {
     render(
       <TabsProvider workspacePath="/workspace" disablePersistence>
         <CollabModeInner
           workspacePath="/workspace"
-          teamScope={SCOPE}
+          teamScope={SCOPE} teamUnavailable={null} onRetryTeamScope={() => {}}
           personalScope={PERSONAL_SCOPE}
           isActive
           onFileOpen={() => {}}
@@ -326,7 +429,7 @@ describe('CollabMode pinned tab persistence', () => {
     ]);
     render(
       <TabsProvider workspacePath="/workspace" disablePersistence>
-        <CollabModeInner workspacePath="/workspace" teamScope={SCOPE} personalScope={PERSONAL_SCOPE} isActive onFileOpen={() => {}} />
+        <CollabModeInner workspacePath="/workspace" teamScope={SCOPE} teamUnavailable={null} onRetryTeamScope={() => {}} personalScope={PERSONAL_SCOPE} isActive onFileOpen={() => {}} />
         <TabProbe />
       </TabsProvider>,
     );
@@ -352,7 +455,7 @@ describe('CollabMode pinned tab persistence', () => {
     persistenceMocks.load.mockResolvedValue([]);
     render(
       <TabsProvider workspacePath="/workspace" disablePersistence>
-        <CollabModeInner workspacePath="/workspace" teamScope={SCOPE} personalScope={PERSONAL_SCOPE} isActive onFileOpen={() => {}} />
+        <CollabModeInner workspacePath="/workspace" teamScope={SCOPE} teamUnavailable={null} onRetryTeamScope={() => {}} personalScope={PERSONAL_SCOPE} isActive onFileOpen={() => {}} />
         <TabProbe />
       </TabsProvider>,
     );
@@ -428,7 +531,7 @@ describe('CollabMode pinned tab persistence', () => {
     });
     const view = (teamScope: CollabScope | null) => (
       <TabsProvider workspacePath="/workspace" disablePersistence>
-        <CollabModeInner workspacePath="/workspace" teamScope={teamScope} personalScope={PERSONAL_SCOPE} isActive onFileOpen={() => {}} />
+        <CollabModeInner workspacePath="/workspace" teamScope={teamScope} teamUnavailable={null} onRetryTeamScope={() => {}} personalScope={PERSONAL_SCOPE} isActive onFileOpen={() => {}} />
         <TabProbe />
       </TabsProvider>
     );
@@ -455,7 +558,7 @@ describe('CollabMode pinned tab persistence', () => {
         <CollabModeInner
           ref={ref}
           workspacePath="/workspace"
-          teamScope={SCOPE}
+          teamScope={SCOPE} teamUnavailable={null} onRetryTeamScope={() => {}}
           personalScope={PERSONAL_SCOPE}
           isActive
           onFileOpen={() => {}}

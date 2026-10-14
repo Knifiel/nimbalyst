@@ -1,15 +1,14 @@
 ---
-globs:
-  - "**/store/**/*"
-  - "**/atoms/**/*"
-  - "**/*Atom*"
-  - "**/*atom*"
-  - "**/*.tsx"
-imports:
-  - docs/JOTAI.md
+paths:
+  - "**/store/**"
+  - "**/atoms/**"
+  - "**/*Atom*.ts"
+  - "**/*Atom*.tsx"
 ---
 
-When working with Jotai atoms, follow the patterns documented in the imported JOTAI.md file. Key points:
-- Use derived atoms for session state to prevent divergence
-- Never use dynamic imports inside atoms
-- Keep derived atoms synchronous
+Read [docs/JOTAI.md](../../docs/JOTAI.md) before adding or changing atoms. Key points:
+
+- Derived atoms for session state, so UI and state cannot diverge
+- No dynamic imports inside atoms
+- Derived atoms stay synchronous
+- Parents subscribe to lists of ids, children to their own atoms; needing `React.memo` means the atom shape is wrong

@@ -1,0 +1,11 @@
+{
+  "type": "messagePayloadPart",
+  "part": {
+    "transferId": "0123456789abcdef0123456789abcdef",
+    "count": 2,
+    "messageId": "message-fixture-id",
+    "index": 0,
+    "encryptedContent": "c3ludGhldGljLWVuY3J5cHRlZENvbnRlbnQ=",
+    "iv": "40ZkrbQDSwQbXgfw"
+  }
+}

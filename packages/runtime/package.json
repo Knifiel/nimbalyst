@@ -278,6 +278,20 @@
         "import": "./dist-node/ai/server/transcript/TranscriptMigrationService.js"
       }
     },
+    "./sync/repairSessionProjection": {
+      "node": {
+        "types": "./dist-node/sync/repairSessionProjection.d.ts",
+        "import": "./dist-node/sync/repairSessionProjection.js"
+      },
+      "import": "./dist/sync/repairSessionProjection.js",
+      "types": "./dist/sync/repairSessionProjection.d.ts"
+    },
+    "./sync/projectionRepairCheckpointFile": {
+      "node": {
+        "types": "./dist-node/sync/projectionRepairCheckpointFile.d.ts",
+        "import": "./dist-node/sync/projectionRepairCheckpointFile.js"
+      }
+    },
     "./sync/CollabV3Sync": {
       "node": {
         "types": "./dist-node/sync/CollabV3Sync.d.ts",

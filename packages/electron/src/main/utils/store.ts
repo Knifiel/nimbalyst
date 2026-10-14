@@ -1,3 +1,4 @@
+import type { StoredProjectAppearance } from '../../shared/projectAppearance';
 import { normalizeAIProviderOverrides } from './normalizeAIProviderOverrides';
 export { normalizeAIProviderOverrides } from './normalizeAIProviderOverrides';
 import { getProviderCredentials, subscribeProviderCredentialChanges } from '../services/credentials/providerCredentials';
@@ -671,6 +672,7 @@ export interface WorkspaceState {
   // within the org when the workspace was added to one that already existed;
   // absent means the org's primary project.
   localOrgBinding?: { orgId: string; teamProjectId?: string };
+  projectAppearance?: StoredProjectAppearance;
   // Hidden gutter buttons (navigation sidebar)
   hiddenGutterButtons?: string[];
   // Tracker automation override for this project (undefined fields inherit from global)
@@ -971,6 +973,7 @@ function createDefaultWorkspaceState(workspacePath: string): WorkspaceState {
     agenticCodingWindowState: undefined,
     activeMode: undefined,
     sidebarWidth: 240,
+    projectAppearance: {},
     recentDocuments: [],
     tabs: { ...DEFAULT_TAB_MANAGER_STATE },
     agenticTabs: undefined,

@@ -278,7 +278,9 @@ enum SessionListSQL {
     }
 
     /// Resolve the visible tree root through parent links, independently of role.
-    static let groupKeyCase = SessionTreeSQL.groupKey(visible: visible)
+    private static func groupKeys(_ name: String, seeds: String) -> String {
+        SessionTreeSQL.groupKeys(name, seeds: seeds, visible: visible)
+    }
 
     private static let memberColumns = """
         b.id, b.projectId, b.sessionType, b.agentRole, b.parentSessionId,
@@ -319,24 +321,21 @@ enum SessionListSQL {
                 : ""
             let keyset = keysetPrefilter ? "AND b.updatedAt <= :cursorTs" : ""
             return """
-            candidate AS MATERIALIZED (
-                SELECT \(groupKeyCase) AS groupKey
-                FROM sessions b
+            \(groupKeys("candidate", seeds: """
+                SELECT b.id FROM sessions b
                 WHERE \(visible("b")) \(attention) \(keyset)
                 ORDER BY b.updatedAt DESC, b.id DESC
                 LIMIT :candidateLimit
-            ),
+                """)),
             keys AS MATERIALIZED (
                 SELECT DISTINCT \(keyParts("groupKey")) FROM candidate
             )
             """
         case .session:
             return """
+            \(groupKeys("focus", seeds: "SELECT b.id FROM sessions b WHERE b.id = :focusId AND \(visible("b"))")),
             keys AS MATERIALIZED (
-                SELECT \(keyParts("groupKey")) FROM (
-                    SELECT \(groupKeyCase) AS groupKey FROM sessions b
-                    WHERE b.id = :focusId AND \(visible("b"))
-                )
+                SELECT \(keyParts("groupKey")) FROM focus
             )
             """
         case .explicit:
@@ -358,18 +357,21 @@ enum SessionListSQL {
         SELECT c.id FROM sessions c INDEXED BY idx_sessions_parent JOIN subtree p ON c.parentSessionId = p.id
         WHERE \(visible("c"))
     ),
-    classified AS MATERIALIZED (
-            SELECT \(memberColumns), \(groupKeyCase) AS groupKey FROM sessions b
+    \(groupKeys("linked", seeds: """
+            SELECT b.id FROM sessions b
             WHERE \(visible("b")) AND b.id IN (SELECT anchor FROM keys WHERE groupKind <> 'wt')
             UNION
-            SELECT \(memberColumns), \(groupKeyCase) AS groupKey FROM sessions b
+            SELECT b.id FROM sessions b
             WHERE \(visible("b")) AND b.id IN (SELECT id FROM subtree)
             UNION
-            SELECT \(memberColumns), \(groupKeyCase) AS groupKey FROM sessions b
+            SELECT b.id FROM sessions b
             WHERE \(visible("b")) AND b.createdBySessionId IN (SELECT anchor FROM keys WHERE groupKind = 'meta')
             UNION
-            SELECT \(memberColumns), \(groupKeyCase) AS groupKey FROM sessions b
+            SELECT b.id FROM sessions b
             WHERE \(visible("b")) AND b.worktreeId IN (SELECT anchor FROM keys WHERE groupKind = 'wt')
+            """)),
+    classified AS MATERIALIZED (
+        SELECT \(memberColumns), k.groupKey FROM linked k JOIN sessions b ON b.id = k.sessionId
     ),
     member AS MATERIALIZED (
         SELECT

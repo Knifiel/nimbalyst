@@ -42,7 +42,10 @@ vi.mock('../../window/SplashScreen', () => ({
   updateSplashMigrationProgress: vi.fn(),
 }));
 vi.mock('../../window/migrationProgressView', () => ({ buildSplashView: () => ({ percent: 0 }) }));
-vi.mock('../sqlite/migrationEventMapper', () => ({ emitMigrationOutcome: vi.fn() }));
+vi.mock('../sqlite/migrationEventMapper', () => ({
+  emitMigrationOutcome: vi.fn(),
+  emitRolloutDecision: vi.fn(() => true),
+}));
 vi.mock('../../utils/logger', () => ({
   logger: { main: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } },
 }));

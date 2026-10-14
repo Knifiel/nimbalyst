@@ -1,14 +1,17 @@
 ---
-globs:
-  - "packages/electron/src/main/database/**/*"
+paths:
+  - "packages/electron/src/main/database/**"
   - "packages/electron/src/main/services/**/*Database*"
-  - "**/migrations/**/*"
+  - "**/migrations/**"
   - "packages/electron/src/main/utils/timestampUtils.ts"
-imports:
-  - packages/electron/DATABASE.md
 ---
 
-When working with the PGLite database, follow the patterns documented in the imported DATABASE.md file. Key points:
-- All timestamp columns use `TIMESTAMPTZ`; pass `Date` objects directly, read via `toMillis()`
-- Never use `app.exit()` — it bypasses backup/shutdown and corrupts the database; use `app.quit()`
-- Never use `localStorage` in the renderer; route through main via IPC to app-settings, workspace-settings, or PGLite
+Read [packages/electron/DATABASE.md](../../packages/electron/DATABASE.md) before touching the database. Key points:
+
+- Both PGLite and better-sqlite3 are live; code must work on either
+- `data->'key'` is a parsed object on PGLite and a JSON string on SQLite; parse defensively or select the whole column
+- Booleans go through `toDbBoolean` / `fromDbBoolean`
+- Every timestamp column is `TIMESTAMPTZ`; pass `Date` objects, read via `toMillis()`
+- Never `app.exit()`; it skips backup and shutdown. Use `app.quit()`
+- Never `localStorage` in the renderer; route through IPC to app-settings, workspace-settings, or the database
+- Defer startup maintenance with `runWhenFirstUsable`; never run an unbounded scan at startup

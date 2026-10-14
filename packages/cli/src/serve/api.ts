@@ -7,7 +7,10 @@
  *   POST /api/command                     wiki.command(LocalWikiCommand)
  *   GET  /api/pages/:id/body              wiki.readBody(id)
  *   PUT  /api/pages/:id/body              wiki.writeBody(id, markdown, expectedVersion); 409 on conflict
+ *   POST /api/pages/:id/attachments?name= wiki.storeAttachment(id, name, raw body); at most 25 MB
+ *   GET  /api/pages/:id/file?path=        a file the page links to, resolved like the link (wiki.resolvePageFile)
  *   GET  /api/types                       type definitions (the library's slice plus the raw YAML)
+ *   POST /api/types/:type/convert         wiki.convertTableToPages(type); body { storage: 'pages' }
  *   GET  /api/trackers/:type              wiki.trackerSnapshot(type)
  *   POST /api/trackers/:type/command      wiki.trackerCommand(type, LocalTrackerCommand)
  *   GET  /api/items/:id/activity          wiki.readActivity(id)
@@ -18,11 +21,15 @@ import { readFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import yaml from 'js-yaml';
 import type { LocalTrackerCommand, LocalWiki, LocalWikiCommand } from '@nimbalyst/local-wiki';
-import { HttpError, readJson, sendJson } from './http.js';
+import { HttpError, readBytes, readJson, sendJson } from './http.js';
 import type { ChangeStream } from './events.js';
+import { streamWikiFile } from './static.js';
 
 /** Bumped when a route or payload changes incompatibly; `@nimbalyst/wiki-web` checks it. */
 export const WIKI_API_VERSION = 1;
+
+/** Largest file a page accepts through the browser view (decided 2026-10-13). */
+export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 export interface ApiContext {
   wiki: LocalWiki;
@@ -45,6 +52,7 @@ function segment(value: string): string {
 }
 
 async function typeDefinitions(wiki: LocalWiki) {
+  const issues = (await wiki.snapshot()).issues.filter((issue) => issue.code === 'reserved-field');
   return Promise.all(
     wiki.typeDefs().map(async (def) => {
       let definition: unknown = null;
@@ -53,8 +61,9 @@ async function typeDefinitions(wiki: LocalWiki) {
       } catch {
         // The library already reported a malformed type file in the snapshot's issues.
       }
-      const { sourcePath: _sourcePath, ...rest } = def;
-      return { ...rest, definition };
+      const { sourcePath, ...rest } = def;
+      // Problems in the type file someone has to fix, such as a reserved field name.
+      return { ...rest, definition, problems: issues.filter((issue) => issue.path === sourcePath).map((issue) => issue.message) };
     }),
   );
 }
@@ -112,6 +121,31 @@ export async function handleApi(ctx: ApiContext, req: IncomingMessage, res: Serv
       sendJson(res, result.ok ? 200 : 409, result);
       return true;
     }
+  }
+
+  if (method === 'POST' && parts.length === 3 && parts[0] === 'pages' && parts[2] === 'attachments') {
+    const name = url.searchParams.get('name');
+    if (!name) throw new HttpError(400, 'bad-name', 'Pass the file name as ?name=');
+    const bytes = await readBytes(req, MAX_ATTACHMENT_BYTES);
+    sendJson(res, 200, await wiki.storeAttachment(segment(parts[1]), name, bytes));
+    return true;
+  }
+
+  // The link travels in the query: a browser collapses `..` segments in a path before sending it.
+  if ((method === 'GET' || method === 'HEAD') && parts.length === 3 && parts[0] === 'pages' && parts[2] === 'file') {
+    const link = url.searchParams.get('path');
+    if (!link) throw new HttpError(400, 'bad-path', 'Pass the link as ?path=');
+    const abs = await wiki.resolvePageFile(segment(parts[1]), link);
+    if (!abs) throw new HttpError(404, 'no-file', 'No such file in the wiki');
+    streamWikiFile(res, abs);
+    return true;
+  }
+
+  if (method === 'POST' && parts.length === 3 && parts[0] === 'types' && parts[2] === 'convert') {
+    const body = await readJson<{ storage?: unknown }>(req);
+    if (body?.storage !== 'pages') throw new HttpError(400, 'bad-body', "Only conversion to { storage: 'pages' } is supported");
+    sendJson(res, 200, { converted: (await wiki.convertTableToPages(segment(parts[1]))).created });
+    return true;
   }
 
   if (parts.length >= 2 && parts[0] === 'trackers') {

@@ -16,9 +16,24 @@ function apply(isDark: boolean): void {
   root.style.colorScheme = isDark ? 'dark' : 'light';
 }
 
+const themeListeners = new Set<(theme: 'dark' | 'light') => void>();
+
 /** Applies the theme before the first paint and follows the system setting after. */
 export function initializeTheme(): void {
   const query = window.matchMedia('(prefers-color-scheme: dark)');
   apply(query.matches);
-  query.addEventListener('change', (event) => apply(event.matches));
+  query.addEventListener('change', (event) => {
+    apply(event.matches);
+    for (const listener of [...themeListeners]) listener(event.matches ? 'dark' : 'light');
+  });
+}
+
+/** The theme name extension editors are given (`host.theme`). */
+export function currentTheme(): 'dark' | 'light' {
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+}
+
+export function onThemeChange(listener: (theme: 'dark' | 'light') => void): () => void {
+  themeListeners.add(listener);
+  return () => themeListeners.delete(listener);
 }

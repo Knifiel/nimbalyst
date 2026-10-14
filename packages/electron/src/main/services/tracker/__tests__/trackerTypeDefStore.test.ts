@@ -39,6 +39,8 @@ import {
   listUnsyncedTrackerSchemaDefs,
   materializeYamlTrackerTypeDef,
   markTrackerTypeDefProjected,
+  markTrackerSchemaDefRejected,
+  isTrackerTypeConfirmedByTeam,
 } from '../trackerTypeDefStore';
 import { registerTrackerSchemaFlushHandler, TRACKER_SCHEMA_FLUSH_DEBOUNCE_MS } from '../trackerSchemaFlush';
 import type { TrackerDataModel } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
@@ -587,6 +589,26 @@ describe('trackerTypeDefStore materialization lifecycle (SQLite, migration 0012)
       await materializeTrackerTypeDef(WS, model('noSync'), 'cli', db);
       const out = await listUnsyncedTrackerSchemaDefs(WS, db);
       expect(out.map((r) => r.type)).toContain('noSync');
+    });
+
+    it('gives a refused YAML type another attempt once its file changes, but not before', async () => {
+      await materializeYamlTrackerTypeDef(WS, model('customer', { sharing: 'team' }), db);
+      await markTrackerSchemaDefRejected(WS, 'customer', db);
+      // Reloading the same file is not a new attempt; the room would refuse it again.
+      await materializeYamlTrackerTypeDef(WS, model('customer', { sharing: 'team' }), db);
+      expect((await listUnsyncedTrackerSchemaDefs(WS, db)).map((r) => r.type)).not.toContain('customer');
+
+      await materializeYamlTrackerTypeDef(WS, model('customer', { sharing: 'team', displayName: 'Client' }), db);
+      expect((await listUnsyncedTrackerSchemaDefs(WS, db)).map((r) => r.type)).toContain('customer');
+    });
+
+    it('counts a custom type as confirmed by the team only once the room has delivered it, and not after it is retracted', async () => {
+      await materializeYamlTrackerTypeDef(WS, model('competitor', { sharing: 'team' }), db);
+      expect(await isTrackerTypeConfirmedByTeam(WS, 'competitor', db)).toBe(false);
+      await applyRemoteTrackerSchemaDef(WS, { type: 'competitor', model: JSON.stringify(model('competitor', { sharing: 'team' })), syncId: 1 }, db);
+      expect(await isTrackerTypeConfirmedByTeam(WS, 'competitor', db)).toBe(true);
+      await applyRemoteTrackerSchemaDef(WS, { type: 'competitor', model: null, syncId: 2 }, db);
+      expect(await isTrackerTypeConfirmedByTeam(WS, 'competitor', db)).toBe(false);
     });
 
     it('excludes a pending tombstone for a personal override (nothing to retract)', async () => {

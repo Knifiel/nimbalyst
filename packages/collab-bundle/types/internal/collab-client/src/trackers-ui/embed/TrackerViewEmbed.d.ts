@@ -21,6 +21,8 @@ export interface TrackerViewEmbedProps {
     view: SavedView;
     onOpenAsTable?: (view: SavedView) => void;
     onOpenItem?: (itemId: string, options?: CollabOpenOptions) => void;
+    /** In table mode the title text opens the item too (a type page lists pages by title). */
+    titleOpensItem?: boolean;
     /**
      * `card` is the bordered block a document embeds at a fixed height; `page`
      * drops the card chrome and fills its container, for a tab that is the view.
@@ -54,4 +56,4 @@ export interface TrackerViewEmbedProps {
  */
 export declare const TRACKER_EMBEDS_READ_ONLY_ATTRIBUTE = "data-tracker-embeds-read-only";
 /** Draws a view the caller supplies, without looking it up among the saved views. */
-export declare function TrackerViewEmbed({ view, onOpenAsTable, onOpenItem, variant, height, derivedColumns, typeIds, readOnly, headerActions, headerNotice, hiddenColumns, onSortChange, onWidthsChange, }: TrackerViewEmbedProps): JSX.Element;
+export declare function TrackerViewEmbed({ view, onOpenAsTable, onOpenItem, titleOpensItem, variant, height, derivedColumns, typeIds, readOnly, headerActions, headerNotice, hiddenColumns, onSortChange, onWidthsChange, }: TrackerViewEmbedProps): JSX.Element;

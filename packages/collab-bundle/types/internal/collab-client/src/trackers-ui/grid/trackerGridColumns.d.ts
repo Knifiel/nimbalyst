@@ -23,6 +23,8 @@ export interface KeyLinkOptions {
     onOpenDetail: (itemId: string) => void;
     /** Hover affordance inside the key cell; omit where documents are unavailable. */
     onOpenDocument?: (itemId: string) => void;
+    /** The title text opens the row too; set by a type page, where titles name pages. */
+    titleOpens?: boolean;
 }
 export interface BuildGridColumnsOptions {
     /** Active tracker type; `'all'` means a mixed-type view. */

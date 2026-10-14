@@ -26,6 +26,7 @@ export const sessionErrorAtom = atomFamily((_sessionId: string) =>
     isBedrockToolError?: boolean;
     isServerError?: boolean;
     isCodexAuthRequired?: boolean;
+    isUsageLimit?: boolean;
   } | null>(null)
 );
 

@@ -3,31 +3,50 @@ import Foundation
 /// Shared by the live queries and the persisted projection. Manager links never
 /// decide position: an isolated session may have a manager in another container.
 enum SessionTreeSQL {
-    static func groupKey(visible: (String) -> String) -> String {
+    /// CTEs ending in `<name>(sessionId, groupKey)`: the group key of every session id
+    /// `seeds` selects. The query using them must start with `WITH RECURSIVE`.
+    ///
+    /// One walk for the whole set, never a WITH inside a per-row subquery: SQLite 3.51
+    /// and older reject a CTE body that names the outer row ("no such column:
+    /// b.worktreeId") and some iPhones ship such a SQLite. Seeds must already be
+    /// visible; worktree sessions group by worktree and never walk.
+    static func groupKeys(_ name: String, seeds: String, visible: (String) -> String) -> String {
         """
-        CASE WHEN b.worktreeId IS NOT NULL THEN 'wt:' || b.worktreeId
-        ELSE (
-            WITH RECURSIVE ancestors(id, parentSessionId, sessionType) AS (
-                SELECT b.id, b.parentSessionId, b.sessionType
-                UNION
-                SELECT p.id, p.parentSessionId, p.sessionType
-                -- CROSS JOIN pins the order: left to the planner, each step scanned
-                -- the project index, making every group key O(project).
-                FROM ancestors a CROSS JOIN sessions p ON p.id = a.parentSessionId
-                WHERE \(visible("p")) AND p.worktreeId IS b.worktreeId
-                  AND COALESCE(a.sessionType, '') NOT IN ('workstream', 'blitz')
-            )
-            SELECT CASE WHEN r.sessionType = 'workstream' OR r.id <> b.id
+        \(name)Seed AS MATERIALIZED (\(seeds)),
+        \(name)Walk(startId, id, parentSessionId, sessionType) AS (
+            SELECT s.id, s.id, s.parentSessionId, s.sessionType
+            FROM \(name)Seed x JOIN sessions s ON s.id = x.id
+            WHERE s.worktreeId IS NULL
+            UNION
+            SELECT a.startId, p.id, p.parentSessionId, p.sessionType
+            -- CROSS JOIN pins the order: left to the planner, each step scanned
+            -- the project index, making every group key O(project).
+            FROM \(name)Walk a CROSS JOIN sessions p ON p.id = a.parentSessionId
+            WHERE \(visible("p")) AND p.worktreeId IS NULL
+              AND COALESCE(a.sessionType, '') NOT IN ('workstream', 'blitz')
+        ),
+        \(name)Anchor AS MATERIALIZED (
+            SELECT r.startId, r.id, r.sessionType, ROW_NUMBER() OVER (
+                PARTITION BY r.startId
+                -- Broken cycles choose the same stable anchor from every member.
+                ORDER BY CASE WHEN COALESCE(r.sessionType, '') IN ('workstream', 'blitz')
+                    OR NOT EXISTS (SELECT 1 FROM \(name)Walk p
+                                   WHERE p.startId = r.startId AND p.id = r.parentSessionId)
+                    THEN 0 ELSE 1 END, r.id
+            ) AS anchorRank
+            FROM \(name)Walk r
+        ),
+        \(name)(sessionId, groupKey) AS MATERIALIZED (
+            SELECT s.id, 'wt:' || s.worktreeId
+            FROM \(name)Seed x JOIN sessions s ON s.id = x.id
+            WHERE s.worktreeId IS NOT NULL
+            UNION ALL
+            SELECT r.startId, CASE WHEN r.sessionType = 'workstream' OR r.id <> r.startId
                 OR EXISTS (SELECT 1 FROM sessions c INDEXED BY idx_sessions_parent WHERE c.parentSessionId = r.id
-                           AND c.id <> r.id AND c.worktreeId IS b.worktreeId AND \(visible("c")))
+                           AND c.id <> r.id AND c.worktreeId IS NULL AND \(visible("c")))
                 THEN 'ws:' ELSE 's:' END || r.id
-            FROM ancestors r
-            -- Broken cycles choose the same stable anchor from every member.
-            ORDER BY CASE WHEN COALESCE(r.sessionType, '') IN ('workstream', 'blitz')
-                OR NOT EXISTS (SELECT 1 FROM ancestors p WHERE p.id = r.parentSessionId)
-                THEN 0 ELSE 1 END, r.id
-            LIMIT 1
-        ) END
+            FROM \(name)Anchor r WHERE r.anchorRank = 1
+        )
         """
     }
 

@@ -62,9 +62,7 @@ interface SessionEntry {
   metadata: BridgeMetadataUpdate;
 }
 
-function lastMessageId(messages: BridgeMessage[]): string | null {
-  return messages.length > 0 ? messages[messages.length - 1].id : null;
-}
+
 
 function metadataEqual(a: BridgeMetadataUpdate, b: BridgeMetadataUpdate): boolean {
   return (
@@ -386,10 +384,13 @@ function TranscriptApp() {
             // cache. Only replace when there is genuinely new content; a switch
             // back to an unchanged session must be a pure visibility toggle.
             const supersedes =
-              incomingMessages.length > existing.rawMessages.length ||
-              (incomingMessages.length === existing.rawMessages.length &&
-                incomingMessages.length > 0 &&
-                lastMessageId(incomingMessages) !== lastMessageId(existing.rawMessages));
+              incomingMessages.length > 0 &&
+              (incomingMessages.length !== existing.rawMessages.length ||
+                incomingMessages.some((message, index) => {
+                  const previous = existing.rawMessages[index];
+                  return message.id !== previous.id || message.contentDecrypted !== previous.contentDecrypted
+                    || message.metadataJson !== previous.metadataJson;
+                }));
             const metaChanged = !metadataEqual(existing.metadata, incomingMetadata);
 
             if (!supersedes && !metaChanged) {

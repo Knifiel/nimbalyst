@@ -1,6 +1,6 @@
-import simpleGit, { SimpleGit, SimpleGitOptions } from 'simple-git';
+import type { SimpleGit, SimpleGitOptions } from 'simple-git';
 import { getEnhancedPath, getShellEnvironment } from './shellEnvironment';
-import { GIT_INHERITED_ENV_UNSAFE } from './gitInheritedEnvUnsafe';
+import { createGit } from './gitClient';
 import { sanitizeGitRepositoryEnv } from './gitRepositoryEnv';
 
 /**
@@ -39,8 +39,5 @@ export function simpleGitWithHookEnv(
   baseDir: string,
   options?: Partial<SimpleGitOptions>
 ): SimpleGit {
-  // The unsafe flags are required because .env() makes simple-git scan the
-  // supplied (trusted, user-owned) environment for vars like GIT_EDITOR.
-  const git = simpleGit(baseDir, { ...options, unsafe: GIT_INHERITED_ENV_UNSAFE });
-  return git.env(getGitSubprocessEnv());
+  return createGit(baseDir, options, getGitSubprocessEnv());
 }

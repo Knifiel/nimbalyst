@@ -27,6 +27,8 @@ data class MessageEntity(
     val iv: String = "",
     val contentDecrypted: String? = null,
     val metadataJson: String? = null,
+    /** Sync projection version + server revision (#1711); orders same-ID repairs. */
+    val projectionJson: String? = null,
     val createdAt: Long,
 )
 

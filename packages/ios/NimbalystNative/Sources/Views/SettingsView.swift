@@ -12,6 +12,7 @@ public struct SettingsView: View {
     @State private var isDeletingAccount = false
     @State private var deleteAccountError: String?
     @State private var accountSwitchError: String?
+    @State private var copiedDiagnostics = false
     @Environment(\.dismiss) private var dismiss
 
     // Voice mode settings
@@ -23,7 +24,7 @@ public struct SettingsView: View {
     public init() {}
 
     private var connectedDevices: [DeviceInfo] {
-        appState.syncManager?.connectedDevices ?? []
+        DeviceRoster.recent(appState.syncManager?.connectedDevices ?? [])
     }
 
     public var body: some View {
@@ -35,6 +36,7 @@ public struct SettingsView: View {
             notificationsSection
             analyticsSection
             #endif
+            diagnosticsSection
             dangerSection
         }
         .navigationTitle("Settings")
@@ -311,6 +313,25 @@ public struct SettingsView: View {
         }
     }
     #endif
+
+    // MARK: - Diagnostics
+
+    private var diagnosticsSection: some View {
+        Section {
+            Button {
+                DiagnosticsReport.copyToClipboard(appState: appState)
+                copiedDiagnostics = true
+            } label: {
+                Label(copiedDiagnostics ? "Copied" : "Copy Diagnostics",
+                      systemImage: copiedDiagnostics ? "checkmark" : "doc.on.doc")
+            }
+            .accessibilityIdentifier("settings-copy-diagnostics")
+        } header: {
+            Text("Troubleshooting")
+        } footer: {
+            Text("Copies app and device versions and recent sync errors to paste into a bug report. No session content is included.")
+        }
+    }
 
     // MARK: - Danger Zone
 

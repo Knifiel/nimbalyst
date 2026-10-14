@@ -55,6 +55,7 @@ export const CLAUDE_CODE_TRANSIENT_CHUNK_TYPES: ReadonlySet<string> = new Set([
   'tool_use_summary',
   'auth_status',
   'rate_limit_event',
+  'prompt_suggestion',
 ]);
 
 /**

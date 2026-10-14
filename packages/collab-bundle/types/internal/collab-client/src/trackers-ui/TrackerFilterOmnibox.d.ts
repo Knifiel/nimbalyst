@@ -19,8 +19,8 @@
  * filter token. Committing the token turns it into a pill and hands the clause
  * to the shared filter set; the search text it was appended to is untouched.
  */
-import type { JSX } from 'react';
-import { type TrackerFilterSet } from '../../../runtime/src/plugins/TrackerPlugin/models/index';
+import type { JSX, ReactNode } from 'react';
+import { type TrackerFieldFilter, type TrackerFilterSet } from '../../../runtime/src/plugins/TrackerPlugin/models/index';
 import type { TrackerFilterField } from './trackerFilterFields';
 import { type TagTokenOption } from '../trackers/trackerFilterTokens';
 export declare const TRACKER_FOCUS_SEARCH_EVENT = "nimbalyst:tracker-focus-search";
@@ -44,8 +44,19 @@ export interface TrackerFilterOmniboxProps {
      * horizontal pill row beside it, so it opts out -- one set of pills, not two.
      */
     showPills?: boolean;
+    /** Draw the pills inside the box, before the text, instead of in a row below it. */
+    inlinePills?: boolean;
+    /**
+     * Clicking a field pill calls this instead of pulling the pill back into the
+     * text. Returning `false` declines, and the pill is pulled back as usual.
+     */
+    onPillClick?: (clauseIndex: number, clause: TrackerFieldFilter) => boolean | void;
+    /** Controls drawn at the right end of an inline-pills box, before its clear button. */
+    trailing?: ReactNode;
     /** Layout for the surface this instance sits on (width, padding, borders). */
     className?: string;
     placeholder?: string;
+    /** `large` for a page whose main control is this box (Pages search); `default` for toolbars. */
+    size?: 'default' | 'large';
 }
-export declare function TrackerFilterOmnibox({ searchQuery, onSearchQueryChange, fields, filters, onFiltersChange, tagOptions, tagFilter, onTagFilterChange, showPills, className, placeholder, }: TrackerFilterOmniboxProps): JSX.Element;
+export declare function TrackerFilterOmnibox({ searchQuery, onSearchQueryChange, fields, filters, onFiltersChange, tagOptions, tagFilter, onTagFilterChange, showPills, inlinePills, onPillClick, trailing, className, placeholder, size, }: TrackerFilterOmniboxProps): JSX.Element;

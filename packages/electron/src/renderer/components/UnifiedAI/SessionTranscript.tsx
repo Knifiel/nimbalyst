@@ -135,7 +135,9 @@ import { buildPlanImplementationPrompt, resolvePlanFilePath } from '../../utils/
 import { isGitRepoAtom } from '../../store/actions/sessionHistoryActions';
 import { resolveTranscriptClickPath } from '../../utils/resolveTranscriptClickPath';
 import { openAgentEditedPage } from '../../utils/agentEditedPage';
+import { saveSessionArchived } from '../../utils/saveSessionArchived';
 import { autoCommitEnabledAtom, setAutoCommitEnabledAtom } from '../../store/atoms/autoCommitAtoms';
+import { settingAtom } from '../../store/atoms/settingAtomFamily';
 import { diffPeekSizeAtom, setDiffPeekSizeAtom } from '../../store/atoms/diffPeekSizeAtoms';
 import { registerSessionWorkspace, loadInitialSessionFileState } from '../../store/listeners/fileStateListeners';
 import { sessionFileEditsAtom } from '../../store/atoms/sessionFiles';
@@ -767,6 +769,7 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
   // Auto-commit setting
   const autoCommitEnabled = useAtomValue(autoCommitEnabledAtom);
   const setAutoCommitEnabled = useSetAtom(setAutoCommitEnabledAtom);
+  const usageLimitAutoResumeEnabled = useAtomValue(settingAtom('ai.usageLimitAutoResumeEnabled'));
 
   // Diff peek popover size (shared with git extension)
   const diffPeekSize = useAtomValue(diffPeekSizeAtom);
@@ -899,7 +902,9 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
         (sessionError.message.toLowerCase().includes('401 unauthorized') ||
          (sessionError.message.toLowerCase().includes('401') && sessionError.message.toLowerCase().includes('authentication')));
 
-      if (!isCodexOpenAIAuthError) {
+      // A usage-limit block is already saved as the rate-limit card, which
+      // carries the auto-resume switch; a local copy would show it twice.
+      if (!isCodexOpenAIAuthError && !sessionError.isUsageLimit) {
         // Add error as an assistant message so user can see what went wrong.
         // isCodexAuthRequired short-circuits the rendered text to a CTA widget
         // that opens the Codex auth section in settings; the raw error string
@@ -1592,22 +1597,16 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
   }, [sessionId, workspacePath]);
 
   const handleCloseAndArchive = useCallback(async () => {
-    try {
-      await window.electronAPI.invoke('sessions:update-metadata', sessionId, { isArchived: true });
-      setIsArchived(true);
-      onCloseAndArchive?.(sessionId);
-    } catch (error) {
-      console.error('[SessionTranscript] Failed to archive session:', error);
-    }
+    // The helper shows an error message itself if the save fails. Stop here so the screen never says "archived" when it was not saved.
+    if (!(await saveSessionArchived(sessionId, true))) return;
+    setIsArchived(true);
+    onCloseAndArchive?.(sessionId);
   }, [sessionId, setIsArchived, onCloseAndArchive]);
 
   const handleUnarchive = useCallback(async () => {
-    try {
-      await window.electronAPI.invoke('sessions:update-metadata', sessionId, { isArchived: false });
-      setIsArchived(false);
-    } catch (error) {
-      console.error('[SessionTranscript] Failed to unarchive session:', error);
-    }
+    // Same rule as above: if the save fails, the helper shows the error and we change nothing on screen.
+    if (!(await saveSessionArchived(sessionId, false))) return;
+    setIsArchived(false);
   }, [sessionId, setIsArchived]);
 
   const handleAIModeChange = useCallback(async (newMode: AIMode) => {
@@ -1990,6 +1989,13 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
         setAutoCommitEnabled(enabled);
       },
 
+      // Usage-limit auto-resume (the rate-limit card's switch)
+      usageLimitAutoResumeEnabled,
+      setUsageLimitAutoResume: async (enabled: boolean, resetsAtMs: number | null) => {
+        const current = workspacePath && resetsAtMs != null ? { sessionId, workspacePath, resetsAtMs } : undefined;
+        await window.electronAPI.invoke('wakeup:set-usage-limit-auto-resume', enabled, current);
+      },
+
       // Git commit operations
       gitCommit: async (
         proposalId: string,
@@ -2251,6 +2257,7 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
       get workspacePath() { return liveHostRef.current?.workspacePath ?? (workspacePath || ''); },
       get worktreeId() { return liveHostRef.current?.worktreeId ?? worktreeId; },
       get autoCommitEnabled() { return liveHostRef.current?.autoCommitEnabled ?? false; },
+      get usageLimitAutoResumeEnabled() { return liveHostRef.current?.usageLimitAutoResumeEnabled ?? false; },
       get diffPeekSize() { return getDiffPeekSizeForInteractiveWidgetHost(liveHostRef.current); },
       askUserQuestionSubmit: (...args) => liveHostRef.current!.askUserQuestionSubmit(...args),
       askUserQuestionCancel: (...args) => liveHostRef.current!.askUserQuestionCancel(...args),
@@ -2273,6 +2280,7 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
       renderFeedbackArtifactPreview: (...args) => liveHostRef.current!.renderFeedbackArtifactPreview!(...args),
       renderFeedbackArtifactPopover: (...args) => liveHostRef.current!.renderFeedbackArtifactPopover!(...args),
       setAutoCommitEnabled: (...args) => liveHostRef.current!.setAutoCommitEnabled(...args),
+      setUsageLimitAutoResume: (...args) => liveHostRef.current!.setUsageLimitAutoResume!(...args),
       gitCommit: (...args) => liveHostRef.current!.gitCommit(...args),
       gitCommitCancel: (...args) => liveHostRef.current!.gitCommitCancel(...args),
       gitFileDiff: (...args) => liveHostRef.current!.gitFileDiff!(...args),

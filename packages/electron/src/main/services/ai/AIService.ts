@@ -1,5 +1,4 @@
 import { reservePromptAnswer } from './PromptAnswerReservation';
-import { warnIfUnpublished } from '@nimbalyst/runtime/sync/pushOutcome';
 import { sessionInbox } from './sessionInboxService';
 import { resolveProviderApiKey } from './resolveProviderApiKey';
 import { SAVED_CREDENTIAL, withoutProviderConfigCredentials } from '../../../shared/providerCredentials';
@@ -57,6 +56,7 @@ import {
 import { getAIProviderOverridesWithWorktreeFallback } from '../../utils/aiSettingsMerge';
 import { DocumentContextService } from '@nimbalyst/runtime';
 import { getSyncProvider } from '../SyncManager';
+import { publishContextUsage } from './publishContextUsage';
 import { normalizeCodexProviderConfig, stripTransientProviderFields } from '@nimbalyst/runtime/ai/server/utils/modelConfigUtils';
 import { resolveProjectPath } from '../../utils/workspaceDetection';
 import { inferWorktreePathFromFilePath, inferWorktreePathFromCommand } from './worktreeInference';
@@ -248,6 +248,11 @@ export class AIService {
       }
       return (this.getSettingsStore().get('customClaudeCodePath', '') as string) || '';
     });
+
+    // Read fresh each query so the Agent Features toggle applies on the next turn.
+    ClaudeCodeProvider.setPromptSuggestionsEnabledLoader(
+      () => this.getSettingsStore().get('promptSuggestionsEnabled', true) !== false,
+    );
 
     // API keys must be explicitly set by the user in settings.
     // NEVER auto-import keys from process.env. A user's .env file with
@@ -1182,20 +1187,7 @@ export class AIService {
             // Push context usage to mobile sync
             const syncProvider = getSyncProvider();
             if (syncProvider) {
-              try {
-                const outcome = await syncProvider.pushChange(session.id, {
-                  type: 'metadata_updated',
-                  metadata: {
-                    currentContext: {
-                      tokens: parsedUsage.totalTokens,
-                      contextWindow: parsedUsage.contextWindow,
-                    },
-                  },
-                });
-                warnIfUnpublished(message => logger.main.warn(message), session.id, '[AIService] Failed to publish sync change', outcome);
-              } catch (error) {
-                logger.main.warn(`[AIService] Failed to publish sync change for session ${session.id}:`, error);
-              }
+              await publishContextUsage(syncProvider, session.id, { tokens: parsedUsage.totalTokens, contextWindow: parsedUsage.contextWindow });
             }
 
             // Also send IPC event to update UI immediately

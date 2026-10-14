@@ -1,14 +1,14 @@
 {
   "id": "com.nimbalyst.calc-sheets",
   "name": "Calc Sheets",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Line-oriented calculation worksheets with units, formulas, and live result gutters",
   "author": "Nimbalyst",
   "main": "dist/index.js",
   "styles": "dist/index.css",
   "apiVersion": "1.0.0",
   "marketplace": {
-    "changelog": "1.0.2: The results column in a shared calc sheet stays in sync with the document.",
+    "changelog": "1.0.3: Mix prose with formulas in a sheet, plus dependency security updates.\n1.0.2: The results column in a shared calc sheet stays in sync with the document.",
     "categories": ["data"],
     "tags": ["calculator", "worksheet", "formula", "units", "finance", "planning"],
     "icon": "calculate",

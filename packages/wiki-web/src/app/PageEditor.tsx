@@ -31,6 +31,8 @@ import {
 } from '@nimbalyst/collab-bundle/editor';
 import { wikiApi, wikiChanges } from '../api/client';
 import { DraftStoreContext, type Conflict, type PageDraft, type SaveOutcome } from './drafts';
+import { pageImageResolver, pageUploadAsset } from './pageAssets';
+import { PageEditorServicesContext } from './pageEditorServices';
 
 const SAVE_DELAY_MS = 600;
 const LOCAL_USER = { memberId: asTeamMemberId('local'), name: 'You' };
@@ -54,6 +56,7 @@ export function PageEditor({
   onSaveState?: (state: SaveState, error: string | null) => void;
 }) {
   const drafts = useContext(DraftStoreContext);
+  const services = useContext(PageEditorServicesContext);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [malformed, setMalformed] = useState(false);
@@ -223,9 +226,16 @@ export function PageEditor({
         user: LOCAL_USER,
         // A file whose frontmatter does not parse is shown whole and not written until fixed by hand.
         readOnly: body.malformed === true,
-        trackerReferences,
+        trackerReferences: trackerReferences ?? services?.trackerReferences,
         trackerReferenceAppearance: 'quiet',
         trackerReferenceSource,
+        onUploadAsset: pageUploadAsset(pageId),
+        resolveImageSrc: pageImageResolver(pageId),
+        pageLinks: services?.pageLinks(pageId),
+        renderFileEmbed: services ? (embed) => services.fileEmbed(pageId, embed) : undefined,
+        findInPage: true,
+        // Writes now instead of after the typing pause; a conflict still waits for the person's choice.
+        onSaveRequest: () => void saveRef.current(),
         onReady: (ready) => {
           handleRef.current = ready;
           if (restore && !conflictRef.current) scheduleSave();

@@ -1,0 +1,4 @@
+{
+  "type": "getMessageProjection",
+  "messageId": "message-fixture-id"
+}

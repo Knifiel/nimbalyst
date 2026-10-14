@@ -4,7 +4,7 @@ import type { TrackerFilterField } from './trackerFilterFields';
 export interface TrackerFilterValueMenuProps {
     field: TrackerFilterField;
     anchorRect: DOMRect | null;
-    placement?: 'left' | 'below';
+    placement?: 'left' | 'right' | 'below';
     selectedValues?: ReadonlySet<string>;
     onSelect: (value: string | string[] | number, op?: TrackerFilterOp) => void;
     onClear?: () => void;

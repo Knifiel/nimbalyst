@@ -104,8 +104,9 @@ extension SyncManager {
         )
         if let data = try? JSONEncoder().encode(message),
            let json = String(data: data, encoding: .utf8) {
+            // The send can fail ("pushToken failed (transport)"); this is the attempt.
             requests.send(kind: .pushToken, channel: .index, json: json)
-            logger.info("Registered push token with server")
+            logger.info("Sending push token registration")
         }
     }
 

@@ -52,12 +52,7 @@ For deep IPC patterns (`safeHandle`/`safeOn`, error handling, channel structure)
 
 ## Data Persistence
 
-The app runs over **either PGLite (PostgreSQL in WebAssembly) or better-sqlite3** — both backends are active during the in-progress migration. Code must work on either; do not assume one. **Never use `localStorage` in the renderer.** Persist via IPC to main using:
-- **app-settings store** (`src/main/utils/store.ts`) for global app settings
-- **workspace-settings store** for per-project state
-- **AppDatabase** (PGLite or SQLite, selected at init) for complex data (AI sessions, document history, trackers)
-
-The biggest divergence to remember: `data->'key'` returns a parsed object on PGLite but a JSON string on SQLite. For tables, locations, shutdown rules, timestamp handling, and the full list of backend-divergent behaviors, see [DATABASE.md](./DATABASE.md).
+Three stores, all reached from the renderer through IPC: the **app-settings store** (`src/main/utils/store.ts`) for global settings, the **workspace-settings store** for per-project state, and **AppDatabase** (PGLite or SQLite, selected at init) for sessions, document history, and trackers. The dual-backend rules are in the root CLAUDE.md and [DATABASE.md](./DATABASE.md).
 
 ## Renderer State Architecture
 
@@ -77,12 +72,10 @@ For full patterns, see [/docs/EDITOR_STATE.md](/docs/EDITOR_STATE.md) and [/docs
 
 ## Logging
 
-Three log destinations:
+- **Main process log**: `~/Library/Application Support/@nimbalyst/electron/logs/main.log`, with categories like `(MAIN)`, `(AI)`, `(API)`, `(SYNC)`.
+- **Renderer console log** (dev mode only): `~/Library/Application Support/@nimbalyst/electron/nimbalyst-debug.log`.
 
-- **Main process log**: `~/Library/Application Support/@nimbalyst/electron/logs/main.log` — main-process events, AI, sync, file ops; categories like `(MAIN)`, `(AI)`, `(API)`, `(SYNC)`.
-- **Renderer console log** (dev mode only): `~/Library/Application Support/@nimbalyst/electron/nimbalyst-debug.log` — captured via `webContents.on('console-message')` in `src/main/index.ts`.
-
-Use the agent log access tools (`get_main_process_logs`, `get_renderer_debug_logs`) instead of asking users to paste logs. See [/docs/DEBUGGING_LOGS.md](/docs/DEBUGGING_LOGS.md).
+Read them with `get_main_process_logs` and `get_renderer_debug_logs`. See [/docs/DEBUGGING_LOGS.md](/docs/DEBUGGING_LOGS.md).
 
 ## Window State Persistence
 

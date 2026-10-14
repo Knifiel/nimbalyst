@@ -19,6 +19,9 @@ interface MessageDao {
     @Query("DELETE FROM messages WHERE sessionId = :sessionId")
     suspend fun deleteForSession(sessionId: String)
 
+    @Query("SELECT * FROM messages WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<String>): List<MessageEntity>
+
     @Upsert
     suspend fun upsertAll(messages: List<MessageEntity>)
 }

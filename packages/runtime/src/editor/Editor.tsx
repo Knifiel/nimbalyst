@@ -36,6 +36,7 @@ import MarkdownShortcutPlugin from './plugins/MarkdownShortcutPlugin';
 import ShortcutsPlugin from './plugins/ShortcutsPlugin';
 import SpeechToTextPlugin from './plugins/SpeechToTextPlugin';
 import TableCellActionMenuPlugin from './plugins/TableActionMenuPlugin';
+import TableCardLayoutPlugin from './plugins/TableCardLayoutPlugin';
 import TableCellResizer from './plugins/TableCellResizer';
 import TableHoverActionsPlugin from './plugins/TableHoverActionsPlugin';
 import ToolbarPlugin from './plugins/ToolbarPlugin';
@@ -309,8 +310,9 @@ export default function Editor({ config = DEFAULT_EDITOR_CONFIG }: EditorProps):
             <TablePlugin
               hasCellMerge={false}
               hasCellBackgroundColor={false}
-              hasHorizontalScroll={false}
+              hasHorizontalScroll={true}
             />
+            <TableCardLayoutPlugin />
             <TableCellResizer />
             {/* Owns link clicks too: a click opens the link, editing lives in its hover card. */}
             <FloatingLinkEditorPlugin

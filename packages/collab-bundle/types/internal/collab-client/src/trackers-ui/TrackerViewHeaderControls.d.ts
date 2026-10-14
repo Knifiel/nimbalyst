@@ -26,6 +26,12 @@ export interface TrackerViewHeaderControlsProps {
     filters: TrackerFilterSet | null;
     onFiltersChange: (filters: TrackerFilterSet) => void;
     openFiltersToken?: number;
+    /**
+     * When set, the host opens filters from its own control (bumping
+     * `openFiltersToken`): the Filter button is not drawn and the builder opens
+     * under this element instead.
+     */
+    filterAnchor?: HTMLElement | null;
     statusScope: TrackerStatusScope;
     onStatusScopeChange: (scope: TrackerStatusScope) => void;
     viewMode: TrackerViewMode;
@@ -35,4 +41,4 @@ export interface TrackerViewHeaderControlsProps {
     /** Modes this host can honestly render. Desktop uses the full catalog. */
     viewModeOptions?: readonly TrackerViewModeOption[];
 }
-export declare function TrackerViewHeaderControls({ itemCount, unscopedItemCount, availableColumns, columnConfig, onColumnConfigChange, showColumnControls, filterFields, filters, onFiltersChange, openFiltersToken, statusScope, onStatusScopeChange, viewMode, groupBy, ordering, onLayoutChange, viewModeOptions, }: TrackerViewHeaderControlsProps): JSX.Element;
+export declare function TrackerViewHeaderControls({ itemCount, unscopedItemCount, availableColumns, columnConfig, onColumnConfigChange, showColumnControls, filterFields, filters, onFiltersChange, openFiltersToken, filterAnchor, statusScope, onStatusScopeChange, viewMode, groupBy, ordering, onLayoutChange, viewModeOptions, }: TrackerViewHeaderControlsProps): JSX.Element;

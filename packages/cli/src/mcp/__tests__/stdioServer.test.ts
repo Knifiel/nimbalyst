@@ -16,7 +16,10 @@ import { initWiki, openWiki } from '@nimbalyst/local-wiki';
 import { PAGE_TOOL_NAMES } from '@nimbalyst/collab-protocol';
 import { handleMessage, runStdioServer } from '../stdioServer.js';
 import { TeamScopeRefusal, ToolMap, textResult } from '../toolMap.js';
+import { resolvePluginWorkspace } from '../pluginWorkspace.js';
+import { detectPluginInstall, startUpdateCheck, type PluginInstall } from '../updateCheck.js';
 
+const EDITOR_TOOLS = ['mindmap_get_document', 'mindmap_apply_operations', 'excalidraw_get_elements', 'excalidraw_add_elements', 'excalidraw_add_arrows', 'excalidraw_remove_elements'];
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const repoRoot = path.resolve(packageDir, '../..');
 let outDir = '';
@@ -115,9 +118,9 @@ describe('nim mcp over stdio', () => {
     ]);
     // The agent made the wiki itself; no `nim wiki init` step for the user.
     expect(created).toBe(true);
-    // The list is stable without a wiki, and every name but the local-only init is a contract name.
+    // The list is stable without a wiki, and every name but the local-only ones is a contract name.
     const names = responses[1].result.tools.map((t: { name: string }) => t.name);
-    expect(names).toEqual(['initLocalWiki', ...LOCAL_TOOLS]);
+    expect(names).toEqual(['initLocalWiki', ...LOCAL_TOOLS, 'convertTypeStorage', ...EDITOR_TOOLS, 'openWikiInBrowser', 'teamSignIn', 'moveLocalWikiToTeam', 'openUrl']);
     expect(LOCAL_TOOLS.every((n: string) => (PAGE_TOOL_NAMES as readonly string[]).includes(n))).toBe(true);
     expect(stderr).toContain('nim mcp');
   });
@@ -129,14 +132,16 @@ describe('nim mcp over stdio', () => {
       mkdirSync(path.join(project, '.nimbalyst', 'trackers'), { recursive: true });
       writeFileSync(
         path.join(project, '.nimbalyst', 'trackers', 'competitor.yaml'),
-        'type: competitor\ndisplayName: Competitor\nstorage: pages\nfields:\n  - name: title\n    type: string\n  - name: status\n    type: select\n',
+        'type: competitor\ndisplayName: Competitor\nstorage: pages\nfields:\n  - name: title\n    type: string\n  - name: status\n    type: select\n  - name: activity\n    type: select\n',
       );
+      writeFileSync(path.join(project, '.nimbalyst', 'trackers', 'partner.yaml'), 'type: partner\ndisplayNamePlural: Partners\nstorage: table # one CSV\nfields:\n  - name: tier\n    type: select\n');
       await initWiki(dir);
       const wiki = await openWiki(dir);
       const home = (await wiki.command({ type: 'register-document', title: 'Home', parentFolderId: null, body: 'Welcome.\n' })).id!;
       // A type without `storage:` keeps its items in the app database; an existing page of it stays editable.
       writeFileSync(path.join(project, '.nimbalyst', 'trackers', 'github-pr.yaml'), 'type: github-pr\ndisplayName: Pull request\n');
       const pr = (await wiki.command({ type: 'register-document', title: 'PR 1', parentFolderId: null, pageType: 'github-pr' })).id!;
+      writeFileSync(path.join(dir, 'Partners.csv'), 'id,title,tier\nP1,Globex,gold\n');
       wiki.close();
 
       const { stdout, code } = await runNimMcp([
@@ -153,6 +158,9 @@ describe('nim mcp over stdio', () => {
         call(11, 'createSharedDoc', { title: 'Flow', documentType: 'excalidraw', initialContent: '{"elements":[]}' }),
         call(12, 'applyCollabDocEdit', { filePath: 'Flow.excalidraw', replacements: [{ oldText: '[]', newText: '[1]' }] }),
         call(13, 'readCollabDoc', { filePath: 'Flow' }),
+        call(14, 'tracker_list_types', {}),
+        call(15, 'convertTypeStorage', { type: 'partner', storage: 'pages' }),
+        call(16, 'tracker_get', { id: 'P1' }),
       ], project);
       expect(code).toBe(0);
       const results = stdout.trim().split('\n').map((line) => JSON.parse(line).result);
@@ -177,6 +185,11 @@ describe('nim mcp over stdio', () => {
       expect(body(10)).toMatchObject({ path: 'Flow.excalidraw' });
       expect(body(12)).toMatchObject({ documentType: 'excalidraw', markdown: '{"elements":[1]}' });
       expect(readFileSync(path.join(dir, 'Flow.excalidraw'), 'utf8')).toBe('{"elements":[1]}');
+      // A field name the record model keeps for itself is called out where an agent checks its types.
+      expect(body(13).types.find((t: { type: string }) => t.type === 'competitor').problems).toEqual([expect.stringContaining('"activity"')]);
+      expect(body(14)).toMatchObject({ type: 'partner', storage: 'pages', converted: ['P1'] });
+      expect(body(15)).toMatchObject({ id: 'P1', title: 'Globex', storage: 'pages', path: 'Globex.md' });
+      expect(readFileSync(path.join(project, '.nimbalyst', 'trackers', 'partner.yaml'), 'utf8')).toContain('storage: pages # one CSV');
     } finally {
       rmSync(project, { recursive: true, force: true });
     }
@@ -222,5 +235,126 @@ describe('tool calls', () => {
       id: null,
       error: { code: -32600, message: 'Invalid request' },
     });
+  });
+});
+
+describe('plugin workspace', () => {
+  const pluginRoot = '/home/u/.codex/plugins/cache/nimbalyst/nimbalyst-wiki/0.3.0';
+
+  it('uses Claude Code project, else Codex PWD only when started in the plugin directory', () => {
+    expect(resolvePluginWorkspace({ CLAUDE_PROJECT_DIR: '/repo', PWD: '/other' }, pluginRoot, pluginRoot)).toBe('/repo');
+    expect(resolvePluginWorkspace({ PWD: '/repo' }, `${pluginRoot}/`, pluginRoot)).toBe('/repo');
+    // A host that moved the cwd without updating PWD: the cwd wins.
+    expect(resolvePluginWorkspace({ PWD: '/stale' }, '/repo', pluginRoot)).toBe('/repo');
+    expect(resolvePluginWorkspace({}, pluginRoot, pluginRoot)).toBe(pluginRoot);
+  });
+});
+
+describe('plugin update check', () => {
+  const install: PluginInstall = {
+    agent: 'claude',
+    marketplace: 'nimbalyst',
+    version: '0.5.0',
+    manifestUrl: 'https://example.test/plugin.json',
+  };
+  const manifestFetch = (version: string) => (async () => new Response(JSON.stringify({ version }))) as unknown as typeof fetch;
+
+  it('appends the notice once, to the first successful tool result after a newer version is fetched, and caches it', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'nim-update-'));
+    try {
+      const cacheFile = path.join(dir, 'nested', 'update-check.json');
+      const check = startUpdateCheck({ install, env: {}, cacheFile, now: () => 1000, fetchImpl: manifestFetch('0.6.0'), log: () => {} });
+      await check.settled;
+      expect(JSON.parse(readFileSync(cacheFile, 'utf8'))).toEqual({ checkedAt: 1000, latestVersion: '0.6.0' });
+
+      const tools = new ToolMap()
+        .register({ definition: { name: 'ok', description: 'Ok.', inputSchema: { type: 'object', properties: {} } }, call: async () => textResult('done') })
+        .register({ definition: { name: 'bad', description: 'Bad.', inputSchema: { type: 'object', properties: {} } }, call: async () => textResult('no', true) });
+      const info = { name: 'nimbalyst-local', version: 'test' };
+      const call = (id: number, name: string) => handleMessage({ jsonrpc: '2.0', id, method: 'tools/call', params: { name } }, tools, info, check.takeNotice) as Promise<any>;
+
+      expect((await call(1, 'bad')).result.content).toHaveLength(1);
+      const first = (await call(2, 'ok')).result.content;
+      expect(first).toHaveLength(2);
+      expect(first[1].text).toContain('Nimbalyst Wiki 0.6.0 is available (installed: 0.5.0)');
+      expect(first[1].text).toContain('`claude plugin update nimbalyst-wiki@nimbalyst`');
+      expect((await call(3, 'ok')).result.content).toHaveLength(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('uses a fresh cache without fetching, refetches a stale one, and stays quiet when opted out or offline', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'nim-update-'));
+    try {
+      const cacheFile = path.join(dir, 'update-check.json');
+      const day = 24 * 60 * 60 * 1000;
+      writeFileSync(cacheFile, JSON.stringify({ checkedAt: 0, latestVersion: '0.7.0' }));
+      const failFetch = (async () => {
+        throw new Error('offline');
+      }) as unknown as typeof fetch;
+
+      let fetched = false;
+      const noFetch = (async () => {
+        fetched = true;
+        return new Response('{}');
+      }) as unknown as typeof fetch;
+      const fresh = startUpdateCheck({ install, env: {}, cacheFile, now: () => day - 1, fetchImpl: noFetch, log: () => {} });
+      await fresh.settled;
+      expect(fetched).toBe(false);
+      expect(fresh.takeNotice()).toContain('Nimbalyst Wiki 0.7.0');
+
+      const optedOut = startUpdateCheck({ install, env: { NIMBALYST_WIKI_NO_UPDATE_CHECK: '1' }, cacheFile, now: () => 2 * day, fetchImpl: noFetch });
+      await optedOut.settled;
+      expect(fetched).toBe(false);
+      expect(optedOut.takeNotice()).toBeNull();
+
+      // Offline with a stale cache: the cached version still counts, and the cache is left alone.
+      const logs: string[] = [];
+      const offline = startUpdateCheck({ install, env: {}, cacheFile, now: () => 2 * day, fetchImpl: failFetch, log: (line) => logs.push(line) });
+      await offline.settled;
+      expect(logs[0]).toContain('offline');
+      expect(JSON.parse(readFileSync(cacheFile, 'utf8')).checkedAt).toBe(0);
+      expect(offline.takeNotice()).toContain('0.7.0');
+
+      // A stale cache is replaced by what the fetch finds; the same version as installed is no notice.
+      const current = startUpdateCheck({ install, env: {}, cacheFile, now: () => 2 * day, fetchImpl: manifestFetch('0.5.0'), log: () => {} });
+      await current.settled;
+      expect(current.takeNotice()).toBeNull();
+      expect(JSON.parse(readFileSync(cacheFile, 'utf8')).latestVersion).toBe('0.5.0');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('detects which agent and marketplace installed the plugin, and skips anything else', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'nim-install-'));
+    try {
+      const codexRoot = path.join(home, '.codex/plugins/cache/nimbalyst-wiki/nimbalyst-wiki/0.5.0');
+      const claudeRoot = path.join(home, '.claude/plugins/cache/nimbalyst/nimbalyst-wiki/0.5.0');
+      const otherRoot = path.join(home, '.claude/plugins/cache/someone-else/nimbalyst-wiki/0.5.0');
+      for (const root of [codexRoot, claudeRoot, otherRoot]) {
+        for (const dirName of ['.claude-plugin', '.codex-plugin']) {
+          mkdirSync(path.join(root, dirName), { recursive: true });
+          writeFileSync(path.join(root, dirName, 'plugin.json'), JSON.stringify({ version: '0.5.0' }));
+        }
+      }
+
+      const codex = detectPluginInstall({ PWD: '/repo' }, codexRoot, codexRoot);
+      expect(codex).toMatchObject({ agent: 'codex', marketplace: 'nimbalyst-wiki', version: '0.5.0' });
+      expect(codex?.manifestUrl).toContain('nimbalyst-wiki/main/.codex-plugin/plugin.json');
+      const claude = detectPluginInstall({ CLAUDE_PROJECT_DIR: '/repo' }, '/repo', claudeRoot);
+      expect(claude).toMatchObject({ agent: 'claude', marketplace: 'nimbalyst' });
+      expect(claude?.manifestUrl).toContain('nimbalyst/main/plugins/nimbalyst-wiki/.claude-plugin/plugin.json');
+
+      expect(detectPluginInstall({}, '/repo', otherRoot)).toBeNull();
+      expect(detectPluginInstall({}, '/repo', path.join(repoRoot, 'plugins/nimbalyst-wiki'))).toBeNull();
+
+      const notice = startUpdateCheck({ install: { ...codex!, version: '0.4.0' }, env: {}, cacheFile: path.join(home, 'c.json'), now: () => 0, fetchImpl: manifestFetch('0.5.0'), log: () => {} });
+      await notice.settled;
+      expect(notice.takeNotice()).toContain('run `codex plugin marketplace upgrade nimbalyst-wiki`, then start a new session');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

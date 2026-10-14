@@ -12,6 +12,8 @@ public struct Message: Codable, Identifiable, Hashable, Sendable {
     public var iv: String
     public var contentDecrypted: String?
     public var metadataJson: String?  // tool_name, has_attachments, content_length
+    /// Sync projection version + server revision (#1711); orders same-ID repairs.
+    public var projectionJson: String?
     public var createdAt: Int
 
     public init(
@@ -19,6 +21,7 @@ public struct Message: Codable, Identifiable, Hashable, Sendable {
         source: String, direction: String,
         encryptedContent: String, iv: String,
         contentDecrypted: String? = nil, metadataJson: String? = nil,
+        projectionJson: String? = nil,
         createdAt: Int
     ) {
         self.id = id
@@ -30,6 +33,7 @@ public struct Message: Codable, Identifiable, Hashable, Sendable {
         self.iv = iv
         self.contentDecrypted = contentDecrypted
         self.metadataJson = metadataJson
+        self.projectionJson = projectionJson
         self.createdAt = createdAt
     }
 }
@@ -41,7 +45,7 @@ extension Message: FetchableRecord, PersistableRecord {
 
     public enum Columns: String, ColumnExpression {
         case id, sessionId, sequence, source, direction
-        case encryptedContent, iv, contentDecrypted, metadataJson, createdAt
+        case encryptedContent, iv, contentDecrypted, metadataJson, projectionJson, createdAt
     }
 
     /// Association to parent session.

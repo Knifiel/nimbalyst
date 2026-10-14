@@ -64,4 +64,32 @@ describe('console link router', () => {
     expect(router.route(DOC, null)).toBe(true);
     expect(openExternal).toHaveBeenCalledWith(DOC);
   });
+
+  describe('feedback request links', () => {
+    const FEEDBACK = 'https://console.nimbalyst.com/org/org-1/feedback/req-1';
+
+    it('opens a feedback request in the app, where the Inbox shows it', async () => {
+      const openFeedbackRequest = vi.fn(async () => true);
+      const feedbackRouter = createConsoleLinkRouter({ openExternal, openFeedbackRequest });
+      const win = fakeWindow();
+
+      expect(feedbackRouter.route(FEEDBACK, win)).toBe(true);
+      await vi.waitFor(() => expect(openFeedbackRequest).toHaveBeenCalledWith({ orgId: 'org-1', requestId: 'req-1' }));
+      await Promise.resolve();
+      expect(openExternal).not.toHaveBeenCalled();
+      expect(win.send).not.toHaveBeenCalled();
+    });
+
+    it('sends it to the browser when no project here can show it', async () => {
+      const feedbackRouter = createConsoleLinkRouter({ openExternal, openFeedbackRequest: async () => false });
+
+      expect(feedbackRouter.route(FEEDBACK, fakeWindow())).toBe(true);
+      await vi.waitFor(() => expect(openExternal).toHaveBeenCalledWith(FEEDBACK));
+    });
+
+    it('leaves it to the browser when the host cannot open feedback requests', () => {
+      expect(router.route(FEEDBACK, fakeWindow())).toBe(false);
+    });
+  });
 });
+

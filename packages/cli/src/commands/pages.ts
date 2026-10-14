@@ -46,7 +46,16 @@ export const PAGES_VERBS = {
   'create-item': 'tracker_create',
   'update-item': 'tracker_update',
   comments: 'list_citable_inputs',
+  'team-create': 'team_create',
+  invite: 'team_invite',
+  'invite-link': 'team_invite_link_create',
+  import: 'pages_import',
 } as const;
+
+/** Team verbs that name their team with --org (and --project) and act on no repository's project. */
+export const TEAM_ADMIN_VERBS = new Set(['invite', 'invite-link']);
+
+const MOVE_TO_TEAM_HINT = "To move a local wiki into the team project, run 'nim wiki move-to-team' (add --dry-run to see what would move).";
 
 type PagesVerb = keyof typeof PAGES_VERBS;
 type ToolVerb = Exclude<PagesVerb, 'status' | 'bind' | 'create-project'>;
@@ -58,6 +67,12 @@ export interface PagesToolCall {
 
 /** The remote server works on team pages only. */
 const TEAM = { section: 'team' } as const;
+
+function requireFlag(args: ParsedArgs, name: string, verb: string): string {
+  const value = flagStr(args, name);
+  if (!value) throw usageError(`'nim wiki ${verb}' requires --${name}.`);
+  return value;
+}
 
 function operandAt(args: ParsedArgs, index: number, what: string): string {
   const value = args.positionals[index];
@@ -230,6 +245,29 @@ const BUILDERS: Record<ToolVerb, (args: ParsedArgs) => Record<string, unknown>> 
     }
     return { id: operandAt(args, 0, 'an item id or issue key'), ...update };
   },
+  'team-create': (args) => ({ name: operandAt(args, 0, 'a team name') }),
+  invite: (args) => {
+    const emails = args.positionals;
+    if (emails.length === 0) throw usageError(`'nim wiki invite' requires one or more email addresses.`);
+    return {
+      orgId: requireFlag(args, 'org', 'invite'),
+      emails,
+      role: flagStr(args, 'role'),
+      projectId: flagStr(args, 'project'),
+      projectRole: flagStr(args, 'project-role'),
+    };
+  },
+  'invite-link': (args) => ({
+    orgId: requireFlag(args, 'org', 'invite-link'),
+    role: flagStr(args, 'role'),
+    projectId: flagStr(args, 'project'),
+    projectRole: flagStr(args, 'project-role'),
+    expiresIn: flagInt(args, 'expires-in'),
+    maxUses: flagInt(args, 'max-uses'),
+  }),
+  import: () => {
+    throw usageError(MOVE_TO_TEAM_HINT);
+  },
   comments: (args) => {
     const pages = flagList(args, 'page');
     if (pages.length === 0) throw usageError(`'nim wiki comments' requires --page <uri> (repeatable).`);
@@ -317,6 +355,7 @@ function renderResult(ctx: PagesCtx, toolName: string, result: any): string {
 }
 
 export async function runPages(args: ParsedArgs): Promise<number> {
+  if (args.verb === 'import') throw usageError(MOVE_TO_TEAM_HINT);
   const startDir = flagStr(args, 'workspace') ?? process.cwd();
   const ctx = teamsCtx(args, resolveServer(), startDir);
   switch (args.verb) {
@@ -330,7 +369,8 @@ export async function runPages(args: ParsedArgs): Promise<number> {
       return runCreateProject(ctx);
   }
   const call = pagesToolCall(args);
-  const result = await tool(ctx, call.tool, call.args);
+  // Invites name their team directly; a repository's project has nothing to add.
+  const result = await tool(ctx, call.tool, call.args, TEAM_ADMIN_VERBS.has(args.verb ?? '') ? {} : ctx.base);
   return print(ctx, result, () => renderResult(ctx, call.tool, result));
 }
 

@@ -1,7 +1,7 @@
 {
   "id": "com.nimbalyst.animation",
   "name": "Animation",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Author step-based animations for technical explainer diagrams",
   "author": "Nimbalyst",
   "main": "dist/index.mjs",
@@ -15,7 +15,7 @@
     "tags": ["animation", "diagram", "explainer", "timeline", "svg", "motion"],
     "icon": "animation",
     "featured": true,
-    "changelog": "1.1.0: Frames can show real product UI: an html part draws markup you write inline or keep in a file beside the animation, regions inside it animate on their own, and the document names the palette it renders under so the stage and every export match.",
+    "changelog": "1.1.1: Animations embed inline in the agent transcript, and exports finish and reveal the exported file.\n1.1.0: Frames can show real product UI: an html part draws markup you write inline or keep in a file beside the animation, regions inside it animate on their own, and the document names the palette it renders under so the stage and every export match.",
     "tagline": "Animate technical diagrams step by step",
     "longDescription": "Build animated explainer diagrams from a named scene and an ordered list of steps. Scrub the timeline, drag a step boundary to retime it, click any part of the scene to put it in chat context, and let an agent make the edits.",
     "highlights": [

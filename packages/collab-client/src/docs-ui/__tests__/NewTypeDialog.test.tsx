@@ -6,10 +6,16 @@ import type { CollabTypeTreeResolver } from '../../docs/collabTree';
 import type { CollabDocsSession } from '../../docs/session';
 import { NewTypeDialog } from '../NewTypeDialog';
 import { SetPageTypeDialog } from '../SetPageTypeDialog';
+import { PagesTypesView } from '../../trackers-ui/page/PagesTypesView';
 
 vi.mock('@nimbalyst/runtime/ui/icons/MaterialSymbol', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span data-icon={icon} />,
 }));
+
+vi.mock('../../trackers-ui/useTrackerData', () => ({
+  useTrackerDataSelector: (selector: (state: { records: unknown[]; loaded: boolean }) => unknown) => selector({ records: [], loaded: true }),
+}));
+vi.mock('../../trackers-ui/ontology/LazyOntologyTypes', () => ({ OntologyTypeMap: () => null }));
 
 afterEach(cleanup);
 
@@ -99,6 +105,88 @@ describe('NewTypeDialog, while the team has not answered', () => {
     await screen.findByText(/still syncing to the team/);
     expect(onClose).not.toHaveBeenCalled();
     expect((screen.getByTestId('new-type-plural') as HTMLInputElement).value).toBe('Customers');
+  });
+
+  it('can still be closed with Cancel or Escape while the write never settles', async () => {
+    for (const close of [
+      () => fireEvent.click(screen.getByText('Cancel')),
+      () => fireEvent.keyDown(window, { key: 'Escape' }),
+    ]) {
+      const onClose = vi.fn();
+      render(
+        <NewTypeDialog
+          lane="team"
+          resolver={resolver}
+          session={{ placeType: vi.fn() } as unknown as CollabDocsSession}
+          defineType={() => new Promise(() => {})}
+          onClose={onClose}
+        />,
+      );
+      type('new-type-plural', 'Customers');
+      fireEvent.click(screen.getByTestId('new-type-create'));
+      await screen.findByText('Creating...');
+      close();
+      expect(onClose).toHaveBeenCalledTimes(1);
+      cleanup();
+    }
+  });
+});
+
+describe('NewTypeDialog inside the Types view', () => {
+  it('keeps the dialog and its syncing notice open instead of opening a type the team has not confirmed', async () => {
+    const onOpenType = vi.fn();
+    render(
+      <PagesTypesView
+        lane="team"
+        typePlacements={[]}
+        view="table"
+        onViewChange={() => {}}
+        onOpenType={onOpenType}
+        renderNewType={({ onClose, onCreated }) => (
+          <NewTypeDialog
+            lane="team"
+            resolver={resolver}
+            session={{ placeType: vi.fn(async () => ({ ok: true as const })) } as unknown as CollabDocsSession}
+            defineType={vi.fn(async () => ({ status: 'syncing' as const }))}
+            onCreated={onCreated}
+            onClose={onClose}
+          />
+        )}
+      />,
+    );
+    fireEvent.click(screen.getByText('New type...'));
+    type('new-type-plural', 'Customers');
+    fireEvent.click(screen.getByTestId('new-type-create'));
+    await screen.findByText(/still syncing to the team/);
+    expect(onOpenType).not.toHaveBeenCalled();
+  });
+});
+
+describe('NewTypeDialog, after Cancel', () => {
+  it('ignores a write that finishes after the dialog was closed', async () => {
+    let finish: () => void = () => {};
+    const placeType = vi.fn(async () => ({ ok: true as const }));
+    const onCreated = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <NewTypeDialog
+        lane="team"
+        resolver={resolver}
+        session={{ placeType } as unknown as CollabDocsSession}
+        defineType={() => new Promise<void>((resolve) => { finish = resolve; })}
+        onCreated={onCreated}
+        onClose={onClose}
+      />,
+    );
+    type('new-type-plural', 'Customers');
+    fireEvent.click(screen.getByTestId('new-type-create'));
+    await screen.findByText('Creating...');
+    fireEvent.click(screen.getByText('Cancel'));
+    finish();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(placeType).not.toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
 

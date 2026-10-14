@@ -1,3 +1,4 @@
+import type { SessionPayloadReference, SessionPayloadClientMessage, SessionPayloadServerMessage } from './sessionPayload.js';
 import type {
   IndexPageRequestMessage,
   IndexPageResponseMessage,
@@ -18,6 +19,7 @@ import type {
 // ============================================================================
 
 export type ClientMessage =
+  | SessionPayloadClientMessage
   | { type: 'beginSessionReplay'; activityAt: number }
   | IndexPageRequestMessage
   | PersonalStatePageRequestMessage
@@ -40,6 +42,7 @@ export type ClientMessage =
   | VoiceToolRequestMessage
   | VoiceToolResponseMessage
   | SessionControlCommandMessage
+  | SessionContextUpdateMessage
   | RegisterPushTokenMessage
   | UnregisterPushTokenMessage
   | RegisterLiveActivityTokenMessage
@@ -59,6 +62,7 @@ export interface PingMessage {
 
 /** Request messages since a cursor */
 export interface SyncRequestMessage {
+  sinceRevision?: number;
   type: 'syncRequest';
   sinceId?: string;
   sinceSeq?: number;
@@ -67,6 +71,7 @@ export interface SyncRequestMessage {
 /** Append a new message to the session */
 export interface AppendMessageMessage {
   type: 'appendMessage';
+  expectedRevision?: number;
   message: EncryptedMessage;
 }
 
@@ -274,6 +279,27 @@ export interface SessionControlMessage {
   sentByDeviceId?: string;
   /** Deliver to this device only. Absent preserves legacy broadcast routing. */
   targetDeviceId?: string;
+}
+
+/**
+ * A session's live context-window usage, relayed to the user's other devices
+ * and never stored. Every assistant step changes it; persisting each value
+ * cost an index row rewrite plus a replication journal entry. The stored
+ * index row still gets the last value at the turn boundary.
+ *
+ * `encryptedContext` decrypts to client-metadata JSON holding only
+ * `currentContext: { tokens, contextWindow }`. `at` orders updates.
+ */
+export interface LiveSessionContext {
+  sessionId: string;
+  encryptedContext: string;
+  contextIv: string;
+  at: number;
+}
+
+export interface SessionContextUpdateMessage {
+  type: 'sessionContextUpdate';
+  update: LiveSessionContext;
 }
 
 /** Register a push notification token for this device */
@@ -514,6 +540,7 @@ export interface EncryptedSettingsPayload {
 // ============================================================================
 
 export type ServerMessage =
+  | SessionPayloadServerMessage
   | { type: 'indexSessionExpired'; sessionId: string; activityAt: number }
   | IndexChangesAvailableMessage
   | IndexPageResponseMessage
@@ -537,6 +564,7 @@ export type ServerMessage =
   | VoiceToolRequestBroadcastMessage
   | VoiceToolResponseBroadcastMessage
   | SessionControlBroadcastMessage
+  | SessionContextBroadcastMessage
   | SettingsSyncBroadcastMessage
   | ReadReceiptSyncBroadcastMessage
   | TrackerPersonalStateSyncBroadcastMessage
@@ -545,6 +573,7 @@ export type ServerMessage =
 
 /** Response to syncRequest */
 export interface SyncResponseMessage {
+  revisionCursor?: number;
   type: 'syncResponse';
   messages: EncryptedMessage[];
   metadata: SessionMetadata | null;
@@ -684,6 +713,13 @@ export interface SessionControlBroadcastMessage {
   fromConnectionId?: string;
 }
 
+/** Relay of a `sessionContextUpdate` to the user's other devices. */
+export interface SessionContextBroadcastMessage {
+  type: 'sessionContextBroadcast';
+  update: LiveSessionContext;
+  fromConnectionId?: string;
+}
+
 /** Broadcast encrypted settings to other devices (mobile receives this) */
 export interface SettingsSyncBroadcastMessage {
   type: 'settingsSyncBroadcast';
@@ -789,6 +825,9 @@ export interface DeviceInfo {
  * Content is E2E encrypted - server only sees ciphertext.
  */
 export interface EncryptedMessage {
+  projectionVersion?: number;
+  revision?: number;
+  payload?: SessionPayloadReference;
   /** ULID for global ordering */
   id: string;
   /** Monotonic sequence within session */

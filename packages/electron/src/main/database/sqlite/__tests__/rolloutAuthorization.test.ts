@@ -255,15 +255,17 @@ describe('evaluateRolloutAuthorization', () => {
 });
 
 describe('shipped defaults', () => {
-  it('accepts no configuration version, so no remote payload can start a migration', () => {
-    // Automatic migration is off in Phase B, and this is what makes it off by
-    // construction rather than by a remote value someone could flip. Adding a
-    // version here is the ramp; it must be a deliberate, reviewed commit.
-    expect(ACCEPTED_CONFIG_VERSIONS).toEqual([]);
+  it('accepts only the first cohort version, so a later ceiling needs a reviewed build', () => {
+    // Adding a version here is the ramp; it must be a deliberate, reviewed
+    // commit. A payload naming the next cohort before that commit fails closed.
+    expect(ACCEPTED_CONFIG_VERSIONS).toEqual(['sqlite-ramp-1']);
 
     expect(
+      evaluateRolloutAuthorization({ raw: payload(), nowMs: DURING_MS, buildChannel: 'alpha' }).authorized,
+    ).toBe(true);
+    expect(
       evaluateRolloutAuthorization({
-        raw: payload(),
+        raw: payload({ configVersion: 'sqlite-ramp-2' }),
         nowMs: DURING_MS,
         buildChannel: 'alpha',
       }),

@@ -15,6 +15,19 @@ import {
 } from '../../orgWindowState';
 import type { InboxFilterId } from '../inboxTypes';
 
+// The real surface opens the request's room; the Inbox only decides whether it mounts and for what.
+vi.mock('../../../FeedbackRequest/FeedbackRequestSurface', () => ({
+  FeedbackRequestSurface: (props: { requestId: string; orgId: string; view?: string; canComment?: boolean }) => (
+    <div
+      data-testid="feedback-request-surface"
+      data-request-id={props.requestId}
+      data-org-id={props.orgId}
+      data-view={props.view ?? 'auto'}
+      data-can-comment={String(props.canComment ?? true)}
+    />
+  ),
+}));
+
 const NOW = Date.parse('2026-07-26T18:00:00.000Z');
 
 function installApi() {
@@ -600,4 +613,130 @@ describe('InboxSection', () => {
     // the recipient an empty pane — the exact failure the link exists to avoid.
     expect((screen.getByTestId('inbox-search-input') as HTMLInputElement).value).toBe('');
   });
+
+  /**
+   * Any org member can open a feedback request in the web console. A link
+   * opened by someone with no delivery for it used to land on an unrelated
+   * list; it now opens the request itself, which shows the tallies to anyone
+   * who owes no answer.
+   */
+  it('opens a linked feedback request without a delivery, and moves to the delivery if one syncs', async () => {
+    const fixtures = createInboxFixtures({ now: NOW });
+    let snapshot = { status: 'ready' as const, deliveries: fixtures, lastSyncedAt: NOW };
+    const listeners = new Set<() => void>();
+    const provider = {
+      getSnapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => { listeners.delete(listener); };
+      },
+      markRead: async () => {},
+      dismiss: async () => {},
+      migrateOrganization: async () => {},
+      navigate: async () => true,
+    };
+
+    render(wrap(<InboxSection provider={provider} now={NOW} workspacePath="/work/a" />));
+    await screen.findByTestId('inbox-list');
+
+    act(() => {
+      requestInboxRowSelection(ORG_WINDOW_SURFACE_ID, {
+        orgId: 'org-1',
+        sourceKind: 'feedbackRequest',
+        sourceId: 'request-no-delivery',
+      });
+    });
+
+    const surface = await screen.findByTestId('feedback-request-surface');
+    expect(surface.getAttribute('data-request-id')).toBe('request-no-delivery');
+    expect(surface.getAttribute('data-org-id')).toBe('org-1');
+    // Not pinned to the recipient card: whether this viewer owes an answer is
+    // the request's to say, not a delivery's.
+    expect(surface.getAttribute('data-view')).toBe('auto');
+    // No delivery, so no server-resolved comment capability: the discussion is
+    // read-only rather than offering a composer a viewer-role member cannot use.
+    expect(surface.getAttribute('data-can-comment')).toBe('false');
+
+    const delivery = {
+      ...fixtures[0],
+      id: 'delivery-late',
+      orgId: 'org-1',
+      source: { orgId: 'org-1', sourceKind: 'feedbackRequest' as const, sourceId: 'request-no-delivery', commentId: '' },
+    };
+    act(() => {
+      snapshot = { ...snapshot, deliveries: [delivery, ...fixtures] };
+      listeners.forEach((listener) => listener());
+    });
+
+    const row = await screen.findByTestId('inbox-row-delivery-late');
+    expect(row.getAttribute('aria-current')).toBe('true');
+  });
+
+  it('waits for the inbox to load before opening a request without its delivery', async () => {
+    const provider = createFixtureInboxProvider({ now: NOW });
+    provider.simulateStatus?.('loading');
+    render(wrap(<InboxSection provider={provider} now={NOW} workspacePath="/work/a" />));
+
+    act(() => {
+      requestInboxRowSelection(ORG_WINDOW_SURFACE_ID, {
+        orgId: 'org-1',
+        sourceKind: 'feedbackRequest',
+        sourceId: 'request-no-delivery',
+      });
+    });
+
+    expect(screen.queryByTestId('feedback-request-surface')).toBeNull();
+  });
+
+  it('lets the user leave a linked request, and a later sync does not pull them back', async () => {
+    const fixtures = createInboxFixtures({ now: NOW });
+    let snapshot = { status: 'ready' as const, deliveries: fixtures, lastSyncedAt: NOW };
+    const listeners = new Set<() => void>();
+    const provider = {
+      getSnapshot: () => snapshot,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => { listeners.delete(listener); };
+      },
+      markRead: async () => {},
+      dismiss: async () => {},
+      migrateOrganization: async () => {},
+      navigate: async () => true,
+    };
+
+    render(wrap(<InboxSection provider={provider} now={NOW} workspacePath="/work/a" />));
+    await screen.findByTestId('inbox-list');
+    act(() => {
+      requestInboxRowSelection(ORG_WINDOW_SURFACE_ID, {
+        orgId: 'org-1',
+        sourceKind: 'feedbackRequest',
+        sourceId: 'request-no-delivery',
+      });
+    });
+    await screen.findByTestId('feedback-request-surface');
+
+    fireEvent.click(screen.getByTestId('inbox-row-delivery-mention-room'));
+    await screen.findByTestId('inbox-context-open');
+
+    // A later sync, even one that brings the request's delivery, leaves the
+    // user where they went.
+    act(() => {
+      snapshot = {
+        ...snapshot,
+        deliveries: [{
+          ...fixtures[0],
+          id: 'delivery-late',
+          orgId: 'org-1',
+          source: { orgId: 'org-1', sourceKind: 'feedbackRequest' as const, sourceId: 'request-no-delivery', commentId: '' },
+        }, ...fixtures],
+      };
+      listeners.forEach((listener) => listener());
+    });
+
+    await screen.findByTestId('inbox-row-delivery-late');
+    expect(screen.queryByTestId('feedback-request-surface')).toBeNull();
+    expect(screen.getByTestId('inbox-row-delivery-mention-room').getAttribute('aria-current')).toBe('true');
+    expect(screen.getByTestId('inbox-row-delivery-late').getAttribute('aria-current')).not.toBe('true');
+  });
 });
+

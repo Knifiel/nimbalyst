@@ -1,6 +1,6 @@
 import path from 'path';
 import { existsSync } from 'fs';
-import { GIT_INHERITED_ENV_UNSAFE } from '../services/gitInheritedEnvUnsafe';
+import { simpleGitReadOnly } from '../services/gitReadOnly';
 
 // ============================================================
 // Git Status Cache
@@ -78,7 +78,6 @@ export async function getCachedUncommittedFiles(workspacePath: string): Promise<
     if (inFlight) return inFlight;
 
     const queryPromise = (async () => {
-        const simpleGit = (await import('simple-git')).default;
         // `timeout.block` aborts (and kills) the git child after N ms without
         // output, so a hung `git status` rejects instead of hanging. The
         // explicit withTimeout race is belt-and-suspenders in case the child
@@ -90,10 +89,7 @@ export async function getCachedUncommittedFiles(workspacePath: string): Promise<
         // path (NIM-2285). The unsafe flags are required because supplying ANY
         // env makes simple-git scan it and refuse to spawn git when the user's
         // own environment contains GIT_EDITOR, GIT_PAGER and friends.
-        const git = simpleGit(workspacePath, {
-            timeout: { block: GIT_STATUS_TIMEOUT_MS },
-            unsafe: GIT_INHERITED_ENV_UNSAFE,
-        }).env({ ...process.env, GIT_OPTIONAL_LOCKS: '0' });
+        const git = simpleGitReadOnly(workspacePath, { timeout: { block: GIT_STATUS_TIMEOUT_MS } });
         const status = await withTimeout(
             git.status(),
             GIT_STATUS_TIMEOUT_MS,
@@ -153,15 +149,11 @@ export async function getCachedTrackedFiles(workspacePath: string): Promise<Set<
     if (inFlight) return inFlight;
 
     const queryPromise = (async () => {
-        const simpleGit = (await import('simple-git')).default;
         // Same env handling as the status query above: GIT_OPTIONAL_LOCKS=0 to
         // keep a read-only listing off `.git/index`, and the unsafe flags
         // because supplying ANY env makes simple-git scan it and refuse to
         // spawn when the user's own environment carries GIT_EDITOR and friends.
-        const git = simpleGit(workspacePath, {
-            timeout: { block: GIT_STATUS_TIMEOUT_MS },
-            unsafe: GIT_INHERITED_ENV_UNSAFE,
-        }).env({ ...process.env, GIT_OPTIONAL_LOCKS: '0' });
+        const git = simpleGitReadOnly(workspacePath, { timeout: { block: GIT_STATUS_TIMEOUT_MS } });
 
         // -z so paths with spaces, quotes or non-ASCII bytes survive intact;
         // git otherwise quotes and escapes them and the set would miss entries.

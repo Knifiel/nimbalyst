@@ -66,7 +66,7 @@ export function TypePageTable({ typeId, typeLabel, rootLabel, itemPlacements, pa
   return (
     <div className="type-page-tab-table flex flex-col" data-testid="type-page-table">
       <TypePageViews typeId={typeId} controller={viewsController} scope={viewScope} temporaryView={temporaryView} onClearTemporaryView={onClearTemporaryView} onPrepareDocument={onPrepareViewsDocument} onOpenItem={onOpenItem}>
-        <TrackerViewEmbed view={view} variant="page" onOpenItem={onOpenItem} derivedColumns={derivedColumns} typeIds={typeIds} />
+        <TrackerViewEmbed view={view} variant="page" onOpenItem={onOpenItem} titleOpensItem derivedColumns={derivedColumns} typeIds={typeIds} />
       </TypePageViews>
     </div>
   );

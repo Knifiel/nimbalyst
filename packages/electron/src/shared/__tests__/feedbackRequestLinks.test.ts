@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
+import { parseConsoleFeedbackRequestLink } from '@nimbalyst/collab-protocol';
+
 import { CONSOLE_ORIGIN } from '../consoleOrigin';
 import {
   buildFeedbackRequestDeepLink,
@@ -40,6 +42,11 @@ describe('feedback request links', () => {
     // forced through the default.
     expect(feedbackRequestConsoleUrl('org-a', 'request-1', 'https://example.test'))
       .toBe('https://example.test/org/org-a/feedback/request-1');
+  });
+
+  it('is the console link shape the desktop routes back into the Inbox', () => {
+    expect(parseConsoleFeedbackRequestLink(feedbackRequestConsoleUrl('org-a', 'request (1)')))
+      .toEqual({ orgRouteKey: 'org-a', requestId: 'request (1)' });
   });
 
   it('escapes ids rather than letting them alter the path', () => {

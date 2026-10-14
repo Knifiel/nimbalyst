@@ -28,15 +28,27 @@ function screenshotMessage(data: string, mediaType = 'image/png'): string {
 }
 
 describe('truncateContentForSync', () => {
-  it('caps oversized unknown-provider messages at a small opaque marker', () => {
+  it('preserves unknown-provider text for lossless transport', () => {
     const raw = 'x'.repeat(40 * 1024);
-
     const result = truncateContentForSync(raw, 'custom-provider');
+    expect(result.content).toBe(raw);
+    expect(result.stats.elidedBytes).toBe(0);
+  });
 
-    expect(result.content.length).toBeLessThan(512);
-    expect(result.content).toContain('elided from mobile sync');
-    expect(result.stats.bytesAfter).toBeLessThan(512);
-    expect(result.stats.elidedBytes).toBeGreaterThan(30 * 1024);
+  it('keeps tool output bounded once the whole-row clamp is gone (#1711)', () => {
+    const big = 'x'.repeat(2_000_000);
+    const smallResult = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'ok' }] };
+    const largeJson = JSON.stringify(Array.from({ length: 20_000 }, (_, i) => ({ i, v: 'abcdefgh' })));
+    const cases: Array<[string, string]> = [
+      ['claude-code', JSON.stringify({ type: 'user', message: smallResult, tool_use_result: { stdout: big, stderr: '' } })],
+      ['claude-code', JSON.stringify({ type: 'user', message: smallResult, tool_use_result: { file: { filePath: '/a', content: big } } })],
+      ['openai-codex', JSON.stringify({ method: 'item/completed', params: { item: { type: 'commandExecution', id: 'c', aggregatedOutput: largeJson } } })],
+      ['opencode', JSON.stringify({ rawEvent: { type: 'message.part.updated', properties: { part: { type: 'tool', tool: 'bash', state: { status: 'completed', output: big } } } } })],
+      ['copilot-cli', JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: big }] } })],
+    ];
+    for (const [source, raw] of cases) {
+      expect(truncateContentForSync(raw, source).content.length, source).toBeLessThan(32 * 1024);
+    }
   });
 
   it('truncates the top-level tool_use_result so Edit results do not hit the whole-message marker', () => {

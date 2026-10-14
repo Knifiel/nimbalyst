@@ -12,8 +12,12 @@ import {
   type CollabDocsDataSource,
   type createCollabDocsScopeLifecycle,
 } from '@nimbalyst/collab-bundle/docs-ui';
+import { builtInManifests, editorForFile, editorPageDescriptors } from '../editors/wikiEditors';
 import { ulidLike } from './ids';
+import type { PageLinkSource } from '@nimbalyst/collab-bundle/editor';
+import { wikiApi } from '../api/client';
 import { resolveWikiLink, type LinkTarget } from './links';
+import { pageLinkOption, pageLinkOptions } from './pageLinks';
 import { LocalPagesDataSource } from './LocalPagesDataSource';
 
 type DocsHost = Parameters<typeof createCollabDocsScopeLifecycle>[0];
@@ -34,9 +38,7 @@ function localScope(root: string): CollabScope {
   } as unknown as CollabScope;
 }
 
-/** A local page is a markdown file, so markdown is the only type offered. Stable identity (see `documentTypes`). */
-const DOCUMENT_TYPES: readonly DocumentTypeDescriptor[] = Object.freeze([
-  {
+const MARKDOWN_TYPE: DocumentTypeDescriptor = {
     documentType: 'markdown',
     displayName: 'Page',
     fileExtensions: ['.md'],
@@ -46,8 +48,18 @@ const DOCUMENT_TYPES: readonly DocumentTypeDescriptor[] = Object.freeze([
     content: { strategy: 'lexical' as const, codecId: 'markdown' },
     creation: { defaultContent: '', source: 'builtin' as const },
     capabilities: { localCreate: true, shareToTeam: false, sharedCreate: true, history: false, export: false },
-  },
-]);
+};
+
+let documentTypes: readonly DocumentTypeDescriptor[] | null = null;
+
+/**
+ * Markdown pages, then a page per built-in editor (drawing, mind map...). The
+ * manifests are fixed at build time, so the list is built once: the sidebar
+ * needs a stable identity.
+ */
+function wikiDocumentTypes(): readonly DocumentTypeDescriptor[] {
+  return (documentTypes ??= Object.freeze([MARKDOWN_TYPE, ...editorPageDescriptors(builtInManifests())]));
+}
 
 export type WikiRoute =
   | { kind: 'home' }
@@ -83,6 +95,29 @@ export class LocalCollabHost implements DocsHost {
     return resolveWikiLink(this.currentSource?.allPages() ?? [], this.pagePath(fromId), href);
   }
 
+  /**
+   * The `@` picker's pages for page `fromId`. A page created from it goes next
+   * to the linking page, as a sibling, and is linked once it exists on disk.
+   */
+  pageLinkSource(fromId: string): PageLinkSource {
+    return {
+      list: () => pageLinkOptions(this.currentSource?.allPages() ?? [], fromId),
+      createPage: async (title) => {
+        const from = this.currentSource?.page(fromId) ?? null;
+        const { id } = await wikiApi.command({
+          type: 'register-document',
+          title,
+          parentFolderId: from?.parentId ?? null,
+          ...(from?.parentKind ? { parentKind: from.parentKind } : {}),
+        });
+        const created = (await wikiApi.snapshot()).pages.find((page) => page.id === id);
+        if (!created) throw new Error(`The page "${title}" was not created`);
+        return pageLinkOption(from, created);
+      },
+      onError: (error) => this.onError(`Could not create the page: ${error instanceof Error ? error.message : String(error)}`),
+    };
+  }
+
   /** Wiki-relative file of a page, from the last snapshot read. */
   pagePath(id: string): string | null {
     return this.currentSource?.page(id)?.path ?? null;
@@ -116,18 +151,32 @@ export class LocalCollabHost implements DocsHost {
       saveTreeState: async (_scopeKey, state) => {
         this.treeState = state;
       },
-      documentTypes: () => DOCUMENT_TYPES,
+      documentTypes: wikiDocumentTypes,
       createDocument: async (input) => {
         const session = getCollabDocsSession(input.scope.scopeKey);
         if (!session) throw new Error('The page tree is not ready yet');
         const documentId = ulidLike();
+        const { descriptor } = input;
+        const markdown = descriptor.documentType === 'markdown';
+        const extension = descriptor.defaultExtension;
+        // The tree shows an editor page with its suffix; the wiki stores the stem.
+        let title = input.requestedName.trim() || 'Untitled';
+        if (!markdown && title.toLowerCase().endsWith(extension) && title.length > extension.length) title = title.slice(0, -extension.length);
+        if (!markdown) {
+          const body = input.sourceContent;
+          this.source().stageBody(documentId, typeof body === 'string' ? body : new TextDecoder().decode(body));
+        }
         await session.registerDocument({
           documentId,
-          title: input.requestedName.trim() || 'Untitled',
-          documentType: 'markdown',
+          title,
+          documentType: descriptor.documentType,
           parentFolderId: input.parentFolderId,
           ...(input.parentKind ? { parentKind: input.parentKind } : {}),
-          metadata: { metadataVersion: 2, fileExtension: '.md', editorId: 'builtin.lexical' },
+          metadata: {
+            metadataVersion: 2,
+            fileExtension: markdown ? '.md' : extension,
+            editorId: markdown ? 'builtin.lexical' : descriptor.editor.extensionId ?? descriptor.documentType,
+          },
         });
         this.navigate({ kind: 'page', id: documentId });
       },
@@ -136,7 +185,7 @@ export class LocalCollabHost implements DocsHost {
   }
 
   source(): LocalPagesDataSource {
-    return (this.currentSource ??= new LocalPagesDataSource());
+    return (this.currentSource ??= new LocalPagesDataSource((fileExtension) => editorForFile(fileExtension)?.extensionId));
   }
 
   async resolveScope(): Promise<CollabScope> {

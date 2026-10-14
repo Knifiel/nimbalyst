@@ -5,28 +5,49 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { stytchAuthAtom } from '../../atoms/stytchAuth';
 
 const invalidate = vi.hoisted(() => vi.fn());
+const invalidateWithoutTeam = vi.hoisted(() => vi.fn());
 vi.mock('../../atoms/collabDocuments', () => ({
   invalidateElectronCollabScopes: invalidate,
+  invalidateElectronCollabScopeWithoutTeam: invalidateWithoutTeam,
 }));
 
 import { initCollabScopeListeners } from '../collabScopeListeners';
 
 describe('initCollabScopeListeners', () => {
   let broadcastOrgChanged: (() => void) | undefined;
+  let broadcastMatched: ((payload: { workspacePath?: string }) => void) | undefined;
   const unsubscribeOrgChanged = vi.fn();
+  const unsubscribeMatched = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
     broadcastOrgChanged = undefined;
+    broadcastMatched = undefined;
     vi.stubGlobal('window', {
       electronAPI: {
-        on: vi.fn((channel: string, listener: () => void) => {
+        on: vi.fn((channel: string, listener: (payload?: any) => void) => {
+          if (channel === 'team:workspace-matched') {
+            broadcastMatched = listener;
+            return unsubscribeMatched;
+          }
           expect(channel).toBe('team:workspace-org-changed');
           broadcastOrgChanged = listener;
           return unsubscribeOrgChanged;
         }),
       },
     });
+  });
+
+  it('re-asks a workspace that settled on "no team" when main matches it to a team', () => {
+    const cleanup = initCollabScopeListeners(createStore());
+
+    broadcastMatched?.({ workspacePath: '/workspace/a' });
+
+    expect(invalidateWithoutTeam).toHaveBeenCalledWith('/workspace/a');
+    // Every other window keeps its session.
+    expect(invalidate).not.toHaveBeenCalled();
+    cleanup();
+    expect(unsubscribeMatched).toHaveBeenCalled();
   });
 
   it('re-resolves the scope when the project gains an organization', () => {

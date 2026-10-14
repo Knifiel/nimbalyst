@@ -92,6 +92,15 @@ export function requireStr(args: Args, key: string): string {
   return value;
 }
 
+/** What a tool answers when the project has no local wiki yet. */
+export function noLocalWikiResult(err: NoLocalWikiError): McpToolResult {
+  return textResult(
+    `No local wiki at ${err.dir}. Call \`${INIT_TOOL_NAME}\` to create one ` +
+      '(default nimbalyst-local/wiki, kept out of git; pass `location` for a checked-in folder such as docs/wiki).',
+    true,
+  );
+}
+
 /**
  * A tool over the local wiki. Expected failures (no wiki, not found, bad
  * argument, team scope) are results the agent reads and acts on.
@@ -112,13 +121,7 @@ export function localTool(
         const value = await run(opened, args);
         return textResult(value);
       } catch (err) {
-        if (err instanceof NoLocalWikiError) {
-          return textResult(
-            `No local wiki at ${err.dir}. Call \`${INIT_TOOL_NAME}\` to create one ` +
-              '(default nimbalyst-local/wiki, kept out of git; pass `location` for a checked-in folder such as docs/wiki).',
-            true,
-          );
-        }
+        if (err instanceof NoLocalWikiError) return noLocalWikiResult(err);
         if (err instanceof TeamScopeRefusal) return textResult(err.message, true);
         if (err instanceof LocalWikiError || err instanceof CliError) {
           return textResult(`${definition.name}: ${err.message}`, true);

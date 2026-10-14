@@ -40,6 +40,8 @@
  * `isAvailable`/`fetchPayload` and touches no decision code.
  */
 
+import * as fs from 'fs';
+
 import { AnalyticsService } from '../../services/analytics/AnalyticsService';
 import { getReleaseChannel } from '../../utils/store';
 import { logger } from '../../utils/logger';
@@ -83,6 +85,28 @@ export function postHogRolloutConfigSource(): RolloutConfigSource {
 }
 
 /**
+ * Playwright-only stand-in for PostHog: a JSON file mapping flag keys to
+ * payloads, re-read on every launch. It is the only way an E2E can reach the
+ * automatic boot migration, and the kill switch, through a real launch.
+ * Requires `PLAYWRIGHT=1` as well as the path, so setting one variable on a
+ * normal install does nothing.
+ */
+export const TEST_ROLLOUT_PAYLOAD_ENV = 'NIMBALYST_TEST_ROLLOUT_PAYLOAD_FILE';
+
+export function selectRolloutConfigSource(env: NodeJS.ProcessEnv = process.env): RolloutConfigSource {
+  const file = env.PLAYWRIGHT === '1' ? env[TEST_ROLLOUT_PAYLOAD_ENV] : undefined;
+  if (!file) return postHogRolloutConfigSource();
+  return {
+    isAvailable: () => true,
+    fetchPayload: async (flagKey: string) => {
+      if (!fs.existsSync(file)) return null;
+      const payloads = JSON.parse(fs.readFileSync(file, 'utf-8')) as Record<string, unknown>;
+      return payloads[flagKey] ?? null;
+    },
+  };
+}
+
+/**
  * Ask whether this launch may migrate. Awaited by the boot path, which is
  * already async and already waits on pre-flight; a bounded wait before a
  * multi-minute destructive operation is proportionate, and it only happens on
@@ -90,7 +114,7 @@ export function postHogRolloutConfigSource(): RolloutConfigSource {
  */
 export async function authorizeRollout(userDataPath: string): Promise<RolloutAuthorization> {
   return resolveRolloutAuthorization({
-    source: postHogRolloutConfigSource(),
+    source: selectRolloutConfigSource(),
     buildChannel: getReleaseChannel(),
     onSnapshot: (snapshot) => cacheRolloutSnapshot(userDataPath, snapshot),
     log: (level, msg, meta) => logger.main[level](msg, meta),

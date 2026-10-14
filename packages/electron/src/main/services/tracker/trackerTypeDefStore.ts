@@ -59,6 +59,7 @@ interface TypeDefOwnershipRow {
   sync_id: number | null;
   model: string;
   synced_model: string | null;
+  sync_status: string | null;
 }
 
 async function readOwnership(
@@ -67,7 +68,7 @@ async function readOwnership(
   type: string,
 ): Promise<TypeDefOwnershipRow | null> {
   const result = (await db.query(
-    `SELECT sync_id, model, synced_model FROM tracker_type_defs
+    `SELECT sync_id, model, synced_model, sync_status FROM tracker_type_defs
       WHERE workspace = $1 AND type = $2`,
     [workspace, type],
   )) as { rows?: TypeDefOwnershipRow[] } | undefined;
@@ -267,6 +268,15 @@ export async function materializeYamlTrackerTypeDef(
           options.activity.authorIdentity,
           options.activity.action,
           options.activity.details,
+        );
+      }
+      if (row?.sync_status === 'rejected' && !schemaUnchanged) {
+        // The room refused the content this row carried. An edited file is a
+        // new attempt; reloading the same file is not, and would be refused again.
+        await db.query(
+          `UPDATE tracker_type_defs SET sync_status = 'local'
+            WHERE workspace = $1 AND type = $2`,
+          [workspace, model.type],
         );
       }
       await materializeTrackerTypeDef(workspace, attributedModel, 'yaml', dbOverride);
@@ -663,6 +673,28 @@ export async function listRetractedTeamOwnedTrackerTypes(
   }
 }
 
+/**
+ * Whether the team's room can hold an item of this type: a builtin this build
+ * seeds as a team type (every client carries it), or a definition the room
+ * has delivered and not retracted. A local YAML type that was never pushed, or
+ * was refused, is not.
+ */
+export async function isTrackerTypeConfirmedByTeam(
+  workspace: string,
+  type: string,
+  dbOverride?: TypeDefDb,
+): Promise<boolean> {
+  if (globalRegistry.getBuiltinModel(type)?.sharing === 'team') return true;
+  const db = dbOverride ?? getDatabase();
+  if (!db) return false;
+  const result = (await db.query(
+    `SELECT sync_id FROM tracker_type_defs
+      WHERE workspace = $1 AND type = $2 AND sync_id IS NOT NULL AND deleted_at IS NULL`,
+    [workspace, type],
+  )) as { rows?: unknown[] } | undefined;
+  return (result?.rows?.length ?? 0) > 0;
+}
+
 /** True when the team's schema room has a version of this type. */
 export async function isTeamOwnedTrackerType(
   workspace: string,
@@ -829,25 +861,12 @@ export interface UnsyncedTrackerSchemaDef {
 }
 
 /**
- * The push-side outbox: locally-originated schema rows whose changes have not
- * yet been pushed to peers (`sync_status` in 'local' | 'pending'). A pending
- * deletion (deleted_at set) surfaces with `model = null` so the push path can
- * emit a tombstone. `source = 'sync'` rows are stamped 'synced' and excluded —
- * they came FROM a peer and must never be echoed back.
- *
- * Sharing gate: a type whose model declares `sharing: 'personal'` never leaves
- * the machine — its override (or override-deletion) is filtered out here, the
- * single push choke point. The `model` column retains the last-known JSON even
- * for a tombstoned row, so sharing is readable for deletions too. Types with no
- * explicit sharing value keep their prior behavior (not filtered) so this never
- * silently stops an existing custom type from syncing.
- */
-/**
  * Retire a schema change the server refused for good.
  *
  * `listUnsyncedTrackerSchemaDefs` selects `sync_status IN ('local','pending')`,
  * so `'rejected'` drops this type out of the push queue while leaving the local
- * model intact. No migration: `sync_status` is a plain TEXT column.
+ * model intact. No migration: `sync_status` is a plain TEXT column. An edit to
+ * the YAML file puts the row back in the queue (`materializeYamlTrackerTypeDef`).
  */
 export async function markTrackerSchemaDefRejected(
   workspace: string,
@@ -867,6 +886,21 @@ export async function markTrackerSchemaDefRejected(
   }
 }
 
+/**
+ * The push-side outbox: locally-originated schema rows whose changes have not
+ * yet been pushed to peers (`sync_status` in 'local' | 'pending'). A pending
+ * deletion (deleted_at set) surfaces with `model = null` so the push path can
+ * emit a tombstone. `source = 'sync'` rows are stamped 'synced' and excluded —
+ * they came FROM a peer and must never be echoed back.
+ *
+ * Sharing gate: a type whose model declares `sharing: 'personal'` never leaves
+ * the machine — its override (or override-deletion) is filtered out here, the
+ * single push choke point. The `model` column retains the last-known JSON even
+ * for a tombstoned row, so sharing is readable for deletions too. A stored model
+ * with no sharing value is not filtered here, but none arrives from YAML: the
+ * parser fills in `personal` for a file with no `sharing:` key, so such a file
+ * stays on this machine.
+ */
 export async function listUnsyncedTrackerSchemaDefs(
   workspace: string,
   dbOverride?: TypeDefDb,

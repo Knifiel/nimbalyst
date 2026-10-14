@@ -39,6 +39,23 @@ describe('mobile project config lifecycle', () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it('republishes an unchanged config byte-for-byte so the server can skip the write, and restamps a changed slice', async () => {
+    vi.useFakeTimers({ now: 1_000, toFake: ['Date'] });
+    try {
+      const { sync, send, deps } = setup();
+      await sync.refresh();
+      vi.setSystemTime(5_000);
+      await sync.refresh(); // reconnect, phone join or startup: nothing changed
+      expect(send.mock.calls[1][1]).toEqual(send.mock.calls[0][1]);
+      deps.discoverActions.mockResolvedValueOnce([{ ...action, body: 'Review it again' }]);
+      await sync.refresh();
+      const [first, , changed] = send.mock.calls.map(([, config]) => config);
+      expect(changed.lastCommandsUpdate).toBe(first.lastCommandsUpdate);
+      expect(changed.lastActionsUpdate).toBe(5_000);
+      sync.stop();
+    } finally { vi.useRealTimers(); }
+  });
+
   it('coalesces refresh requests during a blocked publish into one follow-up', async () => {
     const { sync, send, deps } = setup();
     let finish!: (commands: typeof command[]) => void;

@@ -592,9 +592,11 @@ export interface StreamChunk {
   // liveness -- the Git journal behind the menu-bar indicator -- can see the
   // call end. It carries the same `toolCall` object as that earlier chunk, so it
   // is a completion signal only, never a second tool call.
-  type: 'text' | 'tool_call' | 'tool_result' | 'tool_error' | 'error' | 'complete' | 'context_usage' | 'stream_edit_start' | 'stream_edit_content' | 'stream_edit_end' | 'pre_edit_snapshot' | 'post_edit_snapshot';
+  type: 'text' | 'tool_call' | 'tool_result' | 'tool_error' | 'error' | 'complete' | 'context_usage' | 'prompt_suggestion' | 'stream_edit_start' | 'stream_edit_content' | 'stream_edit_end' | 'pre_edit_snapshot' | 'post_edit_snapshot';
   content?: string;
   isSystem?: boolean; // For system messages like slash command output
+  /** Predicted next user prompt, for `prompt_suggestion` chunks. Ephemeral UI state, never transcript content. */
+  suggestion?: string;
   toolCall?: {
     id?: string;
     name: string;
@@ -619,6 +621,8 @@ export interface StreamChunk {
   isAuthError?: boolean; // True when error is an authentication failure (SDK first-class detection)
   isBedrockToolError?: boolean; // True when error is a Bedrock tool search error
   isServerError?: boolean; // True when error is a 500/internal server error (Claude may be down)
+  usageLimitResetsAtMs?: number; // A usage limit blocked the turn; when it resets (epoch ms). Drives auto-resume.
+  usageLimitType?: string; // The SDK's limit type for that block, e.g. 'five_hour'
   isCodexAuthRequired?: boolean; // True when a Codex app-server session was blocked because the user is not signed in to OpenAI
   isProcessCrash?: boolean; // True when the agent subprocess died from a native fault (#1361), so the turn must settle as errored despite the follow-up 'complete'
   isComplete?: boolean;

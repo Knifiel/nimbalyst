@@ -132,10 +132,9 @@ describe('claudeCliLauncherSingleton', () => {
     const first = h.ensureClaudeCliSession(input);
     const second = h.ensureClaudeCliSession(input);
     // Launch now runs after the async worktree-cwd resolution (dynamic imports),
-    // so flush until it's invoked rather than a single microtask.
-    for (let i = 0; i < 20 && h.launch.mock.calls.length === 0; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
+    // so wait until it's invoked. A fixed count of event-loop turns ran out
+    // under full-suite load, when those imports resolve slowly.
+    await vi.waitFor(() => expect(h.launch).toHaveBeenCalled(), { timeout: 10000 });
 
     // Coalescing: two concurrent ensure calls → exactly one startSession + launch.
     expect(h.stateManager.startSession).toHaveBeenCalledTimes(1);

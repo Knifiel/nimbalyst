@@ -19,6 +19,7 @@ export type WikiIssueCode =
   | 'malformed-sidecar'
   | 'orphan-sidecar'
   | 'unsafe-id'
+  | 'reserved-field'
   | 'repair-failed';
 
 /** Something the scan found and did not (or could not) fix. Never thrown. */
@@ -252,6 +253,8 @@ export interface LocalWikiChange {
   removedIds: string[];
   /** Table types whose CSV changed. */
   tableTypes: string[];
+  /** Present (true) when a type definition in the types folder changed. */
+  typesChanged?: true;
 }
 
 export interface ActivityEntry {
@@ -283,6 +286,10 @@ export interface OpenWikiOptions {
    */
   editorTypes?: Readonly<Record<string, string>>;
   debounceMs?: number;
+  /** While the types folder does not exist yet, how often `watch` checks for it. Default 2s. */
+  typesPollMs?: number;
+  /** Rescans after a watch opens, for changes the watch missed while starting. Default 250ms, 1s, 3s. */
+  watchCatchUpMs?: readonly number[];
   now?: () => number;
   /** How long a write waits for another process's write lock. Default 10s. */
   lockTimeoutMs?: number;

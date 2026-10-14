@@ -27,6 +27,7 @@ import { atomFamily } from '../debug/atomFamilyRegistry';
 import { store } from '@nimbalyst/runtime/store';
 import { activeWorkspacePathAtom } from './openProjects';
 import type { ContentMode } from '../../types/WindowModeTypes';
+import type { SettingsDestination, SettingsScope } from '../../components/Settings/settingsRoutes';
 
 // ============================================================
 // Types
@@ -61,7 +62,8 @@ export interface TrackerNavigationState {
  */
 export interface SettingsHistoryState {
   category: string;
-  scope: 'application' | 'personal' | 'organization' | 'project' | 'user';
+  scope: SettingsScope | 'personal' | 'organization' | 'user';
+  target?: Extract<SettingsDestination, { scope: 'project' }>['target'];
 }
 
 /**
@@ -214,11 +216,19 @@ function entriesEqual(a: NavigationEntry, b: NavigationEntry): boolean {
         a.tracker?.selectedType === b.tracker?.selectedType &&
         a.tracker?.viewMode === b.tracker?.viewMode
       );
-    case 'settings':
+    case 'settings': {
+      const aTarget = a.settings?.target;
+      const bTarget = b.settings?.target;
+      const sameTarget = aTarget?.kind === 'workspace' && bTarget?.kind === 'workspace'
+        ? aTarget.workspacePath === bTarget.workspacePath
+        : aTarget?.kind === 'organizationProject' && bTarget?.kind === 'organizationProject'
+          ? aTarget.orgId === bTarget.orgId && aTarget.projectId === bTarget.projectId
+          : aTarget === bTarget;
       return (
         a.settings?.category === b.settings?.category &&
-        a.settings?.scope === b.settings?.scope
+        a.settings?.scope === b.settings?.scope && sameTarget
       );
+    }
     default:
       return false;
   }
@@ -472,6 +482,19 @@ function schedulePersist(workspacePath: string): void {
 const initPromises = new Map<string, Promise<void>>();
 
 /**
+ * Project settings entries saved before entries carried a target always meant
+ * the project owning the history. Without the target, the page SettingsView
+ * records after Back would not equal the restored entry and would truncate
+ * Forward history.
+ */
+function withLegacySettingsTarget(entry: NavigationEntry, workspacePath: string): NavigationEntry {
+  if (entry.mode !== 'settings' || entry.settings?.scope !== 'project' || entry.settings.target) {
+    return entry;
+  }
+  return { ...entry, settings: { ...entry.settings, target: { kind: 'workspace', workspacePath } } };
+}
+
+/**
  * Initialize navigation history from workspace state.
  * Call this when workspace path is known.
  *
@@ -502,7 +525,7 @@ export async function initNavigationHistory(
 
       if (saved && Array.isArray(saved.entries)) {
         store.set(navigationHistoryAtomFamily(workspacePath), {
-          entries: saved.entries,
+          entries: saved.entries.map(entry => withLegacySettingsTarget(entry, workspacePath)),
           currentIndex: saved.currentIndex ?? saved.entries.length - 1,
         });
         console.log('[navigationHistory] Loaded', saved.entries.length, 'entries for', workspacePath);

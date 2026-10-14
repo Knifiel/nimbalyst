@@ -435,6 +435,31 @@ struct SettingsSyncBroadcast: Codable {
     let fromConnectionId: String?
 }
 
+/// The desktop-to-server leg of live context usage. iOS never sends it; the
+/// mirror exists so the wire fixture pins its shape.
+struct SessionContextUpdateMessage: Codable {
+    var type: String = "sessionContextUpdate"
+    let update: LiveSessionContext
+}
+
+/// Live context-window usage relayed by the server (desktop -> mobile) and
+/// never stored. The index row still carries the turn-boundary value.
+struct SessionContextBroadcast: Codable {
+    let type: String
+    let update: LiveSessionContext
+    let fromConnectionId: String?
+}
+
+/// `encryptedContext` decrypts to client-metadata JSON holding only
+/// `currentContext`, so it decodes as `ClientMetadata`.
+struct LiveSessionContext: Codable {
+    let sessionId: String
+    let encryptedContext: String
+    let contextIv: String
+    /// Epoch ms on the sending desktop; orders frames per session.
+    let at: Int
+}
+
 /// Decrypted settings received from desktop.
 public struct SyncedSettings: Codable {
     public let openaiApiKey: String?
@@ -709,6 +734,7 @@ struct SessionControlPayload: Codable {
 
 /// Request messages for a session room.
 struct SessionSyncRequest: Codable {
+    var sinceRevision: Int? = nil
     var type: String = "syncRequest"
     /// Message id cursor; the server accepts either this or `sinceSeq`.
     var sinceId: String? = nil
@@ -717,6 +743,7 @@ struct SessionSyncRequest: Codable {
 
 /// Append a message to the session.
 struct AppendMessageRequest: Codable {
+    var expectedRevision: Int? = nil
     var type: String = "appendMessage"
     let message: ServerMessageEntry
 }
@@ -725,6 +752,7 @@ struct AppendMessageRequest: Codable {
 
 /// Sync response with paginated messages.
 struct SessionSyncResponse: Codable {
+    var revisionCursor: Int? = nil
     let type: String
     let messages: [ServerMessageEntry]
     let metadata: SessionRoomMetadata?
@@ -734,6 +762,9 @@ struct SessionSyncResponse: Codable {
 
 /// A message entry from the session room.
 struct ServerMessageEntry: Codable {
+    var projectionVersion: Int? = nil
+    var revision: Int? = nil
+    var payload: SessionPayloadReference? = nil
     let id: String
     let sequence: Int
     let createdAt: Int

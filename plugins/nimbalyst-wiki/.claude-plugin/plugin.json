@@ -1,13 +1,14 @@
 {
   "name": "nimbalyst-wiki",
-  "version": "0.3.0",
-  "description": "Your project's Nimbalyst Wiki from Claude Code: the team's pages on the Nimbalyst server, or a local wiki of plain files in the repository. Read pages as context, and record what people decided in the page it affects, with citations to what was said.",
+  "version": "0.6.0",
+  "description": "A local wiki your Claude Code agents write for you, so you can think, organize, and set direction. Run setup to build the wiki, capture decisions at the end of sessions, track things with types, read and edit it in your local browser, and optionally share it with your team.",
   "author": {
     "name": "Nimbalyst",
     "url": "https://nimbalyst.com"
   },
   "homepage": "https://nimbalyst.com",
-  "repository": "https://github.com/nimbalyst/nimbalyst",
+  "repository": "https://github.com/nimbalyst/nimbalyst-wiki",
+  "license": "MIT",
   "keywords": [
     "pages",
     "wiki",

@@ -223,11 +223,20 @@ public struct TranscriptWebView: UIViewRepresentable {
             return
         }
 
-        // Check for new messages (append only) — batched into a single IPC call
+        // A repaired projection retains its ID and sequence. Reload if the sent
+        // prefix changed; appending by count alone would leave the old card visible.
+        if !messages.isEmpty && !messages.starts(with: coordinator.sentMessages) {
+            coordinator.isReady = false
+            coordinator.loadSessionIntoWebView(session: session, messages: messages)
+            return
+        }
+
+        // Check for new messages — batched into a single IPC call
         if messages.count > coordinator.lastMessageCount {
             let newMessages = Array(messages[coordinator.lastMessageCount...])
             coordinator.appendMessagesToWebView(messages: newMessages, sessionId: session.id)
             coordinator.lastMessageCount = messages.count
+            coordinator.sentMessages = messages
         }
 
         // Update metadata if session properties changed
@@ -267,6 +276,7 @@ public struct TranscriptWebView: UIViewRepresentable {
         /// not from the `session` captured at init.
         var currentSession: Session?
         var lastMessageCount: Int = 0
+        var sentMessages: [Message] = []
         var lastIsExecuting: Bool = false
         var lastProvider: String?
         var lastModel: String?
@@ -682,14 +692,21 @@ public struct TranscriptWebView: UIViewRepresentable {
                     self.isReady = true
                     self.contentProcessTerminationCount = 0
                     self.lastMessageCount = messages.count
+                    self.sentMessages = messages
                     self.lastIsExecuting = session.isExecuting
                     self.lastProvider = session.provider
                     self.lastModel = session.model
                     self.lastTitle = session.titleDecrypted
 
+                    if let pending = self.pendingSession, !pending.1.isEmpty, !pending.1.starts(with: messages) {
+                        self.isReady = false
+                        self.loadSessionIntoWebView(session: pending.0, messages: pending.1)
+                        return
+                    }
                     if case .activatedThenAppend(let fromIndex) = outcome, let pending = self.pendingSession {
                         self.appendMessagesToWebView(messages: Array(pending.1[fromIndex...]), sessionId: session.id)
                         self.lastMessageCount = pending.1.count
+                        self.sentMessages = pending.1
                     }
                     self.pendingSession = nil
 

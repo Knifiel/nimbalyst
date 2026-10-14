@@ -254,6 +254,34 @@ describe('MessageSegment', () => {
     expect(container.querySelector('.context-limit-widget')).not.toBeNull();
   });
 
+  it('offers auto-resume only on the latest blocked usage-limit card and passes its reset', async () => {
+    const { interactiveWidgetHostAtom } = await import('../../../../store/atoms/interactiveWidgetHost');
+    const testStore = createStore();
+    const setUsageLimitAutoResume = vi.fn().mockResolvedValue(undefined);
+    testStore.set(interactiveWidgetHostAtom('limited'), { usageLimitAutoResumeEnabled: false, setUsageLimitAutoResume } as never);
+    const blocked = makeMessage({
+      type: 'system_message',
+      isError: true,
+      text: "<!-- [RATE_LIMIT] limitType=5-hour session resetsAtUnix=1772233200 -->\n\nYou've hit your session limit",
+    });
+    const segment = (isLastMessage: boolean) => (
+      <JotaiProvider store={testStore}>
+        <MessageSegment message={blocked} isUser={false} showToolCalls={false} showThinking={false}
+          expandedTools={new Set()} onToggleToolExpand={() => {}} sessionId="limited" isLastMessage={isLastMessage} />
+      </JotaiProvider>
+    );
+
+    const older = render(segment(false));
+    expect(older.container.querySelector('.rate-limit-widget-blocked')).not.toBeNull();
+    expect(older.container.querySelector('.rate-limit-auto-resume-on')).toBeNull();
+    older.unmount();
+
+    render(segment(true));
+    fireEvent.click(screen.getByText('Resume automatically when the limit resets'));
+    await waitFor(() => screen.getByText('Turn off'));
+    expect(setUsageLimitAutoResume).toHaveBeenCalledWith(true, 1772233200000);
+  });
+
   it('renders tool call card with expand/collapse', () => {
     const toolId = 'test-tool-1';
     const message = makeToolMessage(

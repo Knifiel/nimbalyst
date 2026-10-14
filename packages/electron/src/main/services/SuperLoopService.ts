@@ -10,7 +10,7 @@ import log from 'electron-log/main';
 import { ulid } from 'ulid';
 import * as fs from 'fs';
 import * as path from 'path';
-import simpleGit from 'simple-git';
+import { createGit } from './gitClient';
 import { getDatabase } from '../database/initialize';
 import { createSuperLoopStore, type SuperLoopStore } from './SuperLoopStore';
 import { createWorktreeStore, type WorktreeStore } from './WorktreeStore';
@@ -752,7 +752,7 @@ export class SuperLoopService {
 
         // Commit the .gitignore change so it's tracked immediately
         try {
-          const git = simpleGit(worktreePath);
+          const git = createGit(worktreePath);
           await git.add('.gitignore');
           await git.commit('chore: add .superloop to .gitignore');
           logger.info('Committed .superloop addition to .gitignore', { worktreePath });

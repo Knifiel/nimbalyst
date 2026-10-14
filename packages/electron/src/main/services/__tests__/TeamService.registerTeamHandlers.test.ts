@@ -30,7 +30,7 @@ const { accountsMock, fetchMock, safeHandleMock, handlers } = vi.hoisted(() => {
 });
 
 vi.mock('electron', () => ({
-  BrowserWindow: class {},
+  BrowserWindow: class { static getAllWindows() { return []; } },
   net: { fetch: fetchMock },
 }));
 
@@ -326,6 +326,53 @@ describe('team:create handler', () => {
     const body = await captureCreateRequest('https://user:token@github.com:bad/widgets.git');
 
     expect(body).not.toHaveProperty('remoteUrl');
+  });
+});
+
+/**
+ * A project added with a remote used to be sent with `name: null`, and the web
+ * console then labeled it by its UUID. The repository name is the default.
+ */
+describe('team:add-project handler', () => {
+  beforeEach(() => {
+    handlers.clear();
+    safeHandleMock.mockClear();
+    fetchMock.mockReset();
+    gitRemoteFnMock.mockReset();
+    registerTeamHandlers();
+  });
+
+  async function captureAddProjectRequest(rawRemote: string, name?: string): Promise<Record<string, unknown>> {
+    gitRemoteFnMock.mockResolvedValue(rawRemote);
+    fetchMock.mockImplementation(async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => (String(url).endsWith('/projects')
+        ? { projectId: 'p-1', teamProjectId: 'tp-1' }
+        : { sessionJwt: 'team-jwt', sessionToken: 'team-session' }),
+    }));
+
+    const result = await handlers.get('team:add-project')!({}, 'org-1', '/work/checkout-dir', name);
+    expect(result).toEqual({ success: true, project: { projectId: 'p-1', teamProjectId: 'tp-1' } });
+
+    const call = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/api/teams/org-1/projects'));
+    return JSON.parse(String((call?.[1] as { body?: string } | undefined)?.body));
+  }
+
+  it.each([
+    ['https://github.com/acme/Widgets.git', 'Widgets'],
+    ['git@github.com:acme/nimbalyst-namenym.git', 'nimbalyst-namenym'],
+    ['ssh://git@github.com/acme/widgets/', 'widgets'],
+    ['https://gitlab.com/group/sub/deep-repo', 'deep-repo'],
+  ])('names a project with a remote after its repository: %s', async (rawRemote, expectedName) => {
+    const body = await captureAddProjectRequest(rawRemote);
+
+    expect(body.name).toBe(expectedName);
+    expect(body.gitRemoteHash).toEqual(expect.any(String));
+  });
+
+  it('keeps an explicit name over the repository name', async () => {
+    expect((await captureAddProjectRequest('https://github.com/acme/widgets.git', 'Widgets App')).name).toBe('Widgets App');
   });
 });
 

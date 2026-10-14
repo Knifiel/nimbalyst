@@ -63,6 +63,7 @@ export {
 } from './types';
 
 export { createCollabV3Sync } from './CollabV3Sync';
+export { repairSessionProjection, type ProjectionRepairCheckpoints } from './repairSessionProjection';
 export { createPersonalSyncWriteGate, describePersonalSyncWriteGate } from './personalSyncWriteGate';
 export type { PersonalSyncWriteGateSnapshot, PersonalSyncWriteGateState, PersonalSyncBlockReason } from './personalSyncWriteGate';
 export { IndexEntryDecryptionError, isIndexEntryDecryptionError } from './indexEntryDecryptionError';
@@ -76,6 +77,8 @@ export { deriveTrackerPersonalStateKey } from './trackerPersonalStateKey';
 export { deriveEncryptionKey, personalSyncEncryptionSalt } from './encryptionKey';
 export { setSyncImageCompressor } from './syncContentTruncator';
 export type { SyncImageCompressor } from './syncContentTruncator';
+export { setSyncLocalImageLoader } from './syncDisplayImages';
+export type { SyncLocalImageLoader } from './syncDisplayImages';
 
 export {
   setSyncClientInfo,

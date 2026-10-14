@@ -257,7 +257,6 @@ final class IndexReplicationClientTests: XCTestCase {
         completeMaintenance(client, cursor: 99, historyComplete: true, skippedRowCount: 2)
         XCTAssertTrue(client.coverage.historyComplete)
         XCTAssertEqual(client.coverage.skippedRowCount, 2)
-        XCTAssertEqual(client.coverage.skippedRowsNotice, "2 synced sessions were written with a different sync key and are not shown here. Re-pair this phone from your computer.")
 
         client.handle(outcome: outcome(sent[0], .reset))
         XCTAssertFalse(client.coverage.historyComplete, "A reset withdraws the coverage claim")
@@ -268,14 +267,6 @@ final class IndexReplicationClientTests: XCTestCase {
         completeMaintenance(client)
         XCTAssertEqual(sent.last?.mode, "bootstrap")
         XCTAssertEqual(client.coverage.skippedRowCount, 0)
-        XCTAssertNil(client.coverage.skippedRowsNotice)
-    }
-
-    func testSkippedSessionNoticeUsesSingularPhoneCopy() {
-        var coverage = IndexCoverage()
-        XCTAssertNil(coverage.skippedRowsNotice)
-        coverage.skippedRowCount = 1
-        XCTAssertEqual(coverage.skippedRowsNotice, "1 synced session was written with a different sync key and is not shown here. Re-pair this phone from your computer.")
     }
 
     // MARK: - Crash recovery

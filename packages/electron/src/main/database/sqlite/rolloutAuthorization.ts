@@ -89,18 +89,18 @@ export const ROLLOUT_FLAG_KEYS: Readonly<Record<ReleaseChannel, string>> = {
 /**
  * Configuration versions this build will honour.
  *
- * **Empty on purpose.** Phase B ships the authorization mechanism with
- * automatic migration still off, and an empty allowlist means no remote
- * payload of any shape can start a migration -- not a disabled flag that
- * someone might enable, but a build that structurally cannot act on one.
+ * Phase B shipped this empty, so no remote payload of any shape could start a
+ * migration. `sqlite-ramp-1` is the first cohort: alpha, 256 MiB
+ * (`FIRST_COHORT_MAX_SOURCE_BYTES`). Accepting it does not start anything by
+ * itself -- the `sqlite-rollout-alpha` flag must also deliver a live, enabled,
+ * channel-matching payload, and the stable key stays off until the alpha hold
+ * in `sqlite-ramp-gates.md` passes.
  *
- * At ramp time, add the exact version string the rollout owner has published
- * (for example `sqlite-ramp-1`) in the same commit that updates the ceiling
- * and the changelog. The ramp gates require a new version for every material
- * change to the ceiling or channel policy, so a payload can never silently
- * reuse a version whose meaning has moved.
+ * The ramp gates require a new version for every material change to the
+ * ceiling or channel policy, so a payload can never silently reuse a version
+ * whose meaning has moved. Add the next one here when it is published.
  */
-export const ACCEPTED_CONFIG_VERSIONS: readonly string[] = [];
+export const ACCEPTED_CONFIG_VERSIONS: readonly string[] = ['sqlite-ramp-1'];
 
 /**
  * The largest `maxSourceBytes` any remote payload may request. See rule 3

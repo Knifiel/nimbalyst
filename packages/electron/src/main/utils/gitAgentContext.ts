@@ -1,6 +1,6 @@
 import path from 'path';
 import { existsSync } from 'fs';
-import { GIT_INHERITED_ENV_UNSAFE } from '../services/gitInheritedEnvUnsafe';
+import { simpleGitReadOnly } from '../services/gitReadOnly';
 import { withTimeout } from './gitUncommittedFiles';
 
 /**
@@ -42,16 +42,12 @@ export async function getAgentGitContext(workspacePath: string): Promise<string 
   }
 
   try {
-    const simpleGit = (await import('simple-git')).default;
     // GIT_OPTIONAL_LOCKS=0 keeps these read-only commands from refreshing (and
     // so locking) .git/index, where they would contend with the commit path
     // (NIM-2285). Supplying ANY env makes simple-git scan it and refuse to spawn
     // git when the user's own environment has GIT_EDITOR/GIT_PAGER and friends,
     // hence the unsafe flags.
-    const git = simpleGit(workspacePath, {
-      timeout: { block: GIT_CONTEXT_TIMEOUT_MS },
-      unsafe: GIT_INHERITED_ENV_UNSAFE,
-    }).env({ ...process.env, GIT_OPTIONAL_LOCKS: '0' });
+    const git = simpleGitReadOnly(workspacePath, { timeout: { block: GIT_CONTEXT_TIMEOUT_MS } });
 
     // Each lookup degrades to empty on its own so a repo missing one of them
     // (no commits yet, detached HEAD) still contributes the rest. One shared

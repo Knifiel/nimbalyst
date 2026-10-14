@@ -23,6 +23,18 @@ describe('page tool contract', () => {
     expect(remoteArgumentRefusal('list_citable_inputs', { kinds: ['comment', 'prompt'] })).toMatch(/only comments/);
   });
 
+  it('offers team onboarding and import only remotely, as writes', () => {
+    const onboarding = ['pages_import', 'team_create', 'team_invite', 'team_invite_link_create'];
+    for (const name of onboarding) {
+      const tool = PAGE_TOOL_CONTRACT.find((entry) => entry.name === name);
+      expect(tool?.availability).toBe('remoteOnly');
+      expect(tool?.readOnly).toBe(false);
+    }
+    const byName = new Map(remoteToolDefinitions().map((tool) => [tool.name, tool]));
+    expect(byName.get('pages_import')?.inputSchema.required).toEqual(['source', 'pages']);
+    expect(byName.get('team_invite')?.description).toMatch(/confirm/i);
+  });
+
   it('lets only read tools name another project on desktop', () => {
     const withProject = PAGE_TOOL_CONTRACT.filter((tool) => tool.desktopProjectArg).map((tool) => tool.name);
     expect(withProject.sort()).toEqual(['listPages', 'readCollabDoc', 'searchPages']);

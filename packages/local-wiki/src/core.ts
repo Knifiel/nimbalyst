@@ -1,5 +1,6 @@
 import { appendFile, mkdir, readdir, readFile } from 'node:fs/promises';
 import * as path from 'node:path';
+import yaml from 'js-yaml';
 import { contentVersion, isSafeId, ulid } from './ids.js';
 import { composeMarkdownFile, insertIdIntoFile, parseMarkdownFile, readPageMeta } from './frontmatter.js';
 import { rewriteLinks } from './links.js';
@@ -10,6 +11,7 @@ import { acquireWriteLock } from './lock.js';
 import {
   ACTIVITY_SUFFIX,
   linkBaseDir,
+  MARKER_FILE,
   resolveLinkPath,
   scanWiki,
   TRASH_MANIFEST,
@@ -57,6 +59,8 @@ export class LocalWikiError extends Error {
 
 export interface MarkerData {
   formatVersion: number;
+  /** The wiki's stable identity; see `LocalWiki.wikiId`. */
+  wikiId?: string;
   tables?: Record<string, { order?: number }>;
 }
 
@@ -79,6 +83,8 @@ export class WikiCore {
   protected types = new Map<string, WikiTypeDef>();
   protected editorTypes: Map<string, string>;
   protected typeIssues: WikiIssue[] = [];
+  private typesSignature = '';
+  private notifiedTypesSignature: string | null = null;
   protected state!: ScanState;
   protected readonly cache: ScanCache = new Map();
   protected queue: Promise<unknown> = Promise.resolve();
@@ -128,6 +134,24 @@ export class WikiCore {
   }
 
   /**
+   * Rewrites the root file from what is on disk now (call holding the write
+   * lock), so a key another process added since this instance opened survives.
+   */
+  protected async updateMarker(change: (marker: MarkerData) => MarkerData): Promise<MarkerData> {
+    const file = path.join(this.root, MARKER_FILE);
+    let onDisk: MarkerData = this.marker;
+    try {
+      const parsed = yaml.load(await readFile(file, 'utf8'), { schema: yaml.CORE_SCHEMA });
+      if (parsed && typeof parsed === 'object') onDisk = parsed as MarkerData;
+    } catch {
+      // unreadable: fall back to what this instance loaded
+    }
+    this.marker = change(onDisk);
+    await atomicWrite(file, MARKER_HEADER + yaml.dump(this.marker, { schema: yaml.CORE_SCHEMA }));
+    return this.marker;
+  }
+
+  /**
    * A mutation: serialized in this instance, holding the write lock, over a
    * scan taken under that lock, so it never acts on state another process has
    * since changed.
@@ -171,6 +195,7 @@ export class WikiCore {
     const loaded = await loadTypeDefs(this.options.typesDir);
     this.types = loaded.types;
     this.typeIssues = loaded.issues;
+    this.typesSignature = loaded.signature;
     this.state = await scanWiki({
       root: this.root,
       types: this.types,
@@ -345,8 +370,10 @@ export class WikiCore {
     const first = !this.baselineRecorded;
     this.baselineRecorded = true;
     this.signatures = next;
-    if (first || (changedIds.length === 0 && removedIds.length === 0 && tableTypes.length === 0)) return;
-    const change: LocalWikiChange = { changedIds, removedIds, tableTypes };
+    const typesChanged = this.notifiedTypesSignature !== null && this.notifiedTypesSignature !== this.typesSignature;
+    this.notifiedTypesSignature = this.typesSignature;
+    if (first || (changedIds.length === 0 && removedIds.length === 0 && tableTypes.length === 0 && !typesChanged)) return;
+    const change: LocalWikiChange = { changedIds, removedIds, tableTypes, ...(typesChanged ? { typesChanged: true as const } : {}) };
     for (const listener of this.listeners) {
       try {
         listener(change);

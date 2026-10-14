@@ -508,7 +508,14 @@ export type TrackerMutationRejectCode =
   | 'adminRequired'
   /** A create-only schema mutation named a type the room already defines. */
   | 'schemaExists'
-  | 'malformed';
+  | 'malformed'
+  /**
+   * The room threw while applying the mutation, so nothing was written.
+   * Temporary: the same payload may succeed on a later attempt. Lets the
+   * server answer a specific mutation instead of sending a bare
+   * `trackerError` that names none.
+   */
+  | 'serverError';
 
 export interface TrackerMutationAckMessage {
   type: 'trackerMutationAck';

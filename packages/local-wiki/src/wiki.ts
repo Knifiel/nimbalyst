@@ -1,12 +1,13 @@
-import { mkdir, readFile, rm, rmdir, unlink } from 'node:fs/promises';
-import { watch as fsWatchSync } from 'node:fs';
+import { mkdir, readdir, readFile, rm, rmdir, stat, unlink } from 'node:fs/promises';
 import * as path from 'node:path';
 import yaml from 'js-yaml';
 import { contentVersion, idForFileName, ulid } from './ids.js';
 import { composeMarkdownFile, flattenLegacy, parseMarkdownFile, RESERVED_KEYS } from './frontmatter.js';
 import { fileStemForTitle, nameKey, uniqueStem } from './names.js';
 import { atomicWrite, movePath, pathExists, relJoin } from './fsutil.js';
-import { ACTIVITY_SUFFIX, MARKER_FILE, TRASH_DIR, TRASH_MANIFEST, type PageRecord, type TrashManifest } from './scan.js';
+import { ACTIVITY_SUFFIX, linkBaseDir, MARKER_FILE, resolveLinkPath, TRASH_DIR, TRASH_MANIFEST, type PageRecord, type TrashManifest } from './scan.js';
+import { ATTACHMENTS_DIR, rebaseChildFolderLinks, writeAttachment } from './attachments.js';
+import { encodeLinkPath } from './links.js';
 import { decodeRow } from './tableCodec.js';
 import { tableInfo } from './project.js';
 import { searchDocs, type SearchDoc } from './search.js';
@@ -28,6 +29,7 @@ import type {
 import type { WikiTypeDef } from './typeDefs.js';
 import { FORMAT_VERSION, LocalWikiError, MARKER_HEADER, type MarkerData } from './core.js';
 import { WikiTables } from './tables.js';
+import { defaultWatchFactory, watchWikiFolders } from './watch.js';
 import { normalizeEditorTypes, parseSidecar, sidecarName, suffixForDocumentType, SIDECAR_RESERVED_KEYS } from './sidecar.js';
 
 export { FORMAT_VERSION, LocalWikiError, type LocalWikiErrorCode } from './core.js';
@@ -55,14 +57,6 @@ export async function openWiki(root: string, options: OpenWikiOptions = {}): Pro
   const wiki = new LocalWiki(absRoot, marker, options);
   await wiki.rescan();
   return wiki;
-}
-
-function defaultWatchFactory(dir: string, onEvent: () => void): { close(): void } {
-  const watcher = fsWatchSync(dir, { recursive: true }, () => onEvent());
-  watcher.on('error', () => {
-    // A vanished folder ends the watch; the next explicit call rescans.
-  });
-  return { close: () => watcher.close() };
 }
 
 /** A local wiki folder. Every public call is serialized; see FORMAT.md for the file format. */
@@ -236,6 +230,47 @@ export class LocalWiki extends WikiTables {
     });
   }
 
+  /**
+   * Stores a file dropped into a page as an attachment in the page's
+   * `<child folder>/.assets/`. Returns its wiki-relative path and the link to
+   * write in the page body (relative to the page, percent-encoded).
+   */
+  async storeAttachment(id: string, fileName: string, bytes: Uint8Array): Promise<{ path: string; link: string }> {
+    return this.mutate(async () => {
+      const page = await this.pageForWrite(id);
+      this.requireWellFormed(page);
+      if (page.sidecar) throw new LocalWikiError('invalid', 'Only markdown pages take attachments');
+      const assetsRel = relJoin(page.dir, ATTACHMENTS_DIR);
+      const assetsAbs = this.abs(assetsRel);
+      await mkdir(assetsAbs, { recursive: true });
+      const name = await writeAttachment(assetsAbs, fileName, bytes, await readdir(assetsAbs));
+      const rel = relJoin(assetsRel, name);
+      return { path: rel, link: encodeLinkPath(path.posix.relative(linkBaseDir(page), rel)) };
+    });
+  }
+
+  /**
+   * The absolute path of a file a page links to (an image or attachment),
+   * resolved against the folder the page's links are written relative to.
+   * Null when the link leaves the wiki, names no file, or names the wiki's own
+   * bookkeeping (any dot-named segment other than `.assets`).
+   */
+  async resolvePageFile(id: string, linkPath: string): Promise<string | null> {
+    return this.exclusive(async () => {
+      const page = this.state.pages.get(id);
+      if (!page) throw new LocalWikiError('not-found', `No page ${id}`);
+      const rel = resolveLinkPath(linkBaseDir(page), linkPath);
+      if (!rel || rel.includes('\0')) return null;
+      if (rel.split('/').some((part) => part.startsWith('.') && part !== ATTACHMENTS_DIR)) return null;
+      const abs = this.abs(rel);
+      try {
+        return (await stat(abs)).isFile() ? abs : null;
+      } catch {
+        return null;
+      }
+    });
+  }
+
   async command(cmd: LocalWikiCommand): Promise<LocalWikiCommandResult> {
     return this.mutate(async () => {
       switch (cmd.type) {
@@ -360,6 +395,24 @@ export class LocalWiki extends WikiTables {
   }
 
   /**
+   * The wiki's stable identity, `wikiId` in the root file, created on first
+   * call. It travels with the folder (not the checkout), so a tool that copies
+   * the wiki somewhere else can key its copies on it and resume instead of
+   * duplicating.
+   */
+  async wikiId(): Promise<string> {
+    if (typeof this.marker.wikiId === 'string' && this.marker.wikiId) return this.marker.wikiId;
+    return this.exclusive(() =>
+      this.withWriteLock(async () => {
+        const marker = await this.updateMarker((onDisk) =>
+          typeof onDisk.wikiId === 'string' && onDisk.wikiId ? onDisk : { ...onDisk, wikiId: ulid() },
+        );
+        return marker.wikiId!;
+      }),
+    );
+  }
+
+  /**
    * Replaces the editor page suffix table (see `OpenWikiOptions.editorTypes`)
    * and rescans when it changed. Hosts call this when extensions load.
    */
@@ -387,14 +440,9 @@ export class LocalWiki extends WikiTables {
           });
         }, this.options.debounceMs ?? 150);
       };
-      this.watchHandles.push(factory(this.root, schedule));
-      if (this.options.typesDir) {
-        try {
-          this.watchHandles.push(factory(this.options.typesDir, schedule));
-        } catch {
-          // no types folder yet
-        }
-      }
+      this.watchHandles.push(
+        watchWikiFolders({ root: this.root, typesDir: this.options.typesDir ?? null, factory, onEvent: schedule, pollMs: this.options.typesPollMs ?? 2000, catchUpMs: this.options.watchCatchUpMs }),
+      );
     }
     return () => {
       this.listeners.delete(onChange);
@@ -598,7 +646,9 @@ export class LocalWiki extends WikiTables {
         else delete data.title;
         if (order === null) delete data.order;
         else data.order = order;
-        if (JSON.stringify(data) !== JSON.stringify(parsed.data)) await atomicWrite(abs, composeMarkdownFile(data, parsed.body));
+        // A renamed page's links into its own child folder (attachments) follow the folder.
+        const body = page.bodySource === 'file' ? rebaseChildFolderLinks(parsed.body, path.posix.basename(page.dir), stem) : parsed.body;
+        if (JSON.stringify(data) !== JSON.stringify(parsed.data) || body !== parsed.body) await atomicWrite(abs, composeMarkdownFile(data, body));
       }
     } else if (wantTitle || order !== null) {
       const data = { id: page.id, ...(wantTitle ? { title: wantTitle } : {}), ...(order !== null ? { order } : {}) };

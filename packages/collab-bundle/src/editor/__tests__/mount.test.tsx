@@ -7,7 +7,7 @@ import { asTeamJwt, asTeamMemberId } from '@nimbalyst/runtime/auth/jwtScopes';
 import { collabCommentControllerRegistry } from '@nimbalyst/runtime/editor/commenting/CollabCommentControllerRegistry';
 import { withHeadlessLexicalBridge } from '@nimbalyst/runtime/sync/withHeadlessLexicalBridge';
 import { HeadlessBodyNodes } from '@nimbalyst/runtime/editor/nodes/headlessBodyNodes';
-import { $createParagraphNode, $getRoot, type LexicalEditor } from 'lexical';
+import { $createParagraphNode, $getRoot, $getSelection, type LexicalEditor, type RangeSelection } from 'lexical';
 import { getAllExtensionUserCommands } from '@nimbalyst/runtime/editor/extensions/extensionContributionsStore';
 import { uint8ArrayToBase64, base64ToUint8Array } from '@nimbalyst/runtime/sync/documentSyncBase64';
 import { $createEmbeddedFileNode } from '@nimbalyst/runtime/editor/plugins/EmbedPlugin/EmbeddedFileNode';
@@ -15,6 +15,7 @@ import { createNamedPageViewsController } from '@nimbalyst/runtime/editor/plugin
 import { MarkdownCollabContentAdapter } from '@nimbalyst/runtime/sync/MarkdownCollabContentAdapter';
 import { buildTrackerReferenceHref } from '@nimbalyst/runtime/plugins/TrackerLinkPlugin/trackerReferenceHref';
 import { decisionMembersFromComments, mountCollabEditor } from '../mount';
+import { registerEmbeddableExtension } from '@nimbalyst/runtime/editor/plugins/EmbedPlugin/embeddableExtensions';
 import { setConsoleLinkOpener, setPageReferenceOpener } from '../consoleLinkOpener';
 import { CollabPresenceSurface } from '../presence';
 import {
@@ -252,6 +253,82 @@ describe('in-memory collaborative editor harness', () => {
     expect(titles()).not.toContain('Decisions list');
   });
 
+  it('links pages from @ as plain relative markdown links, and creates a page from it', async () => {
+    const yDocument = new Y.Doc();
+    MarkdownCollabContentAdapter.seedFromFile(yDocument, 'Start');
+    const element = document.createElement('div'); document.body.append(element);
+    let editor: LexicalEditor | null = null;
+    let finishCreate: (option: { id: string; title: string; href: string; linkTitle: string }) => void = () => {};
+    const handle = mountCollabEditor({
+      element,
+      source: { kind: 'in-memory', document: yDocument },
+      user: { memberId: asTeamMemberId('local'), name: 'You' },
+      onLexicalEditor: (value) => { editor = value; },
+      pageLinks: {
+        list: () => [
+          { id: 'P1', title: 'Q3 Plan', href: 'Q3%20Plan.md', linkTitle: 'id=P1' },
+          { id: 'P2', title: 'Personas', href: 'Personas.md', linkTitle: 'id=P2' },
+        ],
+        createPage: () => new Promise((resolve) => { finishCreate = resolve; }),
+      },
+    });
+    mountedHandles.push(handle);
+    await settle();
+    const type = async (text: string) => {
+      act(() => {
+        editor!.update(() => {
+          const paragraph = $createParagraphNode();
+          $getRoot().append(paragraph);
+          paragraph.select();
+        }, { discrete: true });
+      });
+      for (const ch of text) act(() => { editor!.update(() => (($getSelection() as RangeSelection)).insertText(ch), { discrete: true }); });
+      await settle();
+    };
+    const pick = async (label: string) => {
+      const option = await waitFor(() => {
+        const found = [...document.querySelectorAll('[role="option"]')].find((node) => node.textContent?.includes(label));
+        expect(found).toBeTruthy();
+        return found as HTMLElement;
+      });
+      fireEvent.click(option);
+      await settle();
+    };
+
+    await type('@q3');
+    await pick('Q3 Plan');
+    expect(handle.getMarkdown()).toContain('[Q3 Plan](Q3%20Plan.md "id=P1")');
+
+    await type('@Launch');
+    await pick('Create page “Launch”');
+    act(() => finishCreate({ id: 'P3', title: 'Launch', href: 'Launch.md', linkTitle: 'id=P3' }));
+    await settle();
+    expect(handle.getMarkdown()).toContain('[Launch](Launch.md "id=P3")');
+    expect(handle.getMarkdown()).not.toContain('nimbalyst://');
+  });
+
+  it('draws an embedded file link through the host, and writes the link back unchanged', async () => {
+    registerEmbeddableExtension('.excalidraw');
+    const source = 'Before\n\n[Diagram](Plan/Diagram.excalidraw "width=800 height=600")\n\nAfter\n';
+    const yDocument = new Y.Doc();
+    MarkdownCollabContentAdapter.seedFromFile(yDocument, source);
+    const element = document.createElement('div'); document.body.append(element);
+    const requests: unknown[] = [];
+    const handle = mountCollabEditor({
+      element,
+      source: { kind: 'in-memory', document: yDocument },
+      user: { memberId: asTeamMemberId('local'), name: 'You' },
+      renderFileEmbed: (embed) => {
+        requests.push(embed);
+        return <div data-testid="host-file-embed">{embed.label}</div>;
+      },
+    });
+    mountedHandles.push(handle);
+    await waitFor(() => expect(element.querySelector('[data-testid="host-file-embed"]')?.textContent).toBe('Diagram'));
+    expect(requests[0]).toEqual({ src: 'Plan/Diagram.excalidraw', label: 'Diagram', attrs: { width: '800', height: '600' } });
+    expect(String(MarkdownCollabContentAdapter.exportToFile(yDocument))).toContain('[Diagram](Plan/Diagram.excalidraw "width=800 height=600")');
+  });
+
   it('paints tracker and shared-document references written by a desktop client', async () => {
     // A desktop client's node set is wider than the bundle's. A Y.Doc holding
     // either reference node used to abort the whole binding with
@@ -351,6 +428,43 @@ describe('in-memory collaborative editor harness', () => {
     fireEvent.click(chip, { metaKey: true });
     expect(opened).toEqual([['d2', false], ['d2', true]]);
     stopOpener();
+  });
+
+  it('opens find in the document on Cmd+F and asks the host to save on Cmd+S, only when the host opts in', async () => {
+    const mount = (findInPage: boolean, onSaveRequest?: () => void) => {
+      const yDocument = new Y.Doc();
+      MarkdownCollabContentAdapter.seedFromFile(yDocument, 'Find marker');
+      const element = document.createElement('div'); document.body.append(element);
+      mountedHandles.push(mountCollabEditor({ element, source: { kind: 'in-memory', document: yDocument }, user: { memberId: asTeamMemberId('local'), name: 'You' }, findInPage, onSaveRequest }));
+      return element;
+    };
+    const saves = vi.fn();
+    const withFind = mount(true, saves);
+    const editable = await waitFor(() => {
+      const found = withFind.querySelector<HTMLElement>('[contenteditable="true"]');
+      expect(found).toBeTruthy();
+      return found!;
+    });
+    const find = new KeyboardEvent('keydown', { key: 'f', code: 'KeyF', metaKey: true, bubbles: true, cancelable: true });
+    act(() => { editable.dispatchEvent(find); });
+    expect(find.defaultPrevented).toBe(true);
+    await waitFor(() => expect(withFind.querySelector('[data-testid="search-input"]')).toBe(document.activeElement));
+
+    // The editor reads Cmd on Apple platforms and Ctrl elsewhere, as Lexical decides it.
+    const apple = /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+    act(() => { editable.dispatchEvent(new KeyboardEvent('keydown', { key: 's', code: 'KeyS', metaKey: apple, ctrlKey: !apple, bubbles: true, cancelable: true })); });
+    expect(saves).toHaveBeenCalledOnce();
+
+    const plain = mount(false);
+    const plainEditable = await waitFor(() => {
+      const found = plain.querySelector<HTMLElement>('[contenteditable="true"]');
+      expect(found).toBeTruthy();
+      return found!;
+    });
+    const browserFind = new KeyboardEvent('keydown', { key: 'f', code: 'KeyF', metaKey: true, bubbles: true, cancelable: true });
+    act(() => { plainEditable.dispatchEvent(browserFind); });
+    expect(browserFind.defaultPrevented).toBe(false);
+    expect(plain.querySelector('[data-testid="search-input"]')).toBeNull();
   });
 
   it('carries no formatting toolbar and applies the browser-host chrome', async () => {

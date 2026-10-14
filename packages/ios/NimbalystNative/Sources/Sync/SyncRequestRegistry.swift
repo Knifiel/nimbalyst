@@ -24,14 +24,21 @@ public struct SyncError: Identifiable {
     public let id: UUID
     public let kind: Kind
     public let message: String
+    /// Short stable identifier for analytics (e.g. `payloadIncomplete`); never prose.
+    public let code: String?
+    /// Technical cause for "Copy diagnostics"; never shown in the banner.
+    public let detail: String?
     public let retry: (@MainActor () -> Void)?
 
     /// `id` is carried explicitly so `SyncErrorCoalescer` can update a banner in
     /// place. A fresh id means a new interruption and a new animation.
-    public init(id: UUID = UUID(), kind: Kind, message: String, retry: (@MainActor () -> Void)? = nil) {
+    public init(id: UUID = UUID(), kind: Kind, message: String, code: String? = nil, detail: String? = nil,
+                retry: (@MainActor () -> Void)? = nil) {
         self.id = id
         self.kind = kind
         self.message = message
+        self.code = code
+        self.detail = detail
         self.retry = retry
     }
 }
@@ -364,7 +371,8 @@ struct SyncErrorCoalescer {
         if message == current.message, (retry == nil) == (current.retry == nil) {
             return nil
         }
-        let merged = SyncError(id: current.id, kind: current.kind, message: message, retry: retry)
+        let merged = SyncError(id: current.id, kind: current.kind, message: message,
+                               code: incoming.code, detail: incoming.detail, retry: retry)
         self.current = merged
         return merged
     }

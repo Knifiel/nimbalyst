@@ -15,6 +15,7 @@ packages:
   - packages/markdown-ydoc
   - packages/local-wiki
   - packages/wiki-web
+  - packages/web-editors
   - packages/ios
   - packages/android
   - packages/extension-sdk
@@ -86,6 +87,9 @@ overrides:
   concurrently>shell-quote: ^1.8.4
   minimatch@^10.0.0: ^10.2.5
   dompurify: ^3.4.14
+  # GHSA-238p-pmpm-9mq7 (fixed in 0.18.2). mermaid 11, rehype-katex and
+  # micromark-extension-math still declare ^0.16; mermaid 12 moved to ^0.18.
+  katex: ^0.18.11
   lodash-es: ^4.18.1
   '@excalidraw/excalidraw>nanoid': ^3.3.18
   '@excalidraw/mermaid-to-excalidraw>nanoid': ^5.1.16

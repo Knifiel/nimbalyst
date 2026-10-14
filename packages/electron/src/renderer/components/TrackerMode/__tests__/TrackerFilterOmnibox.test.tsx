@@ -274,6 +274,35 @@ describe('TrackerFilterOmnibox', () => {
     expect(screen.queryByTestId('tracker-filter-omnibox-pill-0')).toBeNull();
   });
 
+  it('draws pills and tag chips inside the box and hands pill clicks to the host', () => {
+    const onPillClick = vi.fn();
+    render(
+      <TrackerFilterOmnibox
+        searchQuery=""
+        onSearchQueryChange={() => {}}
+        fields={FIELDS}
+        filters={{ combinator: 'and', clauses: [{ field: 'status', op: '=', value: 'open' }] }}
+        onFiltersChange={() => {}}
+        tagOptions={[]}
+        tagFilter={['ui']}
+        onTagFilterChange={() => {}}
+        inlinePills
+        onPillClick={onPillClick}
+      />
+    );
+
+    const pill = screen.getByTestId('tracker-filter-omnibox-pill-0');
+    expect(pill.closest('.tracker-filter-omnibox-box')).not.toBeNull();
+    expect(screen.getByTestId('tracker-filter-omnibox-tag-chip-ui').closest('.tracker-filter-omnibox-box')).not.toBeNull();
+    expect(screen.queryByTestId('tracker-filter-omnibox-pills')).toBeNull();
+
+    fireEvent.click(screen.getByTitle('Edit filters'));
+    expect(onPillClick).toHaveBeenCalledWith(0, { field: 'status', op: '=', value: 'open' });
+    // The pill stays put; the host opens its own filter editor.
+    expect(input().value).toBe('');
+    screen.getByTestId('tracker-filter-omnibox-pill-0');
+  });
+
   it('keeps `#` tag completion working, as the box it replaced did', async () => {
     const onTagFilterChange = vi.fn();
     const onSearchQueryChange = vi.fn();

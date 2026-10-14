@@ -11,10 +11,20 @@ import {
   type ConsoleLinkResult,
 } from './consoleLinkRouter';
 
+type FeedbackRequestOpener = (target: { orgId: string; requestId: string }) => Promise<boolean>;
+
+/** Set by the deep-link routing; until then a feedback link goes to the browser. */
+let feedbackRequestOpener: FeedbackRequestOpener | null = null;
+
+export function setConsoleFeedbackRequestOpener(opener: FeedbackRequestOpener): void {
+  feedbackRequestOpener = opener;
+}
+
 const router = createConsoleLinkRouter({
   openExternal: (url) => {
     void shell.openExternal(url);
   },
+  openFeedbackRequest: (target) => (feedbackRequestOpener ? feedbackRequestOpener(target) : Promise.resolve(false)),
 });
 
 export function registerConsoleLinkHandlers(): void {

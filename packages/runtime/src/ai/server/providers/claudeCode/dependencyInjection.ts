@@ -80,6 +80,10 @@ export const ClaudeCodeDeps = {
   // inheritance) before falling through to the global setting.
   customClaudeCodePathLoader: null as ((workspacePath: string) => string) | null,
 
+  // Whether to ask the SDK for next-prompt suggestions. Off when no host wires it.
+  // Re-read on each query so the settings toggle takes effect on the next turn.
+  promptSuggestionsEnabledLoader: null as (() => boolean) | null,
+
   // ---- Internal MCP server enablement ----
   // Ports, kill-switches, extension/tracker loaders, and the per-launch bearer
   // token now live in the shared `mcpServerConfig` registry (configured once
@@ -174,6 +178,10 @@ export const ClaudeCodeDeps = {
 
   setCustomClaudeCodePathLoader(loader: ((workspacePath: string) => string) | null): void {
     this.customClaudeCodePathLoader = loader;
+  },
+
+  setPromptSuggestionsEnabledLoader(loader: (() => boolean) | null): void {
+    this.promptSuggestionsEnabledLoader = loader;
   },
 
   setMCPConfigLoader(loader: McpConfigLoader | null): void {

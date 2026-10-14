@@ -8,6 +8,10 @@ import { localPageUri } from '../localWiki/tree.js';
 import { createItem, findItem, listItems, summarize, updateItem, wikiTypes, type WhereFilter } from '../localWiki/trackerItems.js';
 import { contractDefinition, localTool, requireStr, str, type Args, type LocalWikiContext } from './localTools.js';
 import type { McpTool } from './toolMap.js';
+import type { WikiIssue } from '@nimbalyst/local-wiki';
+import { usageError } from '../cli/exitCodes.js';
+
+export const CONVERT_TOOL_NAME = 'convertTypeStorage';
 
 const ITEM_REFS = { issueKeys: ['id'], refKeys: ['id'] };
 
@@ -19,6 +23,40 @@ function fieldPatch(args: Args): Record<string, unknown> {
   return patch;
 }
 
+/** Type-file problems an agent must fix (a reserved field name), on the type they belong to. */
+function problems(issues: WikiIssue[], sourcePath: string | undefined): { problems?: string[] } {
+  const mine = sourcePath ? issues.filter((issue) => issue.path === sourcePath).map((issue) => issue.message) : [];
+  return mine.length > 0 ? { problems: mine } : {};
+}
+
+/** Local-only: the team wiki has no table storage, so the shared contract has no conversion tool. */
+function convertTool(context: LocalWikiContext): McpTool {
+  return localTool(
+    {
+      name: CONVERT_TOOL_NAME,
+      description:
+        "Convert a table type (all items in one CSV) to page storage: one markdown page per item, in the CSV's folder, each with a body and room for child pages. " +
+        'Item ids and field values are kept; the CSV goes to the wiki trash and the type file changes to `storage: pages`. Only table-to-pages is supported.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          type: { type: 'string', description: 'The type id, as in tracker_list_types.' },
+          storage: { type: 'string', enum: ['pages'], description: "The storage to convert to. Only 'pages'." },
+        },
+        required: ['type', 'storage'],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    context,
+    async ({ wiki }, args) => {
+      const typeId = requireStr(args, 'type');
+      if (requireStr(args, 'storage') !== 'pages') throw usageError("Only conversion to 'pages' is supported; a page type is not turned back into a table.");
+      const result = await wiki.convertTableToPages(typeId);
+      return { type: typeId, storage: 'pages', converted: result.created };
+    },
+  );
+}
+
 export function trackerTools(context: LocalWikiContext): McpTool[] {
   return [
     localTool(
@@ -26,6 +64,7 @@ export function trackerTools(context: LocalWikiContext): McpTool[] {
       context,
       async ({ wiki }, args) => {
         const defs = new Map(wiki.typeDefs().map((def) => [def.typeId, def]));
+        const issues = (await wiki.snapshot()).issues.filter((issue) => issue.code === 'reserved-field');
         const search = str(args, 'search')?.toLowerCase();
         const types = [];
         for (const typeId of await wikiTypes(wiki)) {
@@ -39,6 +78,7 @@ export function trackerTools(context: LocalWikiContext): McpTool[] {
             fields: def?.fields ?? [],
             defined: Boolean(def),
             itemCount: snapshot.items.length,
+            ...problems(issues, def?.sourcePath),
           });
         }
         return { types };
@@ -114,5 +154,6 @@ export function trackerTools(context: LocalWikiContext): McpTool[] {
       },
       ITEM_REFS,
     ),
+    convertTool(context),
   ];
 }

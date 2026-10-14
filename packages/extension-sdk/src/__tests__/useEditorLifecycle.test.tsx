@@ -74,4 +74,31 @@ describe('useEditorLifecycle', () => {
     expect(applyContent).toHaveBeenCalledWith('<html>created later</html>');
     expect(result.current.error).toBeNull();
   });
+
+  it('writes nothing and stays dirty when the editor cannot produce its content', async () => {
+    const { host } = createHost(() => Promise.resolve('{"elements":[1]}'));
+    let requestSave: (() => void | Promise<void>) | undefined;
+    host.onSaveRequested = (callback) => {
+      requestSave = callback;
+      return () => {};
+    };
+
+    const { result } = renderHook(() =>
+      useEditorLifecycle(host, {
+        applyContent: vi.fn(),
+        getCurrentContent: () => {
+          throw new Error('Cannot save the drawing before the canvas is ready');
+        },
+      }),
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    act(() => result.current.markDirty());
+    await act(async () => {
+      await requestSave?.();
+    });
+
+    expect(host.saveContent).not.toHaveBeenCalled();
+    expect(result.current.isDirty).toBe(true);
+  });
 });

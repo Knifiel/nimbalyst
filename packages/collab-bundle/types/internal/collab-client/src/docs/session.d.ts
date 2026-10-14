@@ -303,6 +303,21 @@ export declare function findOtherProjectDocument(scopeKey: string, documentId: s
 } | null;
 export declare function getSharedFoldersForScopeKey(scopeKey: string): SharedFolder[];
 export declare function getFavoriteDocumentIdsForScopeKey(scopeKey: string): string[];
+/**
+ * True once the scope's index delivered its full list, so a page absent from
+ * `getLinkableSharedDocumentsForScopeKey` is absent rather than still loading.
+ */
+export declare const sharedIndexLoadedForScopeAtom: (scopeKey: string) => import("jotai").PrimitiveAtom<boolean> & {
+    init: boolean;
+};
+/**
+ * Why the scope's index cannot be reached, or null: repeated connections
+ * dropped before it arrived. Cleared when it does.
+ */
+export declare const sharedIndexUnavailableForScopeAtom: (scopeKey: string) => import("jotai").PrimitiveAtom<string | null> & {
+    init: string | null;
+};
+export declare function isSharedIndexLoadedForScopeKey(scopeKey: string): boolean;
 export declare function setCollabScopeAvailability(scopeKey: string, available: boolean): void;
 export declare function pruneCollabDocsSession(scopeKey: string): void;
 export {};

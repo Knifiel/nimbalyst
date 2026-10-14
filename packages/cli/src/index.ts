@@ -35,6 +35,9 @@ Team wiki (Nimbalyst Teams sign-in; server = NIM_SERVER, default https://sync.ni
   nim wiki status                           (unbound, bound, or ambiguous, with your teams)
   nim wiki bind --org <id> --project <id>   (team admins: connect this repo's remote)
   nim wiki create-project --org <id> --name <n> [--bind]   (team admins)
+  nim wiki team-create "<name>"              (a new team you administer; its first project is bound to this repo)
+  nim wiki invite --org <id> <email>... [--role member|admin] [--project <id> --project-role editor|viewer]   (team admins)
+  nim wiki invite-link --org <id> [--project <id>] [--role R] [--project-role R] [--expires-in SECONDS] [--max-uses N]
   nim wiki pin --org <id> --project <id>    (writes .nimbalyst/wiki.json; one of the projects this repo resolves to)
   nim wiki list                             (the page tree, with links)
   nim wiki read <uri|link>
@@ -119,7 +122,11 @@ Local wiki (a folder of markdown pages in this project):
                                              (body from --file or stdin; exit 7 if the page changed since V)
   nim wiki move <page> [--parent P | --root | --before P | --after P] [--title T]
   nim wiki search <words> [--limit N] [--json]
+  nim wiki convert-type <type> --to pages    (a table type becomes one page per row; ids and fields kept)
   nim wiki serve [--port N] [--no-open]      (opens the wiki in your browser to read and edit; loopback only)
+  nim wiki move-to-team [--org <id> --project <id>] [--dry-run]
+                                             (the whole wiki into this repo's team project; needs nim login;
+                                              local files are kept, re-running resumes)
   nim tracker list/get/show/create/update   use the local wiki for wiki types (storage: pages|table
                                              in the type's YAML) and items already there; --local forces it
   --location overrides the folder.

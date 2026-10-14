@@ -21,6 +21,10 @@ export function createProjectConfigSync(deps: ProjectConfigSyncDependencies) {
   const pending = new Map<string, { again: boolean; promise: Promise<void> }>();
   const subscriptions = new Map<string, { active: boolean; unsubscribe?: () => void }>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Startup, every reconnect and every phone join republish each project. A
+  // fresh timestamp made each one a changed row for the server (about 14
+  // billed rows), so a slice keeps its time until its content changes.
+  const stamps = new Map<string, { commands: string; commandsAt: number; actions: string; actionsAt: number }>();
   let generation = 0;
   let observedProvider: SyncProvider | null = null;
   let unsubscribeReconnect: (() => void) | undefined;
@@ -31,6 +35,7 @@ export function createProjectConfigSync(deps: ProjectConfigSyncDependencies) {
     clearTimeout(timers.get(path));
     timers.delete(path);
     pending.delete(path);
+    stamps.delete(path);
   }
 
   function watch(path: string): void {
@@ -76,6 +81,15 @@ export function createProjectConfigSync(deps: ProjectConfigSyncDependencies) {
     slices.lastActionsUpdate = Date.now();
   }
 
+  function keepUnchangedStamps(path: string, slices: ProjectConfigSlices): void {
+    const previous = stamps.get(path);
+    const commands = JSON.stringify(slices.commands);
+    const actions = JSON.stringify(slices.actions);
+    if (previous?.commands === commands) slices.lastCommandsUpdate = previous.commandsAt;
+    if (previous?.actions === actions) slices.lastActionsUpdate = previous.actionsAt;
+    stamps.set(path, { commands, commandsAt: slices.lastCommandsUpdate, actions, actionsAt: slices.lastActionsUpdate });
+  }
+
   function publish(path: string): Promise<void> {
     const provider = deps.getProvider();
     const started = generation;
@@ -92,6 +106,7 @@ export function createProjectConfigSync(deps: ProjectConfigSyncDependencies) {
       const actions = await deps.discoverActions(path);
       const slices: ProjectConfigSlices = { commands: manifests(commands), lastCommandsUpdate: Date.now(), actions: [], lastActionsUpdate: 0 };
       setActions(path, slices, actions);
+      keepUnchangedStamps(path, slices);
       const localWiki = await deps.discoverLocalWiki?.(path);
       const gitRemoteHash = await deps.getGitRemoteHash(path);
       if (!current()) return;

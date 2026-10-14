@@ -408,9 +408,12 @@ private struct IndexIngestionConsumer: Sendable {
             metrics.deletes = result.outcome.deletes
             metrics.batches = result.batches
             metrics.transactionMs = result.outcome.transactionMs
-            logger.info("Index page applied (\(request.mode.rawValue)): \(metrics.summaryLine) stale=\(result.outcome.staleRejected) retained=\(result.outcome.retainedTombstones)")
+            // Per page is debug: a first sync applies dozens of pages.
+            logger.debug("Index page applied (\(request.mode.rawValue)): \(metrics.summaryLine) stale=\(result.outcome.staleRejected) retained=\(result.outcome.retainedTombstones)")
             let skippedRowCount = try await database.readOnDatabaseQueue { try store.skippedRowCount($0) }
-            logger.info("Index unreadable rows skipped: \(skippedRowCount)")
+            if page.complete || skippedRowCount > 0 {
+                logger.info("Index page applied (\(request.mode.rawValue), complete=\(page.complete)); unreadable rows skipped: \(skippedRowCount)")
+            }
             return outcome(.applied(
                 nextPageToken: page.nextPageToken,
                 complete: page.complete,

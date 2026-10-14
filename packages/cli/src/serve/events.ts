@@ -53,7 +53,9 @@ export class ChangeStream {
 
   private broadcast(change: LocalWikiChange): void {
     this.seq += 1;
-    const frame = `id: ${this.seq}\nevent: change\ndata: ${JSON.stringify(change)}\n\n`;
+    let frame = `id: ${this.seq}\nevent: change\ndata: ${JSON.stringify(change)}\n\n`;
+    // Its own event, so a tab refetches /api/types and redraws type tables and pages.
+    if (change.typesChanged) frame += `event: types\ndata: {}\n\n`;
     for (const client of this.clients) client.write(frame);
   }
 

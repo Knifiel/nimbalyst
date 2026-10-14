@@ -1,10 +1,12 @@
 ---
-description: Deploy the collab server and/or web console, whichever changed since its last deploy
-argument-hint: "[collabv3|web-console] [--check]"
+description: Deploy the collab server, web console and/or metrics console, whichever changed since its last deploy
+argument-hint: "[collabv3|web-console|collabv3-metrics] [--check]"
 allowed-tools: Bash, Read, Edit, mcp__nimbalyst__AskUserQuestion
 ---
 
-Deploy `collabv3` (sync.nimbalyst.com) and/or `web-console` to production, but only the ones whose deployed artifact has changed since its last `<pkg>-vX.Y.Z` tag. Both live in the sibling `nimbalyst-collab` repo, and both are built partly from this repo through `link:` dependencies, so a change here can require a deploy there.
+Deploy `collabv3` (sync.nimbalyst.com), `web-console` and/or `collabv3-metrics` (the internal operations console at nimbalyst-collabv3-metrics.pages.dev) to production, but only the ones whose deployed artifact has changed since its last `<pkg>-vX.Y.Z` tag. All three live in the sibling `nimbalyst-collab` repo. collabv3 and web-console are built partly from this repo through `link:` dependencies, so a change here can require a deploy there. collabv3-metrics is built only from its own package.
+
+This is one step of [/ship](./ship.md), which also covers npm, the wiki plugin and the extension marketplace.
 
 Arguments: `$ARGUMENTS`. A package name limits the run to that package. `--check` reports what changed and stops without deploying.
 
@@ -16,7 +18,7 @@ Run every command below from the `nimbalyst-collab` root (`../nimbalyst-collab` 
 node scripts/deploy-changes.mjs [<pkg>]
 ```
 
-For each package it diffs the files that actually reach the artifact (collabv3: wrangler's esbuild inputs; web-console: its own sources plus the stravu-editor modules in collab-bundle's bundle report and the linked extension repos) against the last deploy tag, in every repo involved. It lists the commits and any uncommitted watched files.
+For each package it diffs the files that actually reach the artifact (collabv3: wrangler's esbuild inputs; web-console: its own sources plus the stravu-editor modules in collab-bundle's bundle report and the linked extension repos; collabv3-metrics: its own package) against the last deploy tag, in every repo involved. It lists the commits and any uncommitted watched files.
 
 Show the user the report. If nothing changed, say so and stop. With `--check`, stop here.
 
@@ -28,12 +30,12 @@ If a package to deploy has any `UNCOMMITTED` files in any repo, do not deploy it
 
 ## 3. Deploy, collabv3 first
 
-When both changed, finish collabv3 completely before starting web-console, since the console can depend on new server endpoints. For each package:
+When several changed, finish collabv3 completely before starting web-console or collabv3-metrics, since both can depend on new server endpoints and metrics reads collabv3's D1 schema. For each package:
 
 1. **Changelog.** Read `packages/<pkg>/CHANGELOG.md`. Every user-visible or operational change in the reported commits, from any repo, needs a bullet under `## [Unreleased]` (create it if absent; group under Added / Changed / Fixed / Removed / Security). Most stravu-editor commits will not have one yet. Skip commits with no effect on this artifact (refactors, desktop-only behavior that happens to touch a shared file). Follow the existing voice in that file. If no reported commit has an effect, tell the user and ask whether to deploy anyway.
-2. **Verify.** collabv3: `pnpm --dir packages/collabv3 run typecheck && pnpm --dir packages/collabv3 test`. web-console: the deploy builds and typechecks it. Stop on failure.
-3. **Deploy.** `./scripts/deploy.sh <pkg> patch`. If it reports pending D1 migrations, show the list and ask before re-running with `--migrate`. If the migration-state read fails with Cloudflare 7403, retry it once before believing it; it has been transient.
-4. **Confirm it landed.** collabv3: `curl -s https://sync.nimbalyst.com/health` must report the new version. web-console: fetch the deployment URL wrangler printed and expect 200. Say so if a check does not match.
+2. **Verify.** collabv3: `pnpm --dir packages/collabv3 run typecheck && pnpm --dir packages/collabv3 test`. web-console: the deploy builds and typechecks it. collabv3-metrics: `pnpm --dir packages/collabv3-metrics test`; the deploy builds and typechecks it. Stop on failure.
+3. **Deploy.** `./scripts/deploy.sh <pkg> patch`. If it reports pending D1 migrations, show the list and ask before re-running with `--migrate`. collabv3-metrics cannot apply migrations; if it reports pending ones, deploy collabv3 with `--migrate` first. If the migration-state read fails with Cloudflare 7403, retry it once before believing it; it has been transient.
+4. **Confirm it landed.** collabv3: `curl -s https://sync.nimbalyst.com/health` must report the new version. web-console: fetch the deployment URL wrangler printed and expect 200. collabv3-metrics: it is behind Cloudflare Access, so the deployment URL answers 302 to the Access login; anything else means it did not land. Say so if a check does not match.
 5. **Tag.** Retitle `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, then run the commit and `git tag -a ... -F ...` commands deploy.sh printed. The tag message records the linked-repo commits, which is the next run's baseline.
 
 Do not push unless the user asks.

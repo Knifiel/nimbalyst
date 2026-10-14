@@ -13,7 +13,7 @@ let capturedEnv: Record<string, string | undefined> | undefined;
 let capturedOptions: { unsafe?: Record<string, boolean> } | undefined;
 
 vi.mock('simple-git', () => ({
-  default: vi.fn((_baseDir: string, options?: { unsafe?: Record<string, boolean> }) => {
+  simpleGit: vi.fn((_baseDir: string, options?: { unsafe?: Record<string, boolean> }) => {
     capturedOptions = options;
     const git = {
       status: () => statusImpl(),

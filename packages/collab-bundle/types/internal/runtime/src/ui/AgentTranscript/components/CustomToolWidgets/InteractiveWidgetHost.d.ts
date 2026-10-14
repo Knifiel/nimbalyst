@@ -260,6 +260,13 @@ export interface InteractiveWidgetHost {
      * Used by the widget to let users disable auto-commit after a successful commit.
      */
     setAutoCommitEnabled(enabled: boolean): void;
+    /** Whether sessions resume on their own once a Claude usage limit resets. Optional: desktop only. */
+    usageLimitAutoResumeEnabled?: boolean;
+    /**
+     * The usage-limit card's switch. Enabling also schedules this session's
+     * resume for `resetsAtMs`; disabling cancels every pending resume.
+     */
+    setUsageLimitAutoResume?(enabled: boolean, resetsAtMs: number | null): Promise<void>;
     /**
      * Submit user feedback for a blocked Super Loop iteration.
      * Sends the feedback to the same session, waits for Claude to process it,

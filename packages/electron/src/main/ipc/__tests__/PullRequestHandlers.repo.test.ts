@@ -31,7 +31,7 @@ vi.mock('../../utils/ipcRegistry', () => ({
   safeHandle: (name: string, fn: (...args: any[]) => Promise<any>) => mocks.handlers.set(name, fn),
   safeOn: vi.fn(),
 }));
-vi.mock('simple-git', () => ({ default: (dir: string) => { mocks.simpleGit(dir); return mocks.git; } }));
+vi.mock('simple-git', () => ({ simpleGit: (dir: string) => { mocks.simpleGit(dir); return mocks.git; } }));
 vi.mock('../../services/GhCliDetector', () => ({ ghCliDetector: {} }));
 vi.mock('../../services/prPermissions', () => ({ computePrPermissions: vi.fn() }));
 vi.mock('../../services/GitStatusService', () => ({

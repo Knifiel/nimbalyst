@@ -18,6 +18,7 @@ import path from 'path';
 import { getHostEnvironment } from '../../../../host/hostEnvironment';
 import { ClaudeCodeDeps } from './dependencyInjection';
 import { CLAUDE_TASK_TOOLS, createClaudeSystemPrompt } from './sdkCompatibility';
+import { wantsPromptSuggestion } from './promptSuggestionWait';
 import { resolveClaudeAgentCliPath } from './cliPathResolver';
 import { hasEnterpriseManagedMcpConfig } from './enterpriseMcpConfig';
 import { canDisableClaudeThinking } from '../../../modelConstants';
@@ -271,6 +272,11 @@ export async function buildSdkOptions(
     // Meta-agent tool availability is restricted by its profile in turnPrologue.
     ...(!isMetaAgent && { allowedTools: [...CLAUDE_TASK_TOOLS] }),
     settingSources: explicitOnly ? [] : settingSources,
+    // Agent Features toggle, human-sent prompts only. The SDK then emits one `prompt_suggestion`
+    // frame after each turn's `result`; see promptSuggestionWait.ts for how it is read.
+    ...(wantsPromptSuggestion(ClaudeCodeDeps.promptSuggestionsEnabledLoader?.() === true, documentContext)
+      ? { promptSuggestions: true }
+      : {}),
     // Headless provisioned servers must not be merged with repository or user discovery.
     ...(explicitOnly && !mcpLockdown ? { strictMcpConfig: true } : {}),
     // NIM-1988: this is the provider-owned, first-build snapshot, not a live

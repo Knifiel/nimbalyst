@@ -4,9 +4,9 @@ import { getClaudePluginEnabled, getExtensionEnabled } from '../../utils/store';
 const WIKI_EXTENSION_ID = 'com.nimbalyst.knowledge';
 
 /**
- * Whether agents have the wiki skills: the extension is on (off by default)
- * and its Claude plugin has not been turned off (on by default).
+ * Whether agents have the wiki skills: the extension is on (on by default,
+ * matching its manifest) and its Claude plugin has not been turned off (on by default).
  */
 export function isWikiSkillAvailable(): boolean {
-  return getExtensionEnabled(WIKI_EXTENSION_ID, false) && (getClaudePluginEnabled(WIKI_EXTENSION_ID) ?? true);
+  return getExtensionEnabled(WIKI_EXTENSION_ID, true) && (getClaudePluginEnabled(WIKI_EXTENSION_ID) ?? true);
 }

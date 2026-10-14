@@ -23,11 +23,12 @@ export interface NewTypeDialogProps {
     } | null;
     /**
      * The host's write. Rejects with a message a person can read. `syncing` means
-     * it is written here but the team's server has not confirmed it yet.
+     * the team's server has not answered yet.
      */
     defineType: (schema: NewTypeSchema) => Promise<void | {
         status: 'syncing';
     }>;
+    /** Called once the type is written; not for `syncing`, which keeps the dialog open on its notice. */
     onCreated?: (typeId: string) => void;
     onClose: () => void;
 }

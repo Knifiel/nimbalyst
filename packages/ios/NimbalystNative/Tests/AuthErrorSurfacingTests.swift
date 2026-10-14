@@ -69,4 +69,13 @@ final class AuthErrorSurfacingTests: XCTestCase {
         XCTAssertNil(AuthManager.abandonedSessionMessage(elapsed: 599))
         XCTAssertNotNil(AuthManager.abandonedSessionMessage(elapsed: 600))
     }
+
+    /// Failures are counted at most once per four minutes, so a banner at the third
+    /// one left a user on a silent spinner for 10 minutes before offering sign-in.
+    func testFirstCountedRefreshFailureOffersSignInAndFifthSignsOut() {
+        XCTAssertEqual(RefreshFailurePolicy.action(forConsecutiveFailures: 0), .none)
+        XCTAssertEqual(RefreshFailurePolicy.action(forConsecutiveFailures: 1), .banner)
+        XCTAssertEqual(RefreshFailurePolicy.action(forConsecutiveFailures: 4), .banner)
+        XCTAssertEqual(RefreshFailurePolicy.action(forConsecutiveFailures: 5), .signOut)
+    }
 }

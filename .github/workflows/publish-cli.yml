@@ -109,9 +109,25 @@ jobs:
           node scripts/run-validation.mjs workspace-deps
           node scripts/run-validation.mjs bundle-build
 
+      # The browser view builds the mind map editor in, and that extension has
+      # its own (public) repo. scripts/build.mjs finds it under
+      # NIMBALYST_EXTENSION_CHECKOUTS. It has its own pnpm-workspace.yaml (which
+      # allows esbuild's build script), so its install never joins this repo's.
+      - name: Checkout the mind map extension
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          repository: nimbalyst/nimbalyst-mindmap
+          path: extension-checkouts/nimbalyst-mindmap
+
+      - name: Install the mind map extension
+        working-directory: extension-checkouts/nimbalyst-mindmap
+        run: pnpm install --frozen-lockfile
+
       # The wiki-web build ends with its size check (scripts/check-size.mjs), so
       # a build over budget fails here.
       - name: Build wiki-web
+        env:
+          NIMBALYST_EXTENSION_CHECKOUTS: ${{ github.workspace }}/extension-checkouts
         run: pnpm --filter @nimbalyst/wiki-web run build
 
       # `files` is ["dist"]: without dist/index.html, `nim wiki serve` finds the
@@ -132,6 +148,19 @@ jobs:
             echo "::error::dist/index.html missing from the wiki-web tarball"
             exit 1
           fi
+          # The editors, the document code nim mcp loads, and their licenses.
+          for slug in excalidraw mindmap csv-spreadsheet calc-sheets datamodellm mockuplm; do
+            if ! grep -q "^package/dist/extensions/$slug/.*/index.js$" "$WORK/files.txt"; then
+              echo "::error::the $slug editor is missing from the wiki-web tarball"
+              exit 1
+            fi
+          done
+          for file in dist/models/editor-models.mjs dist/THIRD_PARTY_LICENSES.md; do
+            if ! grep -qx "package/$file" "$WORK/files.txt"; then
+              echo "::error::$file missing from the wiki-web tarball"
+              exit 1
+            fi
+          done
           if grep -q '"workspace:' "$WORK/package.json"; then
             echo "::error::packed wiki-web package.json still contains a workspace: specifier"
             exit 1
@@ -348,9 +377,23 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: pnpm install --frozen-lockfile
 
+      # Same as the verify job: this runner rebuilds wiki-web, which needs the
+      # mind map extension's checkout.
+      - name: Checkout the mind map extension
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          repository: nimbalyst/nimbalyst-mindmap
+          path: extension-checkouts/nimbalyst-mindmap
+
+      - name: Install the mind map extension
+        working-directory: extension-checkouts/nimbalyst-mindmap
+        run: pnpm install --frozen-lockfile
+
       # `npm publish <tarball>` runs no lifecycle scripts, so the build that
       # `prepublishOnly` used to trigger happens here.
       - name: Build
+        env:
+          NIMBALYST_EXTENSION_CHECKOUTS: ${{ github.workspace }}/extension-checkouts
         run: |
           pnpm --filter @nimbalyst/tracker-core run build
           node scripts/run-validation.mjs workspace-deps

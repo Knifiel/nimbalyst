@@ -69,6 +69,7 @@ import { requestConfirmation } from '../../dialogs/requestConfirmation';
 import { reloadFromDisk, type ReloadOutcome } from './reloadFromDisk';
 import { resolveDiffResolutionSave } from './resolveDiffResolutionSave';
 import { resolveCustomEditorReview } from './resolveCustomEditorReview';
+import { localWikiUploadAssetFor } from '../../services/localWikiAttachments';
 import {
   decideLexicalDiffByBytes,
   decideLexicalDiffByRootNodes,
@@ -2484,6 +2485,8 @@ export const TabEditor: React.FC<TabEditorProps> = ({
     };
   }, [filePath, isEditorReady]);
 
+  const uploadLocalWikiAsset = useMemo(() => localWikiUploadAssetFor(workspaceId, filePath), [workspaceId, filePath]);
+
   // Image interaction callbacks
   const handleImageDoubleClick = useCallback(async (src: string, nodeKey: string) => {
     try {
@@ -3509,6 +3512,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
                     onToggleMarkdownMode: () => editorHost.toggleSourceMode?.(),
                     onImageDoubleClick: handleImageDoubleClick,
                     onImageDragStart: handleImageDragStart,
+                    onUploadAsset: uploadLocalWikiAsset,
                     showTreeView, // Debug tree view (dev mode)
                     showCitationSourcesLine: false, // listed in Page info
                     documentHeader: (

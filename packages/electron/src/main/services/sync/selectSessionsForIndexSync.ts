@@ -4,8 +4,21 @@ import { decideMissingSession } from './missingSessionPolicy';
 
 type ServerIndex = Awaited<ReturnType<NonNullable<SyncProvider['fetchIndex']>>>;
 
-/** Reconcile local sessions only: foreign unreadable rows never authorize deletes. */
-export function selectSessionsForIndexSync<T extends SessionIndexData>(allLocalSessions: T[], serverIndex: ServerIndex, now = Date.now()) {
+/**
+ * Reconcile local sessions only: foreign unreadable rows never authorize deletes.
+ *
+ * `isMidTurn` names sessions running on this desktop. Their rows go out live
+ * while the server holds the sort timestamp and message count steady, so the
+ * timestamp and count comparisons below would call them stale after every
+ * 10s pause and re-send the whole turn so far, each row a billed rewrite. The
+ * live path (and its outbox) owns those rows until the turn-end publish.
+ */
+export function selectSessionsForIndexSync<T extends SessionIndexData>(
+  allLocalSessions: T[],
+  serverIndex: ServerIndex,
+  now = Date.now(),
+  isMidTurn: (sessionId: string) => boolean = () => false,
+) {
   const tombstonedSessionIds = new Set(serverIndex.deletedSessionIds ?? []);
   const serverSessionMap = new Map(serverIndex.sessions.map(s => [s.sessionId, s]));
   const sessionsNeedingIndexUpdate: T[] = [];
@@ -45,11 +58,12 @@ export function selectSessionsForIndexSync<T extends SessionIndexData>(allLocalS
       const localUpdatedAt = localSession.updatedAt || 0;
       const serverMessageCount = serverSession.messageCount || 0;
       const localMessageCount = localSession.messageCount || 0;
+      const midTurn = isMidTurn(localSession.id);
 
-      if (localUpdatedAt > serverUpdatedAt) {
+      if (!midTurn && localUpdatedAt > serverUpdatedAt) {
         sessionsNeedingIndexUpdate.push(localSession);
         sessionsNeedingMessageSync.push(localSession.id);
-      } else if (localMessageCount > serverMessageCount) {
+      } else if (!midTurn && localMessageCount > serverMessageCount) {
         sessionsNeedingIndexUpdate.push(localSession);
         sessionsNeedingMessageSync.push(localSession.id);
       } else if (

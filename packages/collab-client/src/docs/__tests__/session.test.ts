@@ -20,7 +20,10 @@ import {
   findOtherProjectDocument,
   getCollabDocsSession,
   getSharedDocumentsForScopeKey,
+  isSharedIndexLoadedForScopeKey,
   pruneCollabDocsSession,
+  sharedIndexLoadedForScopeAtom,
+  sharedIndexUnavailableForScopeAtom,
   setDocUnreadAtom,
   sharedDocumentsAtom,
   sharedDocumentsForScopeAtom,
@@ -896,6 +899,56 @@ describe('CollabDocsSession project split', () => {
     harness.emitData({ type: 'snapshot', snapshot: { items: [], containers: [], primaryProjectId: 'project-a' } });
     expect(ids(harness.session.getDocuments())).toEqual(['a-page', 'legacy-page']);
     expect(findOtherProjectDocument(UNKNOWN_PROJECT_SCOPE.scopeKey, 'b-page')).toMatchObject({ projectId: 'project-b' });
+  });
+
+  it('says the index is loaded only once a snapshot is the full index, and forgets it with the session', async () => {
+    const harness = createHarness(PRIMARY_PROJECT_SCOPE, { documents: [], primaryProjectId: 'project-a' });
+    await harness.session.start();
+    const key = PRIMARY_PROJECT_SCOPE.scopeKey;
+    // A live upsert before the team room answers is not the index.
+    harness.emitData({ type: 'items-upserted', items: [inProject('a-live', 'project-a')] });
+    expect(isSharedIndexLoadedForScopeKey(key)).toBe(false);
+
+    harness.emitData({ type: 'snapshot', snapshot: { items: ORG_DOCUMENTS, containers: [], indexLoaded: true } });
+    expect(store.get(sharedIndexLoadedForScopeAtom(key))).toBe(true);
+    expect(store.get(sharedDocumentsForScopeAtom(key)).some((entry) => entry.documentId === 'b-page')).toBe(true);
+    // A later partial snapshot (a placement change) does not take it back.
+    harness.emitData({ type: 'snapshot', snapshot: { items: ORG_DOCUMENTS, containers: [] } });
+    expect(isSharedIndexLoadedForScopeKey(key)).toBe(true);
+
+    harness.session.dispose();
+    expect(isSharedIndexLoadedForScopeKey(key)).toBe(false);
+  });
+
+  it('needs the current connection\'s full index: a disconnect forgets it, and repeated failed reconnects say so', async () => {
+    const harness = createHarness(PRIMARY_PROJECT_SCOPE, { documents: [], primaryProjectId: 'project-a' });
+    await harness.session.start();
+    const key = PRIMARY_PROJECT_SCOPE.scopeKey;
+    harness.emitData({ type: 'status', status: 'connected' });
+    harness.emitData({ type: 'snapshot', snapshot: { items: ORG_DOCUMENTS, containers: [], indexLoaded: true } });
+    expect(isSharedIndexLoadedForScopeKey(key)).toBe(true);
+
+    // Offline: a page created meanwhile is missing from the held list, so it proves nothing.
+    harness.emitData({ type: 'status', status: 'disconnected' });
+    expect(isSharedIndexLoadedForScopeKey(key)).toBe(false);
+    // Rows already held still open.
+    expect(store.get(sharedDocumentsForScopeAtom(key)).some((entry) => entry.documentId === 'b-page')).toBe(true);
+
+    // One reconnect that drops before the reply is still "loading".
+    harness.emitData({ type: 'status', status: 'connecting' });
+    harness.emitData({ type: 'status', status: 'disconnected' });
+    expect(store.get(sharedIndexUnavailableForScopeAtom(key))).toBeNull();
+    harness.emitData({ type: 'status', status: 'connecting' });
+    harness.emitData({ type: 'status', status: 'syncing' });
+    harness.emitData({ type: 'status', status: 'disconnected' });
+    expect(store.get(sharedIndexUnavailableForScopeAtom(key))).toMatch(/could not be reached/);
+
+    // The reply on a later connection clears it.
+    harness.emitData({ type: 'status', status: 'connecting' });
+    harness.emitData({ type: 'status', status: 'connected' });
+    harness.emitData({ type: 'snapshot', snapshot: { items: ORG_DOCUMENTS, containers: [], indexLoaded: true } });
+    expect(isSharedIndexLoadedForScopeKey(key)).toBe(true);
+    expect(store.get(sharedIndexUnavailableForScopeAtom(key))).toBeNull();
   });
 
   it("refuses writes to another project's page, or under it, before they reach the data source", async () => {

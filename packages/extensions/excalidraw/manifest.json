@@ -1,14 +1,14 @@
 {
   "id": "com.nimbalyst.excalidraw",
   "name": "Excalidraw",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Excalidraw diagram editor with AI-assisted editing",
   "author": "Nimbalyst",
   "main": "dist/desktop.js",
   "styles": "dist/index.css",
   "apiVersion": "1.0.0",
   "marketplace": {
-    "changelog": "1.0.3: Shared drawings keep every edit.\n1.0.2: Share selected diagram elements with AI, with improved Mermaid imports and arrow labels.\n1.0.1: Shared-document collaboration fixes, Mermaid image import fix, and more reliable AI edits to open diagrams.",
+    "changelog": "1.0.4: Open shared drawings in the web console, agents can edit shared drawings without opening a tab, and embedded drawings hide editor chrome until selected.\n1.0.3: Shared drawings keep every edit.\n1.0.2: Share selected diagram elements with AI, with improved Mermaid imports and arrow labels.\n1.0.1: Shared-document collaboration fixes, Mermaid image import fix, and more reliable AI edits to open diagrams.",
     "categories": ["diagrams"],
     "tags": ["excalidraw", "diagram", "flowchart", "architecture", "drawing", "whiteboard"],
     "icon": "brush",

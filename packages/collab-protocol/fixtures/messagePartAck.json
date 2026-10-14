@@ -1,0 +1,5 @@
+{
+  "type": "messagePartAck",
+  "transferId": "0123456789abcdef0123456789abcdef",
+  "index": 0
+}

@@ -7,7 +7,14 @@
  * supplies exactly one copy of each (`dedupe`). Its heavy renderers (mermaid
  * and its diagram engines, katex, the prettier parsers) are already dynamic
  * imports there and stay separate chunks here, fetched only when a page needs
- * them. No extension editors, Monaco, sign-in or analytics are imported.
+ * them. No sign-in or analytics are imported.
+ *
+ * Extension editors (drawing, mind map, spreadsheet, calc sheet, data model,
+ * mockup) are pinned through `@nimbalyst/web-editors`, as in the web console:
+ * each is its own lazy entry at `/extensions/<slug>/<version>/index.js`,
+ * fetched the first time a page of its type opens. `scripts/build.mjs` builds
+ * them in production mode first; their `@nimbalyst/runtime` imports resolve to
+ * the browser bridge (`src/editors/wikiRuntimeBridge.tsx`).
  *
  * Tailwind runs here: the bundle's components are authored against Tailwind
  * utilities plus `--nim-*` tokens, and the bundle's own CSS carries neither.
@@ -18,11 +25,23 @@ import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import autoprefixer from 'autoprefixer';
 import tailwindcss from 'tailwindcss';
-import { defineConfig } from 'vite';
+import { defineConfig, parseAst } from 'vite';
+import { PINNED_EXTENSIONS } from '@nimbalyst/web-editors/pinned';
+import {
+  pinnedExtensionBuildInputs,
+  pinnedExtensionBundleEntries,
+  pinnedExtensionDefines,
+  pinnedExtensionEntryFileNames,
+  resolvePinnedExtensionBundle,
+  webEditorsSourceDir,
+} from '@nimbalyst/web-editors/vite';
+import { WIKI_EDITOR_SLUGS } from './scripts/wikiEditorPins.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const runtimeSource = path.resolve(here, '../runtime/src');
 const collabBundleDist = path.resolve(here, '../collab-bundle/dist');
+const wikiRuntimeBridge = path.join(here, 'src/editors/wikiRuntimeBridge.tsx');
+const resolvePath = (specifier: string) => fileURLToPath(import.meta.resolve(specifier));
 
 const hostSingletons = [
   'react',
@@ -137,17 +156,29 @@ const tailwindConfig = {
   },
 };
 
-export default defineConfig({
+export default defineConfig(({ command, mode }) => {
+  const editorBundles = PINNED_EXTENSIONS
+    .filter((pin) => WIKI_EDITOR_SLUGS.includes(pin.slug))
+    .map((pin) => resolvePinnedExtensionBundle({ command, mode, pin, resolveFrom: here, label: 'wiki-web' }));
+  return {
   root: here,
   base: '/',
-  plugins: [react()],
+  plugins: [react(), pinnedExtensionBundleEntries(editorBundles, { parseAst })],
+  define: pinnedExtensionDefines(editorBundles),
   resolve: {
     dedupe: hostSingletons,
     alias: [
-      // Theme palettes only: a pure module of two color tables, no registry.
+      // Theme palettes, the Monaco editor for calc sheets, and what the runtime bridge re-exports.
       { find: /^@nimbalyst\/runtime-source\//, replacement: `${runtimeSource}/` },
+      // Extension bundles externalize these; resolve them to the host's one copy.
+      { find: /^@revolist\/react-datagrid$/, replacement: resolvePath('@revolist/react-datagrid') },
+      { find: /^@revolist\/revogrid$/, replacement: resolvePath('@revolist/revogrid') },
+      // The collab bundle owns a compiled copy of the comment UI; a second copy would split its registries.
+      { find: '@nimbalyst/runtime/editor/commenting/ui', replacement: resolvePath('@nimbalyst/collab-bundle/commenting-ui') },
+      { find: /^@nimbalyst\/runtime$/, replacement: wikiRuntimeBridge },
     ],
   },
+  server: { fs: { allow: [here, runtimeSource, webEditorsSourceDir, collabBundleDist, ...editorBundles.map((bundle) => path.dirname(bundle.entryPath))] } },
   // RevoGrid self-registers <revo-grid>; pre-bundling can split it across two
   // module ids and render the grid blank (dev server only).
   optimizeDeps: { exclude: ['@revolist/react-datagrid', '@revolist/revogrid', '@nimbalyst/collab-bundle'] },
@@ -160,5 +191,18 @@ export default defineConfig({
     target: 'es2022',
     // The editor chunk is large by nature; the size budget lives in scripts/check-size.mjs.
     chunkSizeWarningLimit: 4000,
+    // Merged with the editors' own dependencies into THIRD_PARTY_LICENSES.md by scripts/build.mjs.
+    license: true,
+    rollupOptions: {
+      // Each pinned editor entry is `export * from <bundle>`; with the default
+      // (`false`) its re-exports are tree-shaken away. See the web console's config.
+      preserveEntrySignatures: 'exports-only',
+      input: {
+        app: path.join(here, 'index.html'),
+        ...pinnedExtensionBuildInputs(editorBundles),
+      },
+      output: { entryFileNames: pinnedExtensionEntryFileNames(editorBundles) },
+    },
   },
+  };
 });

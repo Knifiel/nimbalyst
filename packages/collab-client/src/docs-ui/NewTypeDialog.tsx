@@ -6,7 +6,7 @@
  * the page it was opened from, so it shows up and Set type can use it.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import type { CollabTypeTreeResolver } from '../docs/collabTree';
@@ -31,9 +31,10 @@ export interface NewTypeDialogProps {
   parent?: { id: string; kind: SharedParentKind } | null;
   /**
    * The host's write. Rejects with a message a person can read. `syncing` means
-   * it is written here but the team's server has not confirmed it yet.
+   * the team's server has not answered yet.
    */
   defineType: (schema: NewTypeSchema) => Promise<void | { status: 'syncing' }>;
+  /** Called once the type is written; not for `syncing`, which keeps the dialog open on its notice. */
   onCreated?: (typeId: string) => void;
   onClose: () => void;
 }
@@ -75,13 +76,24 @@ export function NewTypeDialog({ lane, resolver, session, parent, defineType, onC
   const types = useMemo(() => resolver.listedTypes?.() ?? [], [resolver]);
   const singularName = singularEdited ?? singularOf(pluralName);
 
+  // Cancel and Escape work while a write is pending: a team server that never
+  // answers must not trap the person in the dialog. The write itself carries
+  // on; once closed, nothing it returns is acted on here -- no placement, no
+  // `onCreated`, which would navigate someone who already left.
+  const closedRef = useRef(false);
+  const close = useCallback(() => {
+    if (closedRef.current) return;
+    closedRef.current = true;
+    onClose();
+  }, [onClose]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !running) onClose();
+      if (event.key === 'Escape') close();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose, running]);
+  }, [close]);
 
   const updateField = (index: number, patch: Partial<NewTypeFieldDraft>) =>
     setFields((current) => current.map((field, i) => (i === index ? { ...field, ...patch } : field)));
@@ -99,16 +111,23 @@ export function NewTypeDialog({ lane, resolver, session, parent, defineType, onC
     try {
       const schema = buildNewTypeSchema(draft, lane);
       const written = await defineType(schema);
+      if (closedRef.current) return;
       const placed = await session.placeType(schema.type, parent?.id ?? null, parent?.kind);
+      if (closedRef.current) return;
       // The type exists either way; a failed placement only leaves it unplaced.
       if (!placed.ok) setErrors([`The type was created but could not be added to the tree: ${placed.error}`]);
-      onCreated?.(schema.type);
       if (written && written.status === 'syncing') {
-        setSyncingNotice(`${draft.pluralName.trim()} is saved on this computer and still syncing to the team. Teammates see it once the team's server confirms it.`);
+        // Both hosts land here: desktop has written the YAML, the console holds
+        // the definition until its next connection. Neither has a server answer,
+        // so `onCreated` is not called: a host that opens the new type would
+        // close this notice and land on a type the team does not have yet.
+        setSyncingNotice(`${draft.pluralName.trim()} is still syncing to the team. Teammates see it once the team's server confirms it.`);
         return;
       }
-      if (placed.ok) onClose();
+      onCreated?.(schema.type);
+      if (placed.ok) close();
     } catch (error) {
+      if (closedRef.current) return;
       setErrors([error instanceof Error ? error.message : String(error)]);
     } finally {
       setRunning(false);
@@ -118,7 +137,7 @@ export function NewTypeDialog({ lane, resolver, session, parent, defineType, onC
   return createPortal(
     <div
       className="new-type-dialog-overlay fixed inset-0 z-[100] flex items-center justify-center bg-black/40"
-      onClick={() => { if (!running) onClose(); }}
+      onClick={() => { if (!running) close(); }}
       data-testid="new-type-dialog"
     >
       <div
@@ -266,9 +285,8 @@ export function NewTypeDialog({ lane, resolver, session, parent, defineType, onC
         <div className="px-4 py-2 border-t border-nim flex items-center justify-end gap-2">
           <button
             type="button"
-            disabled={running}
-            className="px-3 py-1.5 rounded-md text-xs text-nim-muted hover:text-nim hover:bg-nim-hover disabled:opacity-50"
-            onClick={onClose}
+            className="px-3 py-1.5 rounded-md text-xs text-nim-muted hover:text-nim hover:bg-nim-hover"
+            onClick={close}
           >
             Cancel
           </button>
@@ -276,7 +294,7 @@ export function NewTypeDialog({ lane, resolver, session, parent, defineType, onC
             type="button"
             disabled={running}
             className="new-type-create px-3 py-1.5 rounded-md text-xs font-medium bg-[var(--nim-primary)] text-white disabled:opacity-50"
-            onClick={() => { if (syncingNotice) onClose(); else void create(); }}
+            onClick={() => { if (syncingNotice) close(); else void create(); }}
             data-testid="new-type-create"
           >
             {running ? 'Creating...' : syncingNotice ? 'Close' : 'Create type'}

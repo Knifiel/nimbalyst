@@ -169,6 +169,30 @@
   min-width: 0;
 }
 
+.tracker-grid-cell-title-link {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tracker-grid-cell-title-link:hover,
+.tracker-grid-cell-title-link:focus-visible {
+  color: var(--nim-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  outline: none;
+}
+
 .tracker-grid-cell-favorite {
   display: inline-flex;
   align-items: center;

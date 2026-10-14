@@ -6,7 +6,7 @@ import * as fsSync from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { promisify } from 'util';
-import { simpleGit } from 'simple-git';
+import { createGit } from './gitClient';
 import {AnalyticsService} from "./analytics/AnalyticsService.ts";
 import { getAppSetting } from '../utils/store';
 import { findExecutableInWindowsPath } from './WindowsPathResolver';
@@ -294,7 +294,7 @@ export class CLIManager {
 
   async checkGitInstallation(): Promise<{ gitInstalled: boolean; gitVersion?: string }> {
     try {
-      const gitVersion = await simpleGit().version();
+      const gitVersion = await createGit().version();
       if (!gitVersion.installed) {
         return { gitInstalled: false };
       }

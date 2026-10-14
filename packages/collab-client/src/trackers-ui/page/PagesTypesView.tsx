@@ -28,6 +28,8 @@ export interface PagesTypesViewProps {
   onOpenType: (typeId: string, options: PagesOpenOptions) => void;
   /** The New type dialog; absent hides the button (no tracker writes here). */
   renderNewType?: (props: { onClose: () => void; onCreated: (typeId: string) => void }) => React.ReactNode;
+  /** Trailing controls for a type's row in the table view; absent adds no column. */
+  renderTypeActions?: (typeId: string) => React.ReactNode;
 }
 
 const VIEWS: ReadonlyArray<{ id: PagesTypesViewMode; label: string; icon: string }> = [
@@ -35,7 +37,7 @@ const VIEWS: ReadonlyArray<{ id: PagesTypesViewMode; label: string; icon: string
   { id: 'table', label: 'Table', icon: 'table_rows' },
 ];
 
-export function PagesTypesView({ lane, title, typePlacements, view, onViewChange, onOpenType, renderNewType }: PagesTypesViewProps): React.JSX.Element {
+export function PagesTypesView({ lane, title, typePlacements, view, onViewChange, onOpenType, renderNewType, renderTypeActions }: PagesTypesViewProps): React.JSX.Element {
   const records = useTrackerDataSelector((store) => store.records);
   const [registryRevision, setRegistryRevision] = useState(0);
   useEffect(() => globalRegistry.onChange(() => setRegistryRevision((value) => value + 1)), []);
@@ -103,7 +105,7 @@ export function PagesTypesView({ lane, title, typePlacements, view, onViewChange
             <OntologyTypeMap model={model} inspector={false} onOpenLabel={(typeId, options) => onOpenType(typeId, options ?? { newTab: false })} />
           </div>
         ) : (
-          <PagesTypesTable rows={rows} onOpenType={onOpenType} />
+          <PagesTypesTable rows={rows} onOpenType={onOpenType} renderTypeActions={renderTypeActions} />
         )}
       </div>
       {creating && renderNewType?.({
@@ -117,7 +119,11 @@ export function PagesTypesView({ lane, title, typePlacements, view, onViewChange
   );
 }
 
-function PagesTypesTable({ rows, onOpenType }: { rows: readonly PagesTypeTableRow[]; onOpenType: PagesTypesViewProps['onOpenType'] }) {
+function PagesTypesTable({ rows, onOpenType, renderTypeActions }: {
+  rows: readonly PagesTypeTableRow[];
+  onOpenType: PagesTypesViewProps['onOpenType'];
+  renderTypeActions?: PagesTypesViewProps['renderTypeActions'];
+}) {
   const cell = 'px-2 py-2 align-top';
   return (
     <table className="pages-types-table w-full table-fixed border-collapse text-[13px] select-text">
@@ -129,6 +135,7 @@ function PagesTypesTable({ rows, onOpenType }: { rows: readonly PagesTypeTableRo
           <th className="w-[80px] px-2 py-1.5 text-right font-medium">Fields</th>
           <th className="w-[90px] px-2 py-1.5 text-right font-medium">Relations</th>
           <th className="w-[80px] py-1.5 pl-2 pr-4 font-medium">In tree</th>
+          {renderTypeActions && <th className="w-[150px] py-1.5 pl-2 pr-4" aria-label="Actions" />}
         </tr>
       </thead>
       <tbody>
@@ -155,6 +162,12 @@ function PagesTypesTable({ rows, onOpenType }: { rows: readonly PagesTypeTableRo
               <td className={`${cell} text-right tabular-nums text-nim-muted`}>{row.fields}</td>
               <td className={`${cell} text-right tabular-nums text-nim-muted`}>{row.relations}</td>
               <td className={`${cell} pr-4 text-nim-muted`}>{row.placed ? 'Yes' : ''}</td>
+              {renderTypeActions && (
+                // A control in the row must not also open the type.
+                <td className={`${cell} pr-4 text-right`} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+                  {renderTypeActions(row.id)}
+                </td>
+              )}
             </tr>
           );
         })}

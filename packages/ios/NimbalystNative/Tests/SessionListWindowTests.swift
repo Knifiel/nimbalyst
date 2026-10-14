@@ -763,4 +763,24 @@ final class SessionListWindowTests: XCTestCase {
                            "a recursive step scans the project:\n\(lines.joined(separator: "\n"))")
         }
     }
+
+    /// SQLite 3.51 and older reject a WITH inside a subquery whose body names the outer
+    /// row ("no such column: b.worktreeId"), which left an iPhone's session list empty.
+    /// The macOS test host runs a newer SQLite that accepts it, so check the shape.
+    func testSessionListStatementsOpenNoCTEInsideASubquery() {
+        var statements = [
+            "children": SessionListSQL.childrenQuery(),
+            "memberIds": SessionListSQL.memberIdsQuery,
+            "memberInsert": SessionListProjection.memberInsert(restriction: "1 = 1"),
+            "groupInsert": SessionListProjection.groupInsert(restriction: "1 = 1"),
+        ]
+        for source in [SessionListSQL.KeySource.recent, .attention, .session, .explicit] {
+            for keyset in [false, true] {
+                statements["group \(source) keyset=\(keyset)"] = SessionListSQL.groupQuery(source: source, keyset: keyset)
+            }
+        }
+        for (name, sql) in statements {
+            XCTAssertNil(sql.range(of: #"\(\s*WITH\b"#, options: [.regularExpression, .caseInsensitive]), name)
+        }
+    }
 }

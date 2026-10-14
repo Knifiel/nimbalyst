@@ -120,3 +120,23 @@ describe('marketplace-status helpers', () => {
       ]);
   });
 });
+
+describe('marketplace Worker deploy record', () => {
+  it('reports the commit deploy.sh injects, which worker-status diffs from', async () => {
+    const { default: worker } = await import('../src/index');
+    const env = { VERSION: '0.1.1', GIT_COMMIT: 'a'.repeat(40) } as unknown as Parameters<typeof worker.fetch>[1];
+    const body = await (await worker.fetch(new Request('https://extensions.nimbalyst.com/health'), env)).json();
+    expect(body).toMatchObject({ version: '0.1.1', commit: 'a'.repeat(40) });
+  });
+
+  it('deploys only when the Worker sources moved past the live commit', async () => {
+    const { decide } = await import(path.resolve(__dirname, '../scripts/worker-status.mjs'));
+    const health = { version: '0.1.1', commit: 'abc' };
+    const baseline = { sha: 'abc', how: '/health commit' };
+    expect(decide({ health, baseline, commits: [], uncommitted: [] }).status).toBe('up to date');
+    expect(decide({ health, baseline, commits: ['def feat'], uncommitted: [] }).status).toBe('deploy');
+    expect(decide({ health, baseline, commits: [], uncommitted: [' M src/index.ts'] }).status).toBe('deploy');
+    expect(decide({ health, baseline: null, commits: [], uncommitted: [] }).status).toBe('deploy');
+    expect(decide({ health: null, baseline: null, commits: [], uncommitted: [] }).status).toBe('UNREACHABLE');
+  });
+});

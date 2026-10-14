@@ -21,7 +21,7 @@ import {
   updateSplashMigrationProgress,
 } from '../window/SplashScreen';
 import { buildSplashView } from '../window/migrationProgressView';
-import { emitMigrationOutcome } from './sqlite/migrationEventMapper';
+import { emitMigrationOutcome, emitRolloutDecision } from './sqlite/migrationEventMapper';
 import { readCutoverJournal } from './sqlite/cutoverJournal';
 import { abortRequiresRelaunch } from './sqlite/cutoverMachine';
 import { withDatabaseOperationLock } from './databaseOperationLock';
@@ -113,12 +113,10 @@ async function forcedMigration(args: {
     buildChannel: getReleaseChannel(),
     orchestrator,
     relaunch,
-    // `onDecision` is intentionally not wired yet. The exposure decision is a
-    // bounded, typed `RolloutDecision`; turning one into an analytics event is
-    // `migrationEventMapper.ts`'s job, and it is the only module allowed to
-    // name an event. Until the mapper grows a rollout-decision emitter, this
-    // launch computes and logs its decision locally and transmits nothing --
-    // which is correct while automatic migration is still disabled.
+    // The exposure decision, once per install per `configVersion`. The ramp
+    // gates' denominator is built from this event, so it must be live before
+    // the first cohort is authorized, not alongside it.
+    onDecision: emitRolloutDecision,
     // Analytics for a completed or failed migration comes from the worker's
     // domain result via `SQLiteDatabaseProxy`; this only covers the outcomes
     // the worker never sees, and the mapper drops it if the worker got there

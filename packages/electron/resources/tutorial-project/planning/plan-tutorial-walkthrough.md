@@ -28,6 +28,7 @@ Help a new user discover that a Nimbalyst project can hold connected documents, 
 - [ ] Compare the embedded dashboard with its full editor.
 - [ ] Follow a tracker reference back to this plan.
 - [ ] Use an agent session to refine one project artifact.
+- [ ] Have the agent set up a wiki from the project files, then edit a page in Wiki mode.
 
 ## Success criteria
 

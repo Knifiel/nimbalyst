@@ -14,11 +14,20 @@ struct SyncErrorBanner: View {
     /// Clears the error. Also invoked after a retry, so the banner does not sit
     /// there while the retry is in flight — a failed retry posts a new error.
     let onDismiss: () -> Void
+    /// Copies the diagnostics report for a bug report; nil hides the affordance.
+    var onCopyDiagnostics: (() -> Void)? = nil
 
     var body: some View {
-        switch SyncErrorPresentation.severity(for: error.kind) {
-        case .caution: cautionStrip
-        case .failure: failureBanner
+        Group {
+            switch SyncErrorPresentation.severity(for: error.kind) {
+            case .caution: cautionStrip
+            case .failure: failureBanner
+            }
+        }
+        .contextMenu {
+            if let onCopyDiagnostics {
+                Button("Copy Diagnostics", systemImage: "doc.on.doc", action: onCopyDiagnostics)
+            }
         }
     }
 
@@ -87,6 +96,16 @@ struct SyncErrorBanner: View {
 
             Spacer(minLength: 8)
 
+            if let onCopyDiagnostics {
+                Button(action: onCopyDiagnostics) {
+                    Image(systemName: "doc.on.doc")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(NimbalystColors.textMuted)
+                .accessibilityLabel("Copy diagnostics")
+                .accessibilityIdentifier("sync-error-copy-diagnostics")
+            }
+
             actionButton
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -112,20 +131,14 @@ struct SyncErrorBanner: View {
 /// only be bound to a non-optional one.
 struct SyncErrorBannerHost: View {
     @ObservedObject var syncManager: SyncManager
+    var onCopyDiagnostics: (() -> Void)? = nil
 
     var body: some View {
         Group {
-            if let notice = syncManager.indexCoverage.skippedRowsNotice {
-                Text(notice)
-                    .font(.caption)
-                    .foregroundStyle(NimbalystColors.textMuted)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-            }
             if let error = syncManager.syncError {
-                SyncErrorBanner(error: error) {
+                SyncErrorBanner(error: error, onDismiss: {
                     syncManager.clearSyncError()
-                }
+                }, onCopyDiagnostics: onCopyDiagnostics)
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }

@@ -20,7 +20,7 @@
  * to the shared filter set; the search text it was appended to is untouched.
  */
 
-import type { JSX, KeyboardEvent as ReactKeyboardEvent } from 'react';
+import type { JSX, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import {
   lazy,
   Suspense,
@@ -82,9 +82,20 @@ export interface TrackerFilterOmniboxProps {
    * horizontal pill row beside it, so it opts out -- one set of pills, not two.
    */
   showPills?: boolean;
+  /** Draw the pills inside the box, before the text, instead of in a row below it. */
+  inlinePills?: boolean;
+  /**
+   * Clicking a field pill calls this instead of pulling the pill back into the
+   * text. Returning `false` declines, and the pill is pulled back as usual.
+   */
+  onPillClick?: (clauseIndex: number, clause: TrackerFieldFilter) => boolean | void;
+  /** Controls drawn at the right end of an inline-pills box, before its clear button. */
+  trailing?: ReactNode;
   /** Layout for the surface this instance sits on (width, padding, borders). */
   className?: string;
   placeholder?: string;
+  /** `large` for a page whose main control is this box (Pages search); `default` for toolbars. */
+  size?: 'default' | 'large';
 }
 
 function pillLabel(
@@ -121,15 +132,21 @@ export function TrackerFilterOmnibox({
   tagFilter,
   onTagFilterChange,
   showPills = true,
+  inlinePills = false,
+  onPillClick,
+  trailing,
   className = '',
   placeholder = 'Search, # for tags, or a field name to filter…',
+  size = 'default',
 }: TrackerFilterOmniboxProps): JSX.Element {
+  const large = size === 'large';
   // The token under composition. Everything before it is `searchQuery`, so the
   // two together are exactly what the input shows.
   const [draftToken, setDraftToken] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
 
   const setInputNode = useCallback((node: HTMLInputElement | null) => {
     inputRef.current = node;
@@ -391,16 +408,117 @@ export function TrackerFilterOmnibox({
   const hasAnything =
     inputValue.length > 0 || activeClauses.length > 0 || activeTags.length > 0;
 
+  const hasPills = activeClauses.length > 0 || activeTags.length > 0;
+  const pillSize = large && inlinePills ? 'h-6 text-[12px]' : 'h-5 text-[10px]';
+  const pillIcon = large && inlinePills ? 12 : 10;
+  const pills = (
+    <>
+      {activeTags.map((tag) => (
+        <button
+          key={`tag-${tag}`}
+          type="button"
+          className={`tracker-filter-omnibox-tag-chip flex ${pillSize} shrink-0 items-center gap-1 rounded-full border border-blue-400/30 bg-blue-400/[0.12] px-1.5 text-blue-400 hover:bg-blue-400/[0.18]`}
+          onClick={() => removeTag(tag)}
+          title={`Remove #${tag} filter`}
+          data-testid={`tracker-filter-omnibox-tag-chip-${tag}`}
+        >
+          #{tag}
+          <MaterialSymbol icon="close" size={pillIcon} />
+        </button>
+      ))}
+      {activeClauses.map(({ clause, index }) => {
+        const parts = pillLabel(clause, fields);
+        return (
+          <div
+            key={`${clause.field}-${index}`}
+            className={`tracker-filter-omnibox-pill flex ${pillSize} max-w-full items-center overflow-hidden rounded-full border border-nim ${inlinePills ? 'bg-nim-tertiary' : 'bg-nim-secondary'} text-nim-muted`}
+            data-testid={`tracker-filter-omnibox-pill-${index}`}
+          >
+            <button
+              type="button"
+              className="flex h-full min-w-0 items-center gap-1 px-1.5 hover:bg-nim-tertiary hover:text-nim"
+              onClick={() => {
+                if (onPillClick?.(index, clause) === false || !onPillClick) editClause(clause, index);
+              }}
+              title={onPillClick ? 'Edit filters' : `Edit ${serializeClause(clause, fields)}`}
+            >
+              <span className="shrink-0 font-medium text-nim">
+                {parts.field}
+              </span>
+              <span className="shrink-0 text-nim-faint">{parts.op}</span>
+              {parts.value && (
+                <span className="truncate">{parts.value}</span>
+              )}
+            </button>
+            <button
+              type="button"
+              className={`inline-flex h-full ${large && inlinePills ? 'w-5' : 'w-4'} shrink-0 items-center justify-center border-l border-nim text-nim-faint hover:bg-nim-tertiary hover:text-nim`}
+              onClick={() => removeClause(index)}
+              aria-label={`Remove ${parts.field} filter`}
+            >
+              <MaterialSymbol icon="close" size={pillIcon} />
+            </button>
+          </div>
+        );
+      })}
+    </>
+  );
+
   return (
     <div
       className={`tracker-filter-omnibox flex min-w-0 flex-col gap-1 ${className}`}
       data-testid="tracker-filter-omnibox"
     >
+      {inlinePills ? (
+        <div
+          ref={boxRef}
+          className={`tracker-filter-omnibox-box flex min-w-0 cursor-text flex-wrap items-center gap-1 border border-nim bg-nim-secondary focus-within:border-[var(--nim-primary)] ${large ? 'min-h-9 rounded-md py-1 pl-3 pr-2' : 'min-h-7 rounded py-0.5 pl-2 pr-1'}`}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) inputRef.current?.focus();
+          }}
+        >
+          <MaterialSymbol icon="search" size={large ? 18 : 14} className="mr-1 shrink-0 text-nim-faint pointer-events-none" />
+          {pills}
+          <input
+            ref={setInputNode}
+            type="text"
+            role="combobox"
+            aria-expanded={menuOpen && suggestions.length > 0}
+            aria-controls="tracker-filter-omnibox-menu"
+            aria-label="Search or filter tracker items"
+            className={`tracker-filter-omnibox-input min-w-[120px] flex-1 border-none bg-transparent p-0 text-nim placeholder:text-nim-faint focus:outline-none ${large ? 'h-7 text-[13.5px]' : 'text-xs'}`}
+            placeholder={hasPills ? undefined : placeholder}
+            value={inputValue}
+            onChange={(event) => applyInput(event.target.value, true)}
+            onPointerEnter={() => {
+              void loadTrackerFilterOmniboxMenu();
+            }}
+            onFocus={() => {
+              void loadTrackerFilterOmniboxMenu();
+              setMenuOpen(true);
+            }}
+            onKeyDown={handleKeyDown}
+            data-testid="tracker-filter-omnibox-input"
+          />
+          {trailing}
+          {hasAnything && (
+            <button
+              type="button"
+              className="shrink-0 text-nim-faint hover:text-nim"
+              onClick={clearAll}
+              aria-label="Clear search and filters"
+              data-testid="tracker-filter-omnibox-clear"
+            >
+              <MaterialSymbol icon="close" size={large ? 16 : 13} />
+            </button>
+          )}
+        </div>
+      ) : (
       <div className="relative flex-1 min-w-0">
         <MaterialSymbol
           icon="search"
-          size={14}
-          className="absolute left-2 top-1/2 -translate-y-1/2 text-nim-faint pointer-events-none"
+          size={large ? 18 : 14}
+          className={`absolute ${large ? 'left-3' : 'left-2'} top-1/2 -translate-y-1/2 text-nim-faint pointer-events-none`}
         />
         <input
           ref={setInputNode}
@@ -409,7 +527,7 @@ export function TrackerFilterOmnibox({
           aria-expanded={menuOpen && suggestions.length > 0}
           aria-controls="tracker-filter-omnibox-menu"
           aria-label="Search or filter tracker items"
-          className="tracker-filter-omnibox-input w-full rounded border border-nim bg-nim-secondary py-1 pl-7 pr-6 text-xs text-nim placeholder:text-nim-faint focus:border-[var(--nim-primary)] focus:outline-none"
+          className={`tracker-filter-omnibox-input w-full border border-nim bg-nim-secondary text-nim placeholder:text-nim-faint focus:border-[var(--nim-primary)] focus:outline-none ${large ? 'h-9 rounded-md pl-10 pr-9 text-[13.5px]' : 'rounded py-1 pl-7 pr-6 text-xs'}`}
           placeholder={placeholder}
           value={inputValue}
           onChange={(event) => applyInput(event.target.value, true)}
@@ -426,74 +544,30 @@ export function TrackerFilterOmnibox({
         {hasAnything && (
           <button
             type="button"
-            className="absolute right-1 top-1/2 -translate-y-1/2 text-nim-faint hover:text-nim"
+            className={`absolute ${large ? 'right-2.5' : 'right-1'} top-1/2 -translate-y-1/2 text-nim-faint hover:text-nim`}
             onClick={clearAll}
             aria-label="Clear search and filters"
             data-testid="tracker-filter-omnibox-clear"
           >
-            <MaterialSymbol icon="close" size={13} />
+            <MaterialSymbol icon="close" size={large ? 16 : 13} />
           </button>
         )}
       </div>
+      )}
 
-      {showPills && (activeClauses.length > 0 || activeTags.length > 0) && (
+      {showPills && !inlinePills && hasPills && (
         <div
           className="tracker-filter-omnibox-pills flex flex-wrap items-center gap-1"
           data-testid="tracker-filter-omnibox-pills"
         >
-          {activeTags.map((tag) => (
-            <button
-              key={`tag-${tag}`}
-              type="button"
-              className="tracker-filter-omnibox-tag-chip flex h-5 shrink-0 items-center gap-1 rounded-full border border-blue-400/30 bg-blue-400/[0.12] px-1.5 text-[10px] text-blue-400 hover:bg-blue-400/[0.18]"
-              onClick={() => removeTag(tag)}
-              title={`Remove #${tag} filter`}
-              data-testid={`tracker-filter-omnibox-tag-chip-${tag}`}
-            >
-              #{tag}
-              <MaterialSymbol icon="close" size={10} />
-            </button>
-          ))}
-          {activeClauses.map(({ clause, index }) => {
-            const parts = pillLabel(clause, fields);
-            return (
-              <div
-                key={`${clause.field}-${index}`}
-                className="tracker-filter-omnibox-pill flex h-5 max-w-full items-center overflow-hidden rounded-full border border-nim bg-nim-secondary text-[10px] text-nim-muted"
-                data-testid={`tracker-filter-omnibox-pill-${index}`}
-              >
-                <button
-                  type="button"
-                  className="flex h-full min-w-0 items-center gap-1 px-1.5 hover:bg-nim-tertiary hover:text-nim"
-                  onClick={() => editClause(clause, index)}
-                  title={`Edit ${serializeClause(clause, fields)}`}
-                >
-                  <span className="shrink-0 font-medium text-nim">
-                    {parts.field}
-                  </span>
-                  <span className="shrink-0 text-nim-faint">{parts.op}</span>
-                  {parts.value && (
-                    <span className="truncate">{parts.value}</span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex h-full w-4 shrink-0 items-center justify-center border-l border-nim text-nim-faint hover:bg-nim-tertiary hover:text-nim"
-                  onClick={() => removeClause(index)}
-                  aria-label={`Remove ${parts.field} filter`}
-                >
-                  <MaterialSymbol icon="close" size={10} />
-                </button>
-              </div>
-            );
-          })}
+          {pills}
         </div>
       )}
 
       {menuOpen && suggestions.length > 0 && inputRef.current && (
         <Suspense fallback={null}>
           <TrackerFilterOmniboxMenu
-            reference={inputRef.current}
+            reference={(inlinePills && boxRef.current) || inputRef.current}
             suggestions={suggestions}
             highlightIndex={highlightIndex}
             onHighlight={setHighlightIndex}

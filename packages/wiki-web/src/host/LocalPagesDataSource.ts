@@ -28,19 +28,26 @@ function stemTitle(title: string, fileExtension: string | undefined): string {
 /**
  * A tree command as a library command; null for one that has nothing to do
  * locally. `editorExtension` names the file suffix of an editor page (a
- * drawing, mind map...), whose tree title carries it.
+ * drawing, mind map...), whose tree title carries it. `initialBody` is the
+ * starting file text the host staged for a new editor page (the tree command
+ * carries none).
  */
-export function toLocalCommand(command: CollabDocsCommand, editorExtension: (id: string) => string | undefined = () => undefined): LocalWikiCommand | null {
+export function toLocalCommand(
+  command: CollabDocsCommand,
+  editorExtension: (id: string) => string | undefined = () => undefined,
+  initialBody: (id: string) => string | undefined = () => undefined,
+): LocalWikiCommand | null {
   switch (command.type) {
     case 'refresh-folders':
     case 'refresh-type-placements':
     case 'refresh-item-placements':
     case 'reconnect':
       return null;
-    case 'register-document':
-      if ((command.documentType ?? 'markdown') !== 'markdown') {
-        throw new Error(`A ${command.documentType} page needs its editor; create it in Nimbalyst`);
-      }
+    case 'register-document': {
+      const documentType = command.documentType ?? 'markdown';
+      const fileExtension = command.metadata?.fileExtension;
+      if (documentType !== 'markdown' && !fileExtension) throw new Error(`A ${documentType} page needs a file extension`);
+      const body = initialBody(command.documentId);
       return {
         type: 'register-document',
         documentId: command.documentId,
@@ -48,7 +55,10 @@ export function toLocalCommand(command: CollabDocsCommand, editorExtension: (id:
         parentFolderId: command.parentFolderId ?? null,
         ...(command.parentKind ? { parentKind: command.parentKind } : {}),
         sortOrder: command.sortOrder ?? null,
+        ...(documentType !== 'markdown' ? { documentType, fileExtension } : {}),
+        ...(body !== undefined ? { body } : {}),
       };
+    }
     case 'register-folder':
       return { type: 'register-document', documentId: command.folderId, title: command.name, parentFolderId: command.parentFolderId ?? null };
     case 'update-document-title':
@@ -111,13 +121,24 @@ export class LocalPagesDataSource implements CollabDocsDataSource {
   /** Ids in the last snapshot read, to name what a later one dropped. */
   private lastItemIds = new Set<string>();
   private pages = new Map<string, LocalPage>();
+  /**
+   * The extension that edits an editor page with this suffix. The library
+   * reports the document type as `editorId`; the sidebar matches it against the
+   * catalog's extension ids and shows anything else as unsupported.
+   */
+  constructor(private readonly editorIdFor: (fileExtension: string) => string | undefined = () => undefined) {}
+
+  /** Starting file text for editor pages about to be registered, by id. */
+  private readonly stagedBodies = new Map<string, string>();
 
   async snapshot(): Promise<CollabDocsSnapshot> {
     const wiki = await wikiApi.snapshot();
     this.pages = new Map(wiki.pages.map((page) => [page.id, page]));
     this.lastItemIds = new Set(wiki.items.map((item) => item.documentId));
     // An editor page shows with its extension, as in the desktop app.
-    const items = wiki.items.map((item) => item.documentType === 'markdown' ? item : { ...item, title: `${item.title}${item.fileExtension}` });
+    const items = wiki.items.map((item) => item.documentType === 'markdown'
+      ? item
+      : { ...item, title: `${item.title}${item.fileExtension}`, editorId: this.editorIdFor(item.fileExtension) ?? item.editorId });
     return {
       items: items as SharedDocument[],
       containers: [],
@@ -126,6 +147,11 @@ export class LocalPagesDataSource implements CollabDocsDataSource {
       pageTree: true,
       pageFields: true,
     };
+  }
+
+  /** The file text a new page starts with; read by its `register-document` command. */
+  stageBody(documentId: string, body: string): void {
+    this.stagedBodies.set(documentId, body);
   }
 
   /** The library's page record from the last snapshot (body version, path, type). */
@@ -158,7 +184,8 @@ export class LocalPagesDataSource implements CollabDocsDataSource {
     const local = toLocalCommand(cmd, (id) => {
       const page = this.pages.get(id);
       return page && page.documentType !== 'markdown' ? page.fileExtension : undefined;
-    });
+    }, (id) => this.stagedBodies.get(id));
+    if (cmd.type === 'register-document') this.stagedBodies.delete(cmd.documentId);
     if (!local) return { ok: true };
     const result = await wikiApi.command(local);
     if (result?.ok !== true) throw new Error(`The local wiki refused ${cmd.type}`);

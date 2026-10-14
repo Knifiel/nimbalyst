@@ -1,0 +1,36 @@
+{
+  "name": "@nimbalyst/web-editors",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pins Nimbalyst extension editors into a browser app: the pinned list, a lazy loader, the extension registry, the @nimbalyst/runtime browser bridge and the Vite entry plugin. Shared by the web console and @nimbalyst/wiki-web. Consumed as source.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./pinned": {
+      "types": "./src/pinnedExtensions.d.mts",
+      "default": "./src/pinnedExtensions.mjs"
+    },
+    "./vite": {
+      "types": "./src/vite.d.mts",
+      "default": "./src/vite.mjs"
+    },
+    "./registry": "./src/browserExtensionRegistry.ts",
+    "./bundles": "./src/pinnedExtensionBundles.ts",
+    "./runtime-bridge": "./src/pinnedRuntimeBridge.tsx"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "react": "^19.2.0"
+  },
+  "devDependencies": {
+    "@nimbalyst/collab-bundle": "workspace:*",
+    "@types/node": "^20.19.11",
+    "@types/react": "^19.2.17",
+    "react": "^19.2.7",
+    "typescript": "^5.5.0",
+    "vite": "^7.1.12",
+    "vitest": "4.1.11"
+  }
+}

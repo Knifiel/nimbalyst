@@ -6,6 +6,7 @@
  *                                            scoped to workspace if provided.
  * - wakeup:cancel        (id) -> updated row or null.
  * - wakeup:run-now       (id) -> updated row or null. Sets fire_at to now and re-arms.
+ * - wakeup:set-usage-limit-auto-resume (enabled, current?) -> the resume plan, or null.
  *
  * Outbound (broadcast from scheduler / MCP tool):
  * - wakeup:changed       (row) -> sent to all renderer windows.
@@ -16,6 +17,7 @@ import { ipcMain, BrowserWindow } from 'electron';
 import log from 'electron-log/main';
 import { getSessionWakeupsStore } from '../services/RepositoryManager';
 import { SessionWakeupScheduler } from '../services/SessionWakeupScheduler';
+import { setUsageLimitAutoResume } from '../services/ai/usageLimitAutoResume';
 
 const logger = log.scope('WakeupHandlers');
 
@@ -60,6 +62,22 @@ export function registerWakeupHandlers(): void {
       return updated;
     } catch (error) {
       logger.error('wakeup:run-now failed', error);
+      throw error;
+    }
+  });
+
+  // The usage-limit card's auto-resume switch. `current` is the card's session,
+  // scheduled on enable because its turn ended before the setting was on.
+  ipcMain.handle('wakeup:set-usage-limit-auto-resume', async (
+    _event,
+    enabled: boolean,
+    current?: { sessionId: string; workspacePath: string; resetsAtMs: number },
+  ) => {
+    try {
+      if (typeof enabled !== 'boolean') throw new Error('enabled must be a boolean');
+      return await setUsageLimitAutoResume(enabled, current);
+    } catch (error) {
+      logger.error('wakeup:set-usage-limit-auto-resume failed', error);
       throw error;
     }
   });

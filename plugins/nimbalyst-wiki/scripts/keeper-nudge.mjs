@@ -146,7 +146,7 @@ export function decide(input, env = process.env, remoteCheck = hasWiki) {
   return {
     decision: 'block',
     reason:
-      `This session did substantive work (${why}). Before stopping, run the /nimbalyst-wiki:capture command ` +
+      `This session did substantive work (${why}). Before stopping, run the /nimbalyst-wiki:capture skill` +
       'to record any decision made or question answered in the wiki pages it affects. ' +
       'If nothing is worth keeping, reply "nothing to record" and stop. This reminder appears once per session.',
   };

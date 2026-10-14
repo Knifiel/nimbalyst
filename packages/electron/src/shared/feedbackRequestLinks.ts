@@ -18,6 +18,8 @@
  * change to the console's route shape has to land on both sides.
  */
 
+import { buildConsoleFeedbackRequestLink } from '@nimbalyst/collab-protocol';
+
 import { CONSOLE_ORIGIN } from './consoleOrigin';
 
 export interface FeedbackRequestDeepLink {
@@ -41,9 +43,9 @@ export function feedbackRequestConsoleUrl(
   requestId: string,
   origin: string = CONSOLE_ORIGIN,
 ): string {
-  const path = `/org/${encodeURIComponent(orgRouteKey)}`
-    + `/feedback/${encodeURIComponent(requestId)}`;
-  return new URL(path, origin).toString();
+  // One builder, so the desktop reads back (`parseConsoleFeedbackRequestLink`)
+  // exactly what it hands out.
+  return buildConsoleFeedbackRequestLink(orgRouteKey, requestId, origin);
 }
 
 export function buildFeedbackRequestDeepLink(

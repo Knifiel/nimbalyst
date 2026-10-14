@@ -9,10 +9,10 @@
  */
 
 import React, { useCallback, useState, useEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react';
-import { useAtomValue, useSetAtom } from 'jotai';
+import { atom, useAtomValue, useSetAtom } from 'jotai';
 import { setTitleBarCreateMenuAtom } from '../../store/atoms/titleBarCreate';
 import { CollabScopeResolutionError, type CollabOpenOptions, type CollabScope } from '@nimbalyst/collab-client/core';
-import { createCollabDocsScopeLifecycle, pageDisplayName } from '@nimbalyst/collab-client/docs';
+import { createCollabDocsScopeLifecycle, pageDisplayName, sharedIndexLoadedForScopeAtom, sharedIndexUnavailableForScopeAtom } from '@nimbalyst/collab-client/docs';
 import { store } from '@nimbalyst/runtime/store';
 import type { CollabSidebarCreateMenu } from '@nimbalyst/collab-client/docs-ui';
 import { useDocUnread } from '../../hooks/useDocUnread';
@@ -42,6 +42,7 @@ import { activePageRow, openPageTab } from './collabPageTabs';
 import { composePagesCreateMenu } from './pagesCreateMenu';
 import { PagesTabHistoryButtons, usePagesTabNavigation } from './usePagesTabNavigation';
 import { PagesSwipeNavigation } from './PagesSwipeNavigation';
+import { TeamPagesErrorBanner } from './TeamPagesErrorBanner';
 import { useCollabTabPersistence } from './useCollabTabPersistence';
 import { useLocalWikiFileTabs } from './useLocalWikiFileTabs';
 import { usePublishPagesTabStrip } from '../../services/pageTreeTools/pagesTabStrip';
@@ -61,8 +62,14 @@ import {
   rebindElectronCollabHostScope,
   sharedDocumentsAtom,
   sharedFoldersAtom,
+  teamPagesStartErrorAtomFamily,
   type SharedDocument,
 } from '../../store/atoms/collabDocuments';
+import {
+  pendingCollabDocumentFailure,
+  resolvePendingCollabDocument,
+  type TeamScopeUnavailable,
+} from './pendingCollabDocument';
 import { changedDocIdsAtom } from '../../store/atoms/collabDiscovery';
 import { isCollabUri, parseCollabUri } from '@nimbalyst/collab-protocol';
 import {
@@ -78,6 +85,10 @@ import { getActiveEditorContextItems } from '../../stores/editorContextStore';
 import { categorizeTeamAnalyticsError, toStableAnalyticsCategory } from '../../../shared/analytics/teamAnalytics';
 import { trackTeamAnalyticsEvent } from '../../utils/teamAnalytics';
 
+/** Read in place of a team scope's index flag while there is no team scope. */
+const NO_INDEX_ATOM = atom(false);
+const NO_INDEX_FAILURE_ATOM = atom<string | null>(null);
+
 interface CollabModeProps {
   workspacePath: string;
   isActive: boolean;
@@ -88,6 +99,10 @@ interface CollabModeProps {
 interface CollabModeInnerProps extends CollabModeProps {
   /** The project's team scope, or null with no account, no team, or while resolving. */
   teamScope: CollabScope | null;
+  /** Why `teamScope` is null once resolution stopped; null while it is still resolving. */
+  teamUnavailable: TeamScopeUnavailable | null;
+  /** Ask the host for the team scope again after it gave up. */
+  onRetryTeamScope: () => void;
   /** This workspace's Personal pages scope; always present. */
   personalScope: CollabScope;
 }
@@ -111,6 +126,7 @@ export const CollabMode = forwardRef<CollabModeRef, CollabModeProps>(function Co
   onPanelStateChange,
 }, ref) {
   const [scope, setScope] = useState<CollabScope | null>(null);
+  const [teamUnavailable, setTeamUnavailable] = useState<TeamScopeUnavailable | null>(null);
   const scopeRef = useRef<CollabScope | null>(null);
   const hostRef = useRef<ReturnType<typeof getElectronCollabHostForScopeKey> | null>(null);
   if (!hostRef.current) hostRef.current = getElectronCollabHostForScopeKey(workspacePath);
@@ -133,16 +149,26 @@ export const CollabMode = forwardRef<CollabModeRef, CollabModeProps>(function Co
         const nextScope = session?.scope ?? null;
         scopeRef.current = nextScope;
         setScope(nextScope);
+        // A scope, or resolution starting over (sign-in, org change, Retry):
+        // an earlier failure is no longer the answer.
+        setTeamUnavailable(null);
         if (nextScope) void initSharedDocuments(nextScope);
       },
       onError: (error) => {
+        // A session's start failure also lands here; `initSharedDocuments`
+        // records that one against the scope.
+        if (scopeRef.current) return;
+        const message = error instanceof Error ? error.message : String(error);
         // Signed out, or a project with no team, is the normal Personal-only
         // state: the resolver marks both as final answers, not failures.
         if (error instanceof CollabScopeResolutionError && !error.retryable) {
-          console.debug('[CollabMode] No team scope; showing Personal pages only:', error.message);
+          console.debug('[CollabMode] No team scope; showing Personal pages only:', message);
+          setTeamUnavailable({ message, retryable: false });
           return;
         }
+        // The lifecycle has stopped retrying: say so instead of waiting silently.
         console.error('[CollabMode] Failed to resolve collaboration scope:', error);
+        setTeamUnavailable({ message, retryable: true });
       },
     });
     lifecycle.start();
@@ -165,6 +191,11 @@ export const CollabMode = forwardRef<CollabModeRef, CollabModeProps>(function Co
         ref={ref}
         workspacePath={workspacePath}
         teamScope={scope}
+        teamUnavailable={teamUnavailable}
+        onRetryTeamScope={() => {
+          setTeamUnavailable(null);
+          hostRef.current!.invalidateScope();
+        }}
         personalScope={personalSession.scope}
         isActive={isActive}
         onFileOpen={onFileOpen}
@@ -235,6 +266,8 @@ async function loadCollabLayout(workspacePath: string): Promise<CollabLayout> {
 export const CollabModeInner = forwardRef<CollabModeRef, CollabModeInnerProps>(function CollabModeInner({
   workspacePath,
   teamScope,
+  teamUnavailable,
+  onRetryTeamScope,
   personalScope,
   isActive,
   onFileOpen,
@@ -680,50 +713,54 @@ export const CollabModeInner = forwardRef<CollabModeRef, CollabModeInnerProps>(f
     sharedFolders,
   });
 
-  // Auto-open a pending document. Set by "Share to Team" (carries title +
-  // initialContent for first-share seeding) and by deep links (documentId
-  // only -- title arrives later via the shared-docs sync, which the
-  // sharedDocuments rename effect picks up).
+  // A pending document: "Share to Team" (type + initialContent for first-share
+  // seeding), a pick from an index-backed list (type), or a link (id only).
+  // It ends in the page or a visible error, never a guessed editor.
+  const indexLoadedAtom = useMemo(
+    () => (teamScope ? sharedIndexLoadedForScopeAtom(teamScope.scopeKey) : NO_INDEX_ATOM),
+    [teamScope],
+  );
+  const indexLoaded = useAtomValue(indexLoadedAtom);
+  const indexUnavailableAtom = useMemo(
+    () => (teamScope ? sharedIndexUnavailableForScopeAtom(teamScope.scopeKey) : NO_INDEX_FAILURE_ATOM),
+    [teamScope],
+  );
+  const indexUnavailable = useAtomValue(indexUnavailableAtom);
+  const teamStartError = useAtomValue(teamPagesStartErrorAtomFamily(workspacePath));
   useEffect(() => {
-    if (
-      !pendingDoc
-      || !isActive
-      || !teamScope
-      || pendingDoc.scopeKey !== teamScope.scopeKey
-      || pendingDoc.orgId !== teamScope.orgId
-    ) return;
+    if (!pendingDoc || pendingDoc.scopeKey !== workspacePath) return;
+    const failure = pendingCollabDocumentFailure(pendingDoc, { teamScope, teamUnavailable, startError: teamStartError });
+    if (failure) {
+      store.set(pendingCollabDocumentAtom, null);
+      errorNotificationService.showError('Could not open shared page', failure);
+      return;
+    }
+    if (!isActive || !teamScope) return;
 
-    const docs = getLinkableSharedDocumentsForScopeKey(teamScope.scopeKey);
-    const found = docs.find(d => d.documentId === pendingDoc.documentId);
-
-    // Prefer the synced doc (it has the canonical title), but fall back to
-    // a synthetic doc so cold-start deep links still open immediately.
-    const docToOpen: SharedDocument = found
-      ? {
-          ...found,
-          ...(pendingDoc.documentType ? { documentType: pendingDoc.documentType } : {}),
-          ...(pendingDoc.metadataVersion === 2 ? {
-            metadataVersion: 2 as const,
-            fileExtension: pendingDoc.fileExtension,
-            editorId: pendingDoc.editorId,
-          } : {}),
-        }
-      : {
-          documentId: pendingDoc.documentId,
-          teamProjectId: teamScope.indexConfig.teamProjectId ?? null,
-          title: '',
-          documentType: pendingDoc.documentType ?? 'markdown',
-          metadataVersion: pendingDoc.metadataVersion,
-          fileExtension: pendingDoc.fileExtension,
-          editorId: pendingDoc.editorId,
-          createdBy: '',
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-
+    const resolution = resolvePendingCollabDocument(pendingDoc, {
+      linkableDocuments: getLinkableSharedDocumentsForScopeKey(teamScope.scopeKey),
+      indexLoaded,
+      indexUnavailable,
+      teamProjectId: teamScope.indexConfig.teamProjectId ?? null,
+      now: Date.now(),
+    });
+    // Re-run when the index delivers it (`linkableDocuments`, `indexLoaded`).
+    if (resolution.action === 'wait') return;
     store.set(pendingCollabDocumentAtom, null);
-    handleDocumentSelect(docToOpen, pendingDoc.initialContent, pendingDoc.analyticsSource ?? 'deep_link', pendingDoc.openOptions);
-  }, [pendingDoc, isActive, handleDocumentSelect, teamScope]);
+    if (resolution.action === 'failed') {
+      errorNotificationService.showError('Could not open shared page', resolution.message, { details: pendingDoc.documentId });
+      return;
+    }
+    if (resolution.action === 'not-found') {
+      errorNotificationService.showError(
+        'Could not open shared page',
+        "This page was not found, or you don't have access to it.",
+        { details: pendingDoc.documentId },
+      );
+      return;
+    }
+    handleDocumentSelect(resolution.document, pendingDoc.initialContent, pendingDoc.analyticsSource ?? 'deep_link', pendingDoc.openOptions);
+  }, [pendingDoc, isActive, handleDocumentSelect, teamScope, workspacePath, teamUnavailable, teamStartError, indexLoaded, indexUnavailable, linkableDocuments]);
 
   // With nothing open once restore settles, Pages lands on a Home page: the
   // team's with a team (waiting for it to sync), else Personal's. Closing the
@@ -853,6 +890,19 @@ export const CollabModeInner = forwardRef<CollabModeRef, CollabModeInnerProps>(f
           the last tab closes, so the tab strip is always present; without one
           an empty Personal section shows a hint instead. */}
       <div ref={tabContentAreaRef} className="relative flex-1 flex flex-col overflow-hidden min-h-0">
+        {teamScope && teamStartError ? (
+          <TeamPagesErrorBanner
+            title="Team pages could not be loaded"
+            message={teamStartError}
+            onRetry={() => { void initSharedDocuments(teamScope); }}
+          />
+        ) : !teamScope && teamUnavailable?.retryable ? (
+          <TeamPagesErrorBanner
+            title="Team pages could not be reached"
+            message={teamUnavailable.message}
+            onRetry={onRetryTeamScope}
+          />
+        ) : null}
         {hasTabs && <PagesSwipeNavigation targetRef={tabContentAreaRef} onStep={stepPagesHistory} />}
         {!hasTabs && !teamScope && (
           <div

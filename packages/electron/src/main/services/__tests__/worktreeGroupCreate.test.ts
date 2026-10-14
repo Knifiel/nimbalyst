@@ -6,13 +6,13 @@
  * leave no folder and no branch in any repository.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import simpleGit from 'simple-git';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { GitWorktreeService } from '../GitWorktreeService';
 import type { Worktree } from '../WorktreeStore';
 import { createWorktreeGroup, type WorktreeGroupCreateDeps } from '../worktreeGroupCreate';
+import { createGit } from '../gitClient';
 import { assertGitSandbox, gitSandboxEnv } from '../testSupport/gitTestSandbox';
 
 vi.mock('../GitOperationLogService', async (importOriginal) => ({
@@ -22,7 +22,7 @@ vi.mock('../GitOperationLogService', async (importOriginal) => ({
     operation(),
 }));
 
-const fixtureGit = (dir: string) => simpleGit(dir).env(gitSandboxEnv(undefined, { pinConfigPaths: false }));
+const fixtureGit = (dir: string) => createGit(dir, {}, gitSandboxEnv(undefined, { pinConfigPaths: false }));
 
 async function initRepo(dir: string, files: Record<string, string> = { 'README.md': 'hi' }): Promise<void> {
   fs.mkdirSync(dir, { recursive: true });

@@ -1,0 +1,15 @@
+{
+  "name": "nimbalyst-wiki",
+  "description": "Nimbalyst Wiki for Claude Code and Codex.",
+  "owner": {
+    "name": "Nimbalyst",
+    "url": "https://nimbalyst.com"
+  },
+  "plugins": [
+    {
+      "name": "nimbalyst-wiki",
+      "source": "./",
+      "description": "A local wiki your agents write for you, so you can think, organize, and set direction. Capture decisions, track typed pages, read and edit it in your browser, and optionally share it with your team."
+    }
+  ]
+}

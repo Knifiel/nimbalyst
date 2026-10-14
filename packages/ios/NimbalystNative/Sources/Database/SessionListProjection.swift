@@ -224,18 +224,19 @@ enum SessionListProjection {
         "\(alias).projectId = :projectId AND \(alias).isArchived = 0"
     }
 
-    private static var groupKeyCase: String { SessionTreeSQL.groupKey(visible: visible) }
 
     /// Resolve member facts for a set of sessions. `restriction` narrows it to the
     /// dirty batch for an incremental refresh, or to everything for a rebuild.
-    private static func memberInsert(restriction: String) -> String {
+    static func memberInsert(restriction: String) -> String {
         """
-        WITH keyed AS MATERIALIZED (
+        WITH RECURSIVE \(SessionTreeSQL.groupKeys("member", seeds: """
+            SELECT b.id FROM sessions b WHERE \(visible("b")) AND \(restriction)
+            """, visible: visible)),
+        keyed AS MATERIALIZED (
             SELECT b.id, b.projectId, b.sessionType, b.createdAt, b.updatedAt, b.isExecuting,
                    b.hasQueuedPrompts, b.isPinned, b.phase, b.lastMessageAt, b.lastReadAt,
-                   \(groupKeyCase) AS groupKey
-            FROM sessions b
-            WHERE \(visible("b")) AND \(restriction)
+                   k.groupKey
+            FROM member k JOIN sessions b ON b.id = k.sessionId
         )
         INSERT INTO sessionListGroupMembers (
             sessionId, projectId, groupKey, groupKind, anchorId,
@@ -299,7 +300,7 @@ enum SessionListProjection {
         """
     }
 
-    private static func groupInsert(restriction: String) -> String {
+    static func groupInsert(restriction: String) -> String {
         """
         INSERT OR REPLACE INTO sessionListGroups (
             groupKey, projectId, groupKind, parentId, orderTimestamp,

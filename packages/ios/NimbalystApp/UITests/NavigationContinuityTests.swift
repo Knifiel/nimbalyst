@@ -173,6 +173,25 @@ final class NavigationContinuityTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["api-server"].waitForExistence(timeout: 5))
     }
 
+    /// The project chooser is swapped into the sidebar rather than pushed, so the
+    /// system back swipe does not apply; the session list provides its own.
+    @MainActor
+    func testEdgeSwipeReturnsFromSessionsToProjects() {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--screenshot-mode", "--screenshot-screen=navigation", "-hasPromptedForNotifications", "YES"]
+        app.launch()
+        defer { app.terminate() }
+        let project = app.staticTexts["nimbalyst"].firstMatch
+        XCTAssertTrue(project.waitForExistence(timeout: 15))
+        project.tap()
+        XCTAssertTrue(app.buttons["Choose Project"].waitForExistence(timeout: 10))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+            .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)))
+        XCTAssertTrue(app.staticTexts["api-server"].firstMatch.waitForExistence(timeout: 5), "Swiping from the leading edge must return to the project chooser")
+    }
+
     /// Team Wiki for a mapped project opens Pages; an unreachable console shows
     /// the native error with Retry, and Back returns to the Team tab.
     /// `--console-pages-fixture` maps every project to a fixture team and points

@@ -71,6 +71,10 @@ interface SessionDao {
     @Query("UPDATE sessions SET draftInput = :draftInput, draftUpdatedAt = :draftUpdatedAt WHERE id = :sessionId")
     suspend fun updateDraftInput(sessionId: String, draftInput: String?, draftUpdatedAt: Long)
 
+    /** Live context usage only; leaves replication cursors and the metadata blob alone. Returns rows updated. */
+    @Query("UPDATE sessions SET contextTokens = :tokens, contextWindow = :contextWindow WHERE id = :sessionId")
+    suspend fun updateLiveContext(sessionId: String, tokens: Int, contextWindow: Int): Int
+
     @Query("UPDATE sessions SET clientMetadataJson = :clientMetadataJson WHERE id = :sessionId")
     suspend fun updateClientMetadata(sessionId: String, clientMetadataJson: String)
 

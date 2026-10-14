@@ -43,6 +43,8 @@ export interface TrackerGridSurfaceProps extends GridViewSettings {
     selectedItemId?: string | null;
     /** Opens a row into the host's detail. See `handleCellFocus` for the gesture. */
     onOpenItem?: (itemId: string) => void;
+    /** The title text opens the row as well as the key; a type page lists pages by title. */
+    titleOpensItem?: boolean;
     /**
      * Right-click on a row, and the click on its overflow button.
      *
@@ -82,4 +84,4 @@ export interface TrackerGridUpdateEntry {
     itemId: string;
     updates: Record<string, unknown>;
 }
-export declare function TrackerGridSurface({ rows, trackerType, columnConfig, sortBy, sortDirection, sortColumns, onSortChange, onWidthsChange, columnFilters, onColumnFiltersChange, resolveRelationshipLabel, isRowEditable, onItemsUpdate, selectedItemId, onOpenItem, onRowContextMenu, loaded, derivedColumns, }: TrackerGridSurfaceProps): React.JSX.Element;
+export declare function TrackerGridSurface({ rows, trackerType, columnConfig, sortBy, sortDirection, sortColumns, onSortChange, onWidthsChange, columnFilters, onColumnFiltersChange, resolveRelationshipLabel, isRowEditable, onItemsUpdate, selectedItemId, onOpenItem, titleOpensItem, onRowContextMenu, loaded, derivedColumns, }: TrackerGridSurfaceProps): React.JSX.Element;

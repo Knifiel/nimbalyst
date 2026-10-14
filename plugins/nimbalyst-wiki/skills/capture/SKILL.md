@@ -1,11 +1,12 @@
 ---
-description: Record what people decided in this session in the wiki pages it affects (team or local wiki)
+name: capture
+description: Record what people decided in this session in the wiki pages it affects (team or local wiki). Use when the user asks to capture or record what the session decided, or when a wiki reminder asks you to.
 argument-hint: "[optional focus]"
 ---
 
 Record what this session decided in the project's wiki. Load the `update` skill and follow it for every write; the `connect` skill covers choosing the wiki and finding the project.
 
-Focus, if given: $ARGUMENTS
+Focus, if the user gave one: $ARGUMENTS (left as written or empty means the whole session)
 
 1. If the desktop app's wiki tools are available (`mcp__nimbalyst-trackers__*`), use them and the desktop wiki skills instead of this plugin's tools.
 2. Choose the wiki as the `connect` skill describes. For the team wiki, call `pages_status` with `repo` and `project`; if the state is `ambiguous`, ask which project and pin it; if it is `unbound`, follow the skill's connecting steps. For a local wiki, use the `nimbalyst-local` tools; if there is none yet, offer to start one. If there is still no wiki to write to, say so and stop.

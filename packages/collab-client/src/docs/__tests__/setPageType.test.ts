@@ -83,6 +83,19 @@ describe('setPageType', () => {
     expect(dependencies.removeItem).not.toHaveBeenCalled();
   });
 
+  it('refuses a team page whose type the team server has not confirmed, before creating or trashing anything', async () => {
+    const teamTypeProblem = vi.fn(async () => 'The team\'s server does not have the "module" type yet.');
+    const { dependencies } = harness({ teamTypeProblem });
+
+    const outcome = await run(dependencies);
+
+    expect(outcome).toEqual({ status: 'refused', message: expect.stringContaining('does not have the "module" type yet') });
+    expect(dependencies.createItem).not.toHaveBeenCalled();
+    expect(dependencies.trashPage).not.toHaveBeenCalled();
+    // A personal page never needs the team's server.
+    expect((await run(harness({ teamTypeProblem }).dependencies, 'personal')).status).toBe('done');
+  });
+
   it('refuses a page with images or decision answers bound to its room, before creating anything', async () => {
     for (const markdown of ['![chart](collab-asset://doc/doc-1/asset/abc)\n', 'Intro\n\n```decision\nid: d1\n```\n']) {
       const { dependencies } = harness({ readPageMarkdown: vi.fn(async () => ({ markdown })) });

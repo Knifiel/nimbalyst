@@ -170,6 +170,7 @@ overrides:
   concurrently>shell-quote: ^1.8.4
   minimatch@^10.0.0: ^10.2.5
   dompurify: ^3.4.14
+  katex: ^0.18.11
   lodash-es: ^4.18.1
   '@excalidraw/excalidraw>nanoid': ^3.3.18
   '@excalidraw/mermaid-to-excalidraw>nanoid': ^5.1.16
@@ -613,7 +614,7 @@ importers:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
         specifier: 0.3.293
-        version: 0.3.293(@anthropic-ai/sdk@0.115.0(zod@4.3.6))(@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@4.3.6))(zod@4.3.6)
+        version: 0.3.293(@anthropic-ai/sdk@0.115.0(zod@4.3.6))(@modelcontextprotocol/sdk@1.32.1(supports-color@10.2.2)(zod@4.3.6))(zod@4.3.6)
       '@anthropic-ai/sdk':
         specifier: ^0.115.0
         version: 0.115.0(zod@4.3.6)
@@ -633,8 +634,8 @@ importers:
         specifier: ^3.8.1
         version: 3.8.1
       '@modelcontextprotocol/sdk':
-        specifier: ^1.30.0
-        version: 1.30.0(supports-color@10.2.2)(zod@4.3.6)
+        specifier: ^1.32.1
+        version: 1.32.1(supports-color@10.2.2)(zod@4.3.6)
       '@monaco-editor/react':
         specifier: ^4.7.0
         version: 4.7.0(monaco-editor@0.55.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -855,8 +856,8 @@ importers:
         specifier: ^3.6.0
         version: 3.6.0
       simple-git:
-        specifier: ^3.36.0
-        version: 3.36.0(supports-color@10.2.2)
+        specifier: ^4.0.2
+        version: 4.0.2(supports-color@10.2.2)
       ulid:
         specifier: ^3.0.1
         version: 3.0.2
@@ -1551,8 +1552,8 @@ importers:
   packages/extensions/math:
     dependencies:
       katex:
-        specifier: ^0.16.45
-        version: 0.16.47
+        specifier: ^0.18.11
+        version: 0.18.11
       react:
         specifier: ^18.2.0 || ^19.0.0
         version: 19.2.7
@@ -1663,8 +1664,8 @@ importers:
   packages/extensions/nimbalyst-memory/engine:
     dependencies:
       '@modelcontextprotocol/sdk':
-        specifier: 1.29.0
-        version: 1.29.0(supports-color@10.2.2)(zod@4.3.6)
+        specifier: ^1.32.1
+        version: 1.32.1(supports-color@10.2.2)(zod@4.3.6)
       better-sqlite3:
         specifier: 13.0.3
         version: 13.0.3
@@ -1976,7 +1977,7 @@ importers:
         version: 0.20.0(zod@4.3.6)
       '@anthropic-ai/claude-agent-sdk':
         specifier: 0.3.293
-        version: 0.3.293(@anthropic-ai/sdk@0.115.0(zod@4.3.6))(@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@4.3.6))(zod@4.3.6)
+        version: 0.3.293(@anthropic-ai/sdk@0.115.0(zod@4.3.6))(@modelcontextprotocol/sdk@1.32.1(supports-color@10.2.2)(zod@4.3.6))(zod@4.3.6)
       '@anthropic-ai/sdk':
         specifier: ^0.115.0
         version: 0.115.0(zod@4.3.6)
@@ -2293,8 +2294,35 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
+  packages/web-editors:
+    devDependencies:
+      '@nimbalyst/collab-bundle':
+        specifier: workspace:*
+        version: link:../collab-bundle
+      '@types/node':
+        specifier: ^20.19.11
+        version: 20.19.43
+      '@types/react':
+        specifier: ^19.2.17
+        version: 19.2.17
+      react:
+        specifier: ^19.2.7
+        version: 19.2.7
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vite:
+        specifier: ^7.3.6
+        version: 7.3.6(@types/node@20.19.43)(jiti@2.7.0)(terser@5.46.1)(yaml@2.8.3)
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@types/node@20.19.43)(@vitest/ui@4.1.11)(happy-dom@20.9.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(jsdom@26.1.0(bufferutil@4.1.0)(supports-color@10.2.2)(utf-8-validate@5.0.10))(vite@7.3.6(@types/node@20.19.43)(jiti@2.7.0)(terser@5.46.1)(yaml@2.8.3))
+
   packages/wiki-web:
     devDependencies:
+      '@floating-ui/react':
+        specifier: ^0.27.19
+        version: 0.27.20(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@lexical/code':
         specifier: 0.44.0
         version: 0.44.0
@@ -2349,12 +2377,33 @@ importers:
       '@lexical/yjs':
         specifier: 0.44.0
         version: 0.44.0(patch_hash=81c6b5edf6a448a1b58989a2f66ee89f52e78871c1dba49750e93b7739de3020)(yjs@13.6.32)
+      '@monaco-editor/react':
+        specifier: ^4.7.0
+        version: 4.7.0(monaco-editor@0.55.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@nimbalyst/collab-bundle':
         specifier: workspace:*
         version: link:../collab-bundle
+      '@nimbalyst/excalidraw-extension':
+        specifier: workspace:*
+        version: link:../extensions/excalidraw
+      '@nimbalyst/extension-calc-sheets':
+        specifier: workspace:*
+        version: link:../extensions/calc-sheets
+      '@nimbalyst/extension-csv-spreadsheet':
+        specifier: workspace:*
+        version: link:../extensions/csv-spreadsheet
+      '@nimbalyst/extension-datamodellm':
+        specifier: workspace:*
+        version: link:../extensions/datamodellm
       '@nimbalyst/local-wiki':
         specifier: workspace:*
         version: link:../local-wiki
+      '@nimbalyst/mockuplm':
+        specifier: workspace:*
+        version: link:../extensions/mockuplm
+      '@nimbalyst/web-editors':
+        specifier: workspace:*
+        version: link:../web-editors
       '@revolist/react-datagrid':
         specifier: 4.21.4
         version: 4.21.4
@@ -2373,9 +2422,15 @@ importers:
       autoprefixer:
         specifier: ^10.5.0
         version: 10.5.0(postcss@8.5.26)
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
       lexical:
         specifier: 0.44.0
         version: 0.44.0
+      monaco-editor:
+        specifier: ^0.55.1
+        version: 0.55.1
       postcss:
         specifier: ^8.5.6
         version: 8.5.26
@@ -4374,18 +4429,8 @@ packages:
   '@mixmark-io/domino@2.2.0':
     resolution: {integrity: sha512-Y28PR25bHXUg88kCV7nivXrP2Nj2RueZ3/l/jdx6J9f8J4nsEGcgX0Qe6lt7Pa+J79+kPiJU3LguR6O/6zrLOw==}
 
-  '@modelcontextprotocol/sdk@1.29.0':
-    resolution: {integrity: sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      '@cfworker/json-schema': ^4.1.1
-      zod: ^4.0.0
-    peerDependenciesMeta:
-      '@cfworker/json-schema':
-        optional: true
-
-  '@modelcontextprotocol/sdk@1.30.0':
-    resolution: {integrity: sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA==}
+  '@modelcontextprotocol/sdk@1.32.1':
+    resolution: {integrity: sha512-2DdE+SJDtzLEEWzY1ZjY7Q+VcPhcV1KisD3zI4u0XZyktsjHum1mwbMI+JaulUBi2OZk+KJAi2uPXzxichPkdw==}
     engines: {node: '>=18'}
     peerDependencies:
       '@cfworker/json-schema': ^4.1.1
@@ -5140,11 +5185,11 @@ packages:
   '@shikijs/vscode-textmate@10.0.2':
     resolution: {integrity: sha512-83yeghZ2xxin3Nj8z1NMd/NCuca+gsYXswywDy5bHvwlWL8tpTQmzGeUuHd9FC3E/SBEMvzJRwWEOz5gGes9Qg==}
 
-  '@simple-git/args-pathspec@1.0.3':
-    resolution: {integrity: sha512-ngJMaHlsWDTfjyq9F3VIQ8b7NXbBLq5j9i5bJ6XLYtD6qlDXT7fdKY2KscWWUF8t18xx052Y/PUO1K1TRc9yKA==}
+  '@simple-git/args-pathspec@1.0.4':
+    resolution: {integrity: sha512-EtMX6XjRWSastG2SdkmSQByPtJ9dx/NIjnHbpQPCYt62j4RmSx5rgLTGpw0YCjF5h191gZOmBfheOT23cRSFdw==}
 
-  '@simple-git/argv-parser@1.1.1':
-    resolution: {integrity: sha512-Q9lBcfQ+VQCpQqGJFHe5yooOS5hGdLFFbJ5R+R5aDsnkPCahtn1hSkMcORX65J2Z5lxSkD0lQorMsncuBQxYUw==}
+  '@simple-git/argv-parser@2.0.1':
+    resolution: {integrity: sha512-M++IaVWrN+vYalilOHfwvT2IL3wYZtVEBQpmX6DLSOJLtxbZ+SUeIDE3IiPogzhPACLajwtxfa5rp+ZX1FczzQ==}
 
   '@sindresorhus/is@4.6.0':
     resolution: {integrity: sha512-t09vSN3MdfsyCHoFcTRCH/iUtG7OJ0CsjzB8cjAmKc/va/kIgeDI/TxsigdncE/4be734m0cvIYwNaV4i2XqAw==}
@@ -6140,6 +6185,10 @@ packages:
   comma-separated-tokens@2.0.3:
     resolution: {integrity: sha512-Fu4hJdvzeylCfQPp9SGWidpzrMs7tTrlu6Vb8XGaRGck8QSNZJJp538Wrb60Lax4fPwR64ViY468OIUTbRlGZg==}
 
+  commander@15.0.0:
+    resolution: {integrity: sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==}
+    engines: {node: '>=22.12.0'}
+
   commander@2.20.3:
     resolution: {integrity: sha512-GpVkmM8vF2vQUkj2LvZmD35JxeJOLCwJ9cUkugyk2nuhbv3+mJvpLYYt+0+USMxE+oj+ey/lJEnhZw75x/OMcQ==}
 
@@ -6154,10 +6203,6 @@ packages:
   commander@7.2.0:
     resolution: {integrity: sha512-QrWXB+ZQSVPmIWIhtEO9H+gwHaMGYiF5ChvoJ+K9ZGHG/sVsa6yiesAD1GC/x46sET00Xlwo1u49RVVVzvcSkw==}
     engines: {node: '>= 10'}
-
-  commander@8.3.0:
-    resolution: {integrity: sha512-OkTL9umf+He2DZkUq8f8J9of7yL6RJKI24dVITBmNfZBmri9zYZQrKkuXiKhyfPSu8tUhnVBB1iKXevvnlR4Ww==}
-    engines: {node: '>= 12'}
 
   commander@9.5.0:
     resolution: {integrity: sha512-KRs7WVDKg86PWiuAqhDrAQnTXZKraVcCc6vFdL14qrZ/DcWwuRo7VoiYXalXO7S5GKpqYiVEwCbgFDfxNHKJBQ==}
@@ -7700,8 +7745,9 @@ packages:
   jszip@3.10.1:
     resolution: {integrity: sha512-xXDvecyTpGLrqFrvkrUSoxxfJI5AH7U8zxxtVclpsUtMCq4JQ290LY8AW5c7Ggnr/Y/oK+bQMbqK2qmtk3pN4g==}
 
-  katex@0.16.47:
-    resolution: {integrity: sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg==}
+  katex@0.18.11:
+    resolution: {integrity: sha512-yvyz/2VMKqoho/35Hat5w37wIEdWJ5ElVMidTAlWrxr5uW4aBGsEpveTmKh18/zw08v/7lGswCPon4OhqmqrTA==}
+    deprecated: Accidentally published with breaking changes. Use 0.19.0 instead.
     hasBin: true
 
   keyv@4.5.4:
@@ -9112,8 +9158,8 @@ packages:
     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
     engines: {node: '>=14'}
 
-  simple-git@3.36.0:
-    resolution: {integrity: sha512-cGQjLjK8bxJw4QuYT7gxHw3/IouVESbhahSsHrX97MzCL1gu2u7oy38W6L2ZIGECEfIBG4BabsWDPjBxJENv9Q==}
+  simple-git@4.0.2:
+    resolution: {integrity: sha512-l0sIsv9VrPwovKELFDBOj/lhmIcbMvxBk2B+hRhsMM4/VL3gKtuZvYnBNixVo+N/0HnqQx2cBdLvxnAbygHpqA==}
 
   simple-update-notifier@2.0.0:
     resolution: {integrity: sha512-a2B9Y0KlNXl9u/vsW6sTIu9vGEpfKu2wRV6l1H3XEas/0gUIzGzBoP/IouTcUQbm9JWZLH3COxyn03TYlFax6w==}
@@ -10288,10 +10334,10 @@ snapshots:
   '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.293':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk@0.3.293(@anthropic-ai/sdk@0.115.0(zod@4.3.6))(@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@4.3.6))(zod@4.3.6)':
+  '@anthropic-ai/claude-agent-sdk@0.3.293(@anthropic-ai/sdk@0.115.0(zod@4.3.6))(@modelcontextprotocol/sdk@1.32.1(supports-color@10.2.2)(zod@4.3.6))(zod@4.3.6)':
     dependencies:
       '@anthropic-ai/sdk': 0.115.0(zod@4.3.6)
-      '@modelcontextprotocol/sdk': 1.30.0(supports-color@10.2.2)(zod@4.3.6)
+      '@modelcontextprotocol/sdk': 1.32.1(supports-color@10.2.2)(zod@4.3.6)
       zod: 4.3.6
     optionalDependencies:
       '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.293
@@ -12037,29 +12083,7 @@ snapshots:
 
   '@mixmark-io/domino@2.2.0': {}
 
-  '@modelcontextprotocol/sdk@1.29.0(supports-color@10.2.2)(zod@4.3.6)':
-    dependencies:
-      '@hono/node-server': 1.19.17(hono@4.13.7)
-      ajv: 8.18.0
-      ajv-formats: 3.0.1(ajv@8.18.0)
-      content-type: 1.0.5
-      cors: 2.8.6
-      cross-spawn: 7.0.6
-      eventsource: 3.0.7
-      eventsource-parser: 3.0.6
-      express: 5.2.1(supports-color@10.2.2)
-      express-rate-limit: 8.5.2(express@5.2.1(supports-color@10.2.2))
-      hono: 4.13.7
-      jose: 6.1.3
-      json-schema-typed: 8.0.2
-      pkce-challenge: 5.0.1
-      raw-body: 3.0.2
-      zod: 4.3.6
-      zod-to-json-schema: 3.25.1(zod@4.3.6)
-    transitivePeerDependencies:
-      - supports-color
-
-  '@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@4.3.6)':
+  '@modelcontextprotocol/sdk@1.32.1(supports-color@10.2.2)(zod@4.3.6)':
     dependencies:
       '@hono/node-server': 1.19.17(hono@4.13.7)
       ajv: 8.18.0
@@ -12733,11 +12757,11 @@ snapshots:
 
   '@shikijs/vscode-textmate@10.0.2': {}
 
-  '@simple-git/args-pathspec@1.0.3': {}
+  '@simple-git/args-pathspec@1.0.4': {}
 
-  '@simple-git/argv-parser@1.1.1':
+  '@simple-git/argv-parser@2.0.1':
     dependencies:
-      '@simple-git/args-pathspec': 1.0.3
+      '@simple-git/args-pathspec': 1.0.4
 
   '@sindresorhus/is@4.6.0': {}
 
@@ -13871,6 +13895,8 @@ snapshots:
 
   comma-separated-tokens@2.0.3: {}
 
+  commander@15.0.0: {}
+
   commander@2.20.3: {}
 
   commander@4.1.1: {}
@@ -13878,8 +13904,6 @@ snapshots:
   commander@5.1.0: {}
 
   commander@7.2.0: {}
-
-  commander@8.3.0: {}
 
   commander@9.5.0:
     optional: true
@@ -15702,9 +15726,9 @@ snapshots:
       readable-stream: 2.3.8
       setimmediate: 1.0.5
 
-  katex@0.16.47:
+  katex@0.18.11:
     dependencies:
-      commander: 8.3.0
+      commander: 15.0.0
 
   keyv@4.5.4:
     dependencies:
@@ -16048,7 +16072,7 @@ snapshots:
       dompurify: 3.4.14
       es-toolkit: 1.47.1
       fastdom: 1.0.12
-      katex: 0.16.47
+      katex: 0.18.11
       khroma: 2.1.0
       marked: 16.4.2
       roughjs: 4.6.6
@@ -16139,7 +16163,7 @@ snapshots:
     dependencies:
       '@types/katex': 0.16.8
       devlop: 1.1.0
-      katex: 0.16.47
+      katex: 0.18.11
       micromark-factory-space: 2.0.1
       micromark-util-character: 2.1.1
       micromark-util-symbol: 2.0.1
@@ -17095,7 +17119,7 @@ snapshots:
       '@types/katex': 0.16.8
       hast-util-from-html-isomorphic: 2.0.0
       hast-util-to-text: 4.0.2
-      katex: 0.16.47
+      katex: 0.18.11
       unist-util-visit-parents: 6.0.2
       vfile: 6.0.3
 
@@ -17481,12 +17505,12 @@ snapshots:
 
   signal-exit@4.1.0: {}
 
-  simple-git@3.36.0(supports-color@10.2.2):
+  simple-git@4.0.2(supports-color@10.2.2):
     dependencies:
       '@kwsites/file-exists': 1.1.1(supports-color@10.2.2)
       '@kwsites/promise-deferred': 1.1.1
-      '@simple-git/args-pathspec': 1.0.3
-      '@simple-git/argv-parser': 1.1.1
+      '@simple-git/args-pathspec': 1.0.4
+      '@simple-git/argv-parser': 2.0.1
       debug: 4.4.3(supports-color@10.2.2)
     transitivePeerDependencies:
       - supports-color

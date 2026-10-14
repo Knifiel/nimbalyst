@@ -11,6 +11,7 @@ const REJECTION_EXPLANATIONS: Record<TrackerMutationRejection['code'], string> =
   issueKeyPrefixConflict: 'The tracker key prefix conflicts with another project in this team.',
   adminRequired: 'This change requires a team administrator.',
   schemaExists: 'Someone else already created a type with this name.',
+  serverError: 'The server hit an error and saved nothing. Try the change again.',
 };
 
 export function formatTrackerMutationRejection(rejection: TrackerMutationRejection): string {

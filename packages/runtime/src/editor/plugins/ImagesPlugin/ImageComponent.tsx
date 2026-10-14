@@ -69,6 +69,15 @@ import {copyImageToClipboard} from '../../../utils/clipboard';
 
 const imageCache = new Map<string, Promise<boolean> | boolean>();
 
+function safeDecodePath(src: string): string {
+  try {
+    return decodeURIComponent(src);
+  } catch {
+    // a literal `%` in a file name that is not an escape
+    return src;
+  }
+}
+
 export const RIGHT_CLICK_IMAGE_COMMAND: LexicalCommand<MouseEvent> =
   createCommand('RIGHT_CLICK_IMAGE_COMMAND');
 
@@ -412,7 +421,8 @@ export default function ImageComponent({
             documentPath.lastIndexOf('\\'),
           );
           const documentDir = lastSep >= 0 ? documentPath.substring(0, lastSep) : '';
-          const absolutePath = documentDir + '/' + src;
+          // Markdown percent-encodes spaces in relative paths (`Q3%20Plan/.assets/x.png`).
+          const absolutePath = documentDir + '/' + safeDecodePath(src);
           setResolvedSrc(localAssetUrl(absolutePath));
         } else {
           setResolvedSrc(src);

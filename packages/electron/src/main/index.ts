@@ -1,4 +1,3 @@
-import { parseDocumentDeepLinkAnchor, type SharedDocumentAnchor } from '../shared/documentDeepLinks';
 import { app, BrowserWindow, dialog, nativeImage, nativeTheme, session, shell } from 'electron';
 import {
     parseTrackerDeepLink,
@@ -6,7 +5,6 @@ import {
     type TrackerDeepLinkView,
 } from '../shared/trackerDeepLinks';
 import { parseInviteDeepLink, type InviteDeepLinkTarget } from '../shared/inviteDeepLinks';
-import { resolveOrgMessagingDestination } from '../shared/orgMessagingRouting';
 import { safeHandle, safeOn } from './utils/ipcRegistry';
 import { installMicrophoneGate } from './mediaPermissionGate';
 import { markBootComplete } from './utils/bootState';
@@ -71,6 +69,7 @@ import { registerPermissionHandlers } from './ipc/PermissionHandlers';
 import { registerGitStatusHandlers } from './ipc/GitStatusHandlers';
 import { registerGitHandlers } from './ipc/GitHandlers';
 import { registerProjectSelectionHandlers } from './ipc/ProjectSelectionHandlers';
+import { registerProjectAppearanceHandlers } from './ipc/ProjectAppearanceHandlers';
 import { registerMultiProjectRailHandlers } from './ipc/MultiProjectRailHandlers';
 import { registerUsageAnalyticsHandlers } from './ipc/UsageAnalyticsHandlers';
 import { registerWorktreeHandlers } from './ipc/WorktreeHandlers';
@@ -198,6 +197,9 @@ import {
 } from './protocols/collabAssetProtocol';
 import { SessionNamingService } from './services/SessionNamingService';
 import { SessionWakeupScheduler } from './services/SessionWakeupScheduler';
+import { createSessionWakeup } from './services/sessionWakeupCreation';
+import { configureUsageLimitAutoResume } from './services/ai/usageLimitAutoResume';
+import { getSettingsService } from './services/SettingsService';
 import { getPendingSubmissionStore, getSessionWakeupsStore, repositoryManager } from './services/RepositoryManager';
 import { recoverPendingSubmissionsOnBoot } from './services/ai/pendingSubmissions';
 import { ExtensionDevService } from './services/ExtensionDevService';
@@ -296,14 +298,12 @@ import {
   registerTeamHandlers,
   autoMatchTeamForWorkspace,
   getOrgScopedJwt,
-  findTeamForWorkspace,
   resolveInviteDeepLink,
   type InviteDeepLinkOutcome,
 } from './services/TeamService';
 import { registerOrgProjectWalkHandlers } from './services/OrgProjectWalkService';
 import {
     consumePendingOrgFeedbackLink,
-    queuePendingOrgFeedbackLink,
 } from './services/PendingOrgFeedbackLinks';
 import { registerSignInAttributionHandlers } from './services/SignInAttribution';
 import { registerProjectWalkClaimHandlers } from './services/ProjectWalkClaim';
@@ -341,6 +341,14 @@ import {
     FEEDBACK_REQUEST_DEEP_LINK_HOST,
     parseFeedbackRequestDeepLink,
 } from '../shared/feedbackRequestLinks';
+import {
+    findWorkspaceForOrgId,
+    openFeedbackRequestFromDeepLink,
+    openSharedDocumentFromDeepLink,
+    openSharedFolderFromDeepLink,
+    registerDeepLinkRoutingHandlers,
+} from './deepLinks/registerDeepLinkRouting';
+import { parseSharedDocumentDeepLink, parseSharedFolderDeepLink } from './deepLinks/sharedDocumentRouting';
 
 setAuthCallbackSuccessHandler(async () => {
   try {
@@ -873,18 +881,9 @@ if (!allowMultipleInstances) {
 // Track pending deep link URL
 let pendingDeepLinkUrl: string | null = null;
 
-// Per-workspace queue of shared-document deep links waiting for the renderer
-// to be ready (e.g., a window we just created for the project). Drained via
-// the `deep-link:consume-pending-shared-doc` IPC during listener init.
-const pendingSharedDocLinks = new Map<string, { documentId: string; orgId: string } & SharedDocumentAnchor>();
-
-safeHandle('deep-link:consume-pending-shared-doc', (_event, workspacePath: string) => {
-    if (!workspacePath) return null;
-    const pending = pendingSharedDocLinks.get(workspacePath);
-    if (!pending) return null;
-    pendingSharedDocLinks.delete(workspacePath);
-    return { ...pending, workspacePath };
-});
+// Shared-document, shared-folder and feedback-request links: queues, notices
+// for links that cannot be routed, and the routing itself.
+registerDeepLinkRoutingHandlers();
 
 // Project-org feedback requests land in Org mode. Queued by workspace so a
 // renderer still mounting can consume the same target as a live window; see
@@ -923,17 +922,6 @@ safeHandle('deep-link:consume-pending-team-invite', () => {
     return pending;
 });
 
-// Same pattern for shared-folder deep links: nimbalyst://folder/{folderId}?orgId=...
-const pendingSharedFolderLinks = new Map<string, { folderId: string; orgId: string }>();
-
-safeHandle('deep-link:consume-pending-shared-folder', (_event, workspacePath: string) => {
-    if (!workspacePath) return null;
-    const pending = pendingSharedFolderLinks.get(workspacePath);
-    if (!pending) return null;
-    pendingSharedFolderLinks.delete(workspacePath);
-    return { ...pending, workspacePath };
-});
-
 async function openInboxSourceFromDeepLink(rawUrl: string): Promise<boolean> {
     try {
         const parsed = new URL(rawUrl);
@@ -948,10 +936,8 @@ async function openInboxSourceFromDeepLink(rawUrl: string): Promise<boolean> {
             );
         }
         if (parsed.host === 'doc' && orgId) {
-            const documentId = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
-            return documentId
-                ? openSharedDocumentFromDeepLink(documentId, orgId, parseDocumentDeepLinkAnchor(parsed))
-                : false;
+            const link = parseSharedDocumentDeepLink(rawUrl);
+            return link ? openSharedDocumentFromDeepLink(link) : false;
         }
         if (parsed.host === 'conversation' && orgId) {
             const conversation = parseConversationDeepLink(rawUrl);
@@ -963,9 +949,7 @@ async function openInboxSourceFromDeepLink(rawUrl: string): Promise<boolean> {
         }
         if (parsed.host === FEEDBACK_REQUEST_DEEP_LINK_HOST) {
             const feedback = parseFeedbackRequestDeepLink(rawUrl);
-            return feedback
-                ? openFeedbackRequestFromDeepLink(feedback.requestId, feedback.orgId)
-                : false;
+            return feedback ? openFeedbackRequestFromDeepLink(feedback) : false;
         }
         return false;
     } catch {
@@ -1075,45 +1059,21 @@ async function handleDeepLink(url: string): Promise<void> {
                 logger.main.warn('[DeepLink] Extension install missing extension ID');
             }
         } else if (parsed.host === 'doc' || parsed.pathname?.startsWith('/doc/')) {
-            // Handle shared document link: nimbalyst://doc/{documentId}?orgId={orgId}
-            const encoded = parsed.host === 'doc'
-                ? parsed.pathname?.replace(/^\//, '')
-                : parsed.pathname?.replace('/doc/', '');
-            let documentId: string | undefined;
-            try {
-                documentId = encoded ? decodeURIComponent(encoded) : undefined;
-            } catch {
-                logger.main.warn('[DeepLink] Shared doc link has malformed documentId:', summarizeDeepLink(url));
+            // nimbalyst://doc/{documentId}?orgId={orgId}[&projectId={teamProjectId}]
+            const link = parseSharedDocumentDeepLink(url);
+            if (!link) {
+                logger.main.warn('[DeepLink] Shared doc link is malformed or missing documentId or orgId:', summarizeDeepLink(url));
                 return;
             }
-            const orgId = parsed.searchParams.get('orgId');
-
-            if (!documentId || !orgId) {
-                logger.main.warn('[DeepLink] Shared doc link missing documentId or orgId:', summarizeDeepLink(url));
-                return;
-            }
-
-            await openSharedDocumentFromDeepLink(documentId, orgId, parseDocumentDeepLinkAnchor(parsed));
+            await openSharedDocumentFromDeepLink(link);
         } else if (parsed.host === 'folder' || parsed.pathname?.startsWith('/folder/')) {
-            // Handle shared folder link: nimbalyst://folder/{folderId}?orgId={orgId}
-            const encoded = parsed.host === 'folder'
-                ? parsed.pathname?.replace(/^\//, '')
-                : parsed.pathname?.replace('/folder/', '');
-            let folderId: string | undefined;
-            try {
-                folderId = encoded ? decodeURIComponent(encoded) : undefined;
-            } catch {
-                logger.main.warn('[DeepLink] Shared folder link has malformed folderId:', summarizeDeepLink(url));
+            // nimbalyst://folder/{folderId}?orgId={orgId}[&projectId={teamProjectId}]
+            const link = parseSharedFolderDeepLink(url);
+            if (!link) {
+                logger.main.warn('[DeepLink] Shared folder link is malformed or missing folderId or orgId:', summarizeDeepLink(url));
                 return;
             }
-            const orgId = parsed.searchParams.get('orgId');
-
-            if (!folderId || !orgId) {
-                logger.main.warn('[DeepLink] Shared folder link missing folderId or orgId:', summarizeDeepLink(url));
-                return;
-            }
-
-            await openSharedFolderFromDeepLink(folderId, orgId);
+            await openSharedFolderFromDeepLink(link);
         } else if (parsed.host === FEEDBACK_REQUEST_DEEP_LINK_HOST) {
             // nimbalyst://feedback-request/{requestId}?orgId={orgId} — the app
             // half of the pasteable link, and the console's "Open in Nimbalyst"
@@ -1123,7 +1083,7 @@ async function handleDeepLink(url: string): Promise<void> {
                 logger.main.warn('[DeepLink] Feedback request link is incomplete:', summarizeDeepLink(url));
                 return;
             }
-            await openFeedbackRequestFromDeepLink(feedback.requestId, feedback.orgId);
+            await openFeedbackRequestFromDeepLink(feedback);
         } else if (parsed.host === 'invite' || parsed.pathname?.startsWith('/invite/')) {
             // Handle team invitation handoff from the web console:
             // nimbalyst://invite/{orgId}?email={email}
@@ -1245,208 +1205,6 @@ function collectOpenWorkspaces(): EndpointWorkspace[] {
         /* best-effort */
     }
     return out;
-}
-
-/**
- * Find a workspace path whose team matches the given orgId. Looks first
- * across all open windows (active + rail-warm), then falls back to the
- * user's recent workspaces. Returns null if no known workspace matches.
- */
-async function findWorkspaceForOrgId(orgId: string): Promise<string | null> {
-    const seen = new Set<string>();
-
-    // Open windows first — both active and rail-warm paths.
-    for (const state of windowStates.values()) {
-        const paths = new Set<string>();
-        const active = resolveActiveWorkspacePath(state);
-        if (active) paths.add(active);
-        if (state?.workspacePath) paths.add(state.workspacePath);
-        for (const p of state?.additionalWorkspacePaths ?? []) paths.add(p);
-
-        for (const workspacePath of paths) {
-            if (seen.has(workspacePath)) continue;
-            seen.add(workspacePath);
-            const team = await findTeamForWorkspace(workspacePath);
-            if (team?.orgId === orgId) return workspacePath;
-        }
-    }
-
-    // Fall back to recent workspaces the user has opened before.
-    const recent = getRecentItems('workspaces');
-    for (const item of recent) {
-        if (seen.has(item.path)) continue;
-        seen.add(item.path);
-        const team = await findTeamForWorkspace(item.path);
-        if (team?.orgId === orgId) return item.path;
-    }
-
-    return null;
-}
-
-/**
- * Route a shared-document deep link to the renderer holding the matching
- * team workspace. Queues the payload in `pendingSharedDocLinks` so a freshly
- * created window's renderer can drain it on listener init.
- *
- * `threadId` is present when the link came from a comment notification. It is
- * carried verbatim to the renderer, which opens the document's comments panel
- * on that thread; resolving where the thread is anchored is the mounted
- * editor's job, never this payload's.
- */
-async function openSharedDocumentFromDeepLink(documentId: string, orgId: string, anchor: SharedDocumentAnchor = {}): Promise<boolean> {
-    const reason = !isAuthenticated() ? 'not-authenticated' : 'no-workspace';
-    const workspacePath = isAuthenticated() ? await findWorkspaceForOrgId(orgId) : null;
-
-    if (!workspacePath) {
-        logger.main.warn('[DeepLink] Cannot route shared doc:', { reason, orgId, documentId });
-        const fallback = getMostRecentlyFocusedWorkspaceWindow();
-        if (fallback) {
-            if (fallback.isMinimized()) fallback.restore();
-            fallback.focus();
-            fallback.webContents.send('deep-link:shared-document-not-available', { documentId, orgId, reason });
-        }
-        return false;
-    }
-
-    // Queue first; the renderer drains by workspacePath on listener init.
-    // For an already-loaded window we also fire the live event below; the
-    // renderer treats it as idempotent against the pending queue.
-    pendingSharedDocLinks.set(workspacePath, { documentId, orgId, ...anchor });
-
-    const existing = findWindowByWorkspace(workspacePath);
-    if (existing && !existing.isDestroyed()) {
-        if (existing.isMinimized()) existing.restore();
-        existing.focus();
-        existing.webContents.send('deep-link:open-shared-document', {
-            documentId,
-            orgId,
-            workspacePath,
-            ...anchor,
-        });
-        logger.main.info('[DeepLink] Routed shared doc to existing window:', { workspacePath, documentId });
-        return true;
-    }
-
-    // No window has this workspace open — create one. The renderer's
-    // deep-link listener will drain the pending queue once it mounts.
-    logger.main.info('[DeepLink] Opening new window for shared doc workspace:', { workspacePath, documentId });
-    createWindow(false, true, workspacePath);
-    return true;
-}
-
-/**
- * Route a shared-folder deep link to the renderer holding the matching team
- * workspace. Mirrors the shared-document flow, but targets Collab mode focused
- * on the folder (expand ancestors + select).
- */
-async function openSharedFolderFromDeepLink(folderId: string, orgId: string): Promise<void> {
-    const reason = !isAuthenticated() ? 'not-authenticated' : 'no-workspace';
-    const workspacePath = isAuthenticated() ? await findWorkspaceForOrgId(orgId) : null;
-
-    if (!workspacePath) {
-        logger.main.warn('[DeepLink] Cannot route shared folder:', { reason, orgId, folderId });
-        const fallback = getMostRecentlyFocusedWorkspaceWindow();
-        if (fallback) {
-            if (fallback.isMinimized()) fallback.restore();
-            fallback.focus();
-            fallback.webContents.send('deep-link:shared-folder-not-available', { folderId, orgId, reason });
-        }
-        return;
-    }
-
-    pendingSharedFolderLinks.set(workspacePath, { folderId, orgId });
-
-    const existing = findWindowByWorkspace(workspacePath);
-    if (existing && !existing.isDestroyed()) {
-        if (existing.isMinimized()) existing.restore();
-        existing.focus();
-        existing.webContents.send('deep-link:open-shared-folder', {
-            folderId,
-            orgId,
-            workspacePath,
-        });
-        logger.main.info('[DeepLink] Routed shared folder to existing window:', { workspacePath, folderId });
-        return;
-    }
-
-    logger.main.info('[DeepLink] Opening new window for shared folder workspace:', { workspacePath, folderId });
-    createWindow(false, true, workspacePath);
-}
-
-/**
- * Route a feedback-request deep link to the project's Org mode or the
- * standalone organization window's Inbox.
- *
- * The destination is a *selected row*, not a tab: the respond card renders
- * inline in the Inbox's context pane, while `virtual://feedback-request/` is the
- * author's results view and would be the wrong place to land a recipient.
- *
- * That pane reads the request through a workspace-scoped target, so a workspace
- * bound to this org has to be resolvable first. Without one the link fails
- * honestly — the inbox row that offered it stays unread rather than opening a
- * window that could only show an empty pane.
- */
-async function openFeedbackRequestFromDeepLink(
-    requestId: string,
-    orgId: string,
-): Promise<boolean> {
-    if (!isAuthenticated()) {
-        logger.main.warn('[DeepLink] Cannot route feedback request:', {
-            reason: 'not-authenticated',
-            orgId,
-            requestId,
-        });
-        return false;
-    }
-
-    const focusedWindow = getMostRecentlyFocusedWorkspaceWindow();
-    const focusedWorkspacePath = resolveActiveWorkspacePathForWindowId(
-        getWindowIdForWindow(focusedWindow),
-    );
-    const focusedProjectOrgId = focusedWorkspacePath
-        ? (await findTeamForWorkspace(focusedWorkspacePath))?.orgId
-        : null;
-
-    if (
-        focusedWindow
-        && !focusedWindow.isDestroyed()
-        && focusedWorkspacePath
-        && resolveOrgMessagingDestination(focusedProjectOrgId, orgId) === 'project-mode'
-    ) {
-        queuePendingOrgFeedbackLink(focusedWorkspacePath, { requestId, orgId });
-        if (focusedWindow.isMinimized()) focusedWindow.restore();
-        focusedWindow.focus();
-        focusedWindow.webContents.send('deep-link:open-org-feedback-request', {
-            requestId,
-            orgId,
-            workspacePath: focusedWorkspacePath,
-        });
-        logger.main.info('[DeepLink] Routed feedback request to project Org mode:', {
-            orgId,
-            requestId,
-            workspacePath: focusedWorkspacePath,
-        });
-        return true;
-    }
-
-    const workspacePath = await findWorkspaceForOrgId(orgId);
-
-    if (!workspacePath) {
-        logger.main.warn('[DeepLink] Cannot route feedback request:', {
-            reason: 'no-workspace',
-            orgId,
-            requestId,
-        });
-        return false;
-    }
-
-    createTeamManagementWindow({ orgId, workspacePath, feedbackRequestId: requestId });
-    logger.main.info('[DeepLink] Routed feedback request to the organization window:', {
-        orgId,
-        requestId,
-        workspacePath,
-    });
-    return true;
 }
 
 /**
@@ -1984,6 +1742,7 @@ app.whenReady().then(async () => {
     registerAttachmentHandlers();
     registerProjectSelectionHandlers();
     registerMultiProjectRailHandlers();
+    registerProjectAppearanceHandlers();
     registerClaudeCodeHandlers();
     registerCodexAuthHandlers();
     initializeClaudeCodeSessionHandlers();  // Initialize Claude Code session import
@@ -2171,14 +1930,26 @@ app.whenReady().then(async () => {
         const enabledServers: Record<string, any> = {};
         for (const [name, config] of Object.entries(allServers)) {
             if (isMCPServerEnabledForProvider(config as MCPServerConfig, MCP_PROVIDER_IDS.CODEX)) {
+                // Codex speaks Streamable HTTP natively. Rewriting a server that is
+                // also present in ~/.codex/config.toml to an mcp-remote stdio entry
+                // makes Codex deep-merge `command` with the persisted `url`, which
+                // is an invalid mixed-transport configuration.
+                const codexHttp = await mcpConfigService.resolveMcpRemoteOptions(
+                    config as MCPServerConfig,
+                    { nativeHttpSupported: true }
+                );
                 const isAuthorized = await mcpConfigService.isOAuthAuthorized(config as MCPServerConfig, {
+                    ...codexHttp,
                     useMcpRemoteForNativeOAuth: true,
                 });
                 if (!isAuthorized) {
                     logger.mcp.info(`[MCP] Skipping unauthorized OAuth server for Codex: ${name}`);
                     continue;
                 }
-                enabledServers[name] = mcpConfigService.processServerConfigForRuntime(config as any);
+                enabledServers[name] = mcpConfigService.processServerConfigForRuntime(
+                    config as MCPServerConfig,
+                    codexHttp
+                );
             }
         }
         return enabledServers;
@@ -2356,28 +2127,8 @@ app.whenReady().then(async () => {
     // Lives here in main because runtime is cross-platform (Capacitor/mobile too) and must
     // not import Electron-only services.
     ClaudeCodeProvider.setScheduleWakeupHandler(async ({ sessionId, workspacePath, delaySeconds, prompt, reason }) => {
-        const id = `wakeup-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
         const fireAt = new Date(Date.now() + delaySeconds * 1000);
-
-        const row = await getSessionWakeupsStore().create({
-            id,
-            sessionId,
-            workspaceId: workspacePath,
-            prompt,
-            reason,
-            fireAt,
-        });
-        SessionWakeupScheduler.getInstance().onCreated(row);
-
-        for (const window of BrowserWindow.getAllWindows()) {
-            if (!window.isDestroyed()) {
-                try {
-                    window.webContents.send('wakeup:changed', row);
-                } catch {
-                    // ignore destroyed window
-                }
-            }
-        }
+        await createSessionWakeup(getSessionWakeupsStore(), { sessionId, workspacePath, prompt, reason, fireAt });
 
         console.log(`[CLAUDE-CODE] ScheduleWakeup -> session=${sessionId} fireAt=${fireAt.toISOString()} delay=${delaySeconds}s`);
     });
@@ -3114,6 +2865,15 @@ app.whenReady().then(async () => {
             },
         });
         await scheduler.start();
+        const wakeupsStore = getSessionWakeupsStore();
+        configureUsageLimitAutoResume({
+            store: wakeupsStore,
+            isEnabled: () => getSettingsService().get('ai.usageLimitAutoResumeEnabled'),
+            setEnabled: (enabled) => getSettingsService().set('ai.usageLimitAutoResumeEnabled', enabled),
+            create: (request) => createSessionWakeup(wakeupsStore, request),
+            cancel: (id) => scheduler.cancel(id),
+            now: () => Date.now(),
+        });
     } catch (error) {
         logger.mcp.error('Failed to start session wakeup scheduler:', error);
     }

@@ -1,18 +1,97 @@
-# nim — Nimbalyst companion CLI
+# nim: the Nimbalyst command line
 
-`nim` drives Nimbalyst's tracker system from the terminal — list, get, and show
-tracker items (bugs, tasks, decisions, imported records) without opening the
-desktop app. It mirrors the semantics of Nimbalyst's tracker MCP tools so a
-terminal agent works the way an agent inside Nimbalyst does.
+`nim` works with a project's wiki from a terminal or from any agent, with no Nimbalyst app installed:
 
-> Status: **Phases 1–3 complete**. Tracker reads; create/update/comment/archive/
-> link-session and `types define|rm` (live mode → WriteCoordinator + collab sync,
-> plus **guarded offline direct writes** when the app is closed); and importers
-> (`importers`, `import search`, `import <id>`, `import resnapshot`) in live mode.
-> Only Phase 4 polish (`--jq`/`--template`, config file, shell completions, npm
-> prebuilt-binary publishing) remains.
+- **Local wiki**: a folder of markdown pages in your repository. Create, read, write, search and move pages, track typed pages, and open the wiki in your browser to read and edit it. No account.
+- **Team wiki**: a Nimbalyst Teams project's pages on the Nimbalyst server, after `nim login`. A local wiki moves to a team project in one command (`nim wiki move-to-team`).
+- **`nim mcp`**: the same local wiki as an MCP server for Claude Code, Codex, Cursor, VS Code and other agents. The `nimbalyst-wiki` Claude Code plugin bundles it.
 
-## Two access modes behind one interface
+```sh
+npm install -g @nimbalyst/cli     # Node.js 22 or later
+nim wiki init                     # start a local wiki in nimbalyst-local/wiki
+nim wiki serve                    # read and edit it in your browser
+nim --help
+```
+
+If you also run the Nimbalyst desktop app, `nim tracker` reads and writes the app's trackers (bugs, tasks, decisions); see [Trackers in the Nimbalyst app](#trackers-in-the-nimbalyst-app).
+
+## Wiki
+
+For what the wiki is and how to use it from Claude Code, the app and the browser, see the [Nimbalyst Wiki README](../../plugins/nimbalyst-wiki/README.md).
+
+`nim wiki` works on two wikis: the project's local wiki (files in the repository, no account) and its team project's wiki on the sync server. `init` and `write` are local only; `status`, `edit`, `create`, `items` and the other team verbs below are team only. `list` (or `ls`), `read`, `move` and `search` use the local wiki when the project has one, and the team wiki otherwise or when the call names a team target (a `collab://` uri, a console link, `--repo`, or `--org` with `--project`). `--team` or `--local` forces either one.
+
+### Team wiki
+
+The team commands work on a Nimbalyst team project's Wiki on the sync server with your Nimbalyst Teams sign-in, not through a running Nimbalyst app. Each one calls the same wiki tool a terminal agent uses through the `nimbalyst-wiki` Claude Code plugin, with the same arguments, so a script and an agent see the same results. A repository reaches its pages through the team project a team admin connected its remote to; who belongs is decided in Nimbalyst Teams. Only team pages are reachable; Personal pages live in the desktop app.
+
+```sh
+nim login                      # device code, approved in the Nimbalyst console
+nim whoami / nim logout
+nim wiki status               # unbound (with your teams) | bound | ambiguous
+nim wiki bind --org <id> --project <id>                  # team admins
+nim wiki create-project --org <id> --name <n> [--bind]   # team admins
+nim wiki pin --org <id> --project <id>                   # one of the projects this repo resolves to
+nim wiki team-create "Acme"                              # a new team, its first project bound to this repo
+nim wiki invite --org <id> a@example.com --project <id> --project-role editor   # team admins
+nim wiki invite-link --org <id> --project <id> --max-uses 10                    # team admins
+
+nim wiki list                                            # the page tree, with links
+nim wiki read collab://org:<o>:doc:<id>                  # a page body as markdown
+nim wiki edit <uri> --old "exact text" --new "replacement"
+nim wiki create "Flag storage" --parent <pageId> --body-file notes.md
+nim wiki move CFS-2 --kind item --parent <pageId>
+nim wiki set-type <pageId> technology
+nim wiki items --type technology --where maturity=beta --json
+nim wiki create-item technology "Flagship" --field maturity=beta --body-file body.md
+nim wiki comments --page <uri>                           # citable comments
+```
+
+`nim --help` lists every verb: `list`, `read`, `edit`, `create`, `create-folder`, `move`, `rename`, `delete`, `set-type`, `members`, `types`, `define-type`, `items`, `item`, `create-item`, `update-item`, `comments`. Edits land directly, as an agent's do; each page's history is how a person reverts one.
+
+`repo` is `git remote get-url origin`. `.nimbalyst/wiki.json` holds an optional `{ orgId, projectId }` pin, sent as `project` to choose among projects you can already reach; it grants nothing. `--repo`, or `--org` with `--project`, targets something else and ignores the current directory's wiki.json. `nim wiki pin` only accepts a project the repository actually resolves to (one of an ambiguous match, or its bound project), and only for the current checkout. Tokens live in `credentials.json` (mode 0600, directory 0700) under the user config dir, are written under a lock, and refresh on their own; `nim logout` revokes the session on the server before deleting them.
+
+Env: `NIM_SERVER` (default `https://sync.nimbalyst.com`; `http://` only for localhost), `NIM_CONFIG_DIR` (credentials location), `NIM_GITHUB_NATIVE=on` (the earlier GitHub sign-in for `nim login`, off by default; `NIM_GITHUB_CLIENT_ID` configures its device flow).
+
+### Local wiki
+
+A local wiki is a folder of markdown pages (and CSV tables for table types) in the project, with no account or running app needed. The format is `@nimbalyst/local-wiki`'s `FORMAT.md`; the desktop app reads and writes the same files.
+
+```sh
+nim wiki init                                  # nimbalyst-local/wiki, a Home page, .gitignore entry
+nim wiki init --location docs/wiki             # a checked-in folder instead; .gitignore untouched
+nim wiki list [--json]                         # or ls
+nim wiki read <id|path|title> [--json]         # --json includes the body version
+nim wiki write <id|path|title> [--file F] [--expected-version V] [--create [--parent P]]
+nim wiki move <page> [--parent P | --root | --before P | --after P] [--title T]
+nim wiki search <words> [--limit N] [--json]
+nim wiki serve [--port N] [--no-open]          # opens the wiki in your browser (loopback only, token-protected)
+nim wiki move-to-team [--org <id> --project <id>] [--dry-run]   # the whole wiki into this repo's team project
+```
+
+- The folder is `--location`, else `location` in `.nimbalyst/local-wiki.json` (relative to the project root; `init` writes it), else `nimbalyst-local/wiki`. In a git worktree the project root is the main checkout, so worktrees share one wiki.
+- `init` adds `nimbalyst-local/` to `.gitignore` only when the wiki is under it and git does not already ignore it.
+- `write` reads the body from `--file` or stdin. With `--expected-version` (from `read --json`) it refuses to overwrite a page that changed since, with exit code `7` and nothing written.
+- `move-to-team` needs `nim login` and a repository connected to a team project (`nim wiki status` says bound). It copies every markdown page and typed page, with hierarchy, order, fields and type definitions, and rewrites links between pages to the team pages. Page bodies go from the files to the server in batches paced under the server's rate limit. Editor pages (drawings, spreadsheets) are listed as not moved. The local files are never deleted; after a verified move `.nimbalyst/local-wiki.json` gets `migratedTo` and the local Home gets a line pointing at the team wiki. Re-running it resumes an interrupted move without duplicating pages. `--dry-run` only counts and checks the target.
+- `nim tracker list/get/show/create/update` use the local wiki for wiki types: a type whose `.nimbalyst/trackers/<type>.yaml` declares `storage: pages` or `storage: table` (list and create, from its first item), a type that already has typed pages in the wiki (list), or the id of a typed page or table row there (get, show, update). `--local` forces the wiki. New items of a type without `storage:` are refused in the wiki (its items live in the app database). Everything else goes to the app database as before.
+
+## `nim mcp`
+
+`nim mcp` runs an MCP server on stdio for agents such as Claude Code: newline-delimited JSON-RPC (`initialize`, `tools/list`, `tools/call`, `ping`), with stdout reserved for protocol messages and all logging on stderr. It exits when stdin closes.
+
+```sh
+claude mcp add nimbalyst-local -- nim mcp
+```
+
+It serves the local wiki under the same tool names as the team wiki server: `listPages`, `searchPages`, `readCollabDoc`, `applyCollabDocEdit` (exact replacements, or `content` for the whole body, with an optional `expectedVersion`), `createSharedDoc`, `createSharedFolder`, `moveSharedItem`, `renameSharedItem`, `deleteSharedItem` (to the wiki's `.trash/`), `setPageType`, `setPageFields`, and `tracker_list_types`, `tracker_list`, `tracker_get`, `tracker_create`, `tracker_update` for types placed in the wiki. Pages are addressed as `local-wiki://<id>`, by id, or by path. It also serves `initLocalWiki`, which creates the wiki (default `nimbalyst-local/wiki`, or a `location` relative to the project root), so an agent can start one without anyone running `nim wiki init`. The list does not change during a session: without a wiki each tool answers that `initLocalWiki` creates one. Team data is never read or written here: a call with `section: 'team'`, a `collab://` uri, a console link or a team issue key is refused and names the tool to call on the `nimbalyst-team` server instead. `--workspace` and `--location` choose the wiki as for `nim wiki`.
+
+For moving the local wiki to Nimbalyst Teams without the app it also serves `teamSignIn` (the `nim login` device flow; the first call opens the approval page and answers `pending`, a later call answers `signedIn`; tokens are stored where `nim login` keeps them), `moveLocalWikiToTeam` (the same move as `nim wiki move-to-team`; it returns counts, links and errors, never page bodies) and `openUrl` (opens `https://console.nimbalyst.com/...` pages only).
+
+## Trackers in the Nimbalyst app
+
+`nim tracker` lists, reads and writes the tracker items (bugs, tasks, decisions, imported records) of a Nimbalyst desktop workspace, with the same semantics as the app's tracker MCP tools, so a terminal agent works the way an agent inside Nimbalyst does. These commands need the app's database on this machine; the wiki commands above do not.
+
+### Two access modes behind one interface
 
 - **Live mode** — talks to a *running* Nimbalyst over its loopback MCP-HTTP
   server (reads reflect in-app state). Discovered via the endpoint descriptor the
@@ -29,7 +108,7 @@ terminal agent works the way an agent inside Nimbalyst does.
 The CLI auto-detects: it tries live discovery first and falls back to direct.
 `--live` / `--offline` force a mode; `--db <file>` points at a specific database.
 
-## Usage
+### Usage
 
 ```
 nim <noun> <verb> [--flags]
@@ -73,7 +152,7 @@ nim tracker import resnapshot github://owner/repo#42
 > types the app hasn't materialized fall back to default field names.
 > `link-session` and `types define|rm` are live-only.
 
-### Filters
+#### Filters
 
 - `--type`, `--type-tag`, `--priority`, `--owner me|<o>`, `--search`
 - `--status open|closed|<status>` — `open`/`closed` resolve against the set of
@@ -85,88 +164,23 @@ nim tracker import resnapshot github://owner/repo#42
 - `nim tracker ready` is the preset for `nim tracker list --where readiness=ready`.
 - `--limit <n>` / `--all`, `--archived`.
 
-### Output
+#### Output
 
 - TTY default: a compact, colored table.
 - `--json` — the canonical `TrackerRecord` (the stable agent contract).
 - `--csv` + `--columns a,b,c` — tabular export.
 - `--quiet`/`-q` — ids only. `--no-color` (also honors `NO_COLOR` / non-TTY).
 
-### Exit codes
+#### Exit codes
 
 `0` ok · `1` not found · `2` usage · `3` connection (incl. importers in offline
 mode) · `4` schema-incompatible · `5` write-not-permitted (a live app owns the
 DB, or a live-only command in offline mode). `6` is retired. `7` conflict (`nim wiki write --expected-version` on a page that changed).
 
-### Env
+#### Env
 
 `NIM_DB`, `NIM_WORKSPACE`, `NIM_ENDPOINT` + `NIM_TOKEN` (force live), `NIM_OWNER`
 (resolves `--owner me`), `NO_COLOR`, `NIM_DEBUG` (stack traces).
-
-## Wiki
-
-For what the wiki is and how to use it from Claude Code, the app and the browser, see the [Nimbalyst Wiki README](../../plugins/nimbalyst-wiki/README.md).
-
-`nim wiki` works on two wikis: the project's local wiki (files in the repository, no account) and its team project's wiki on the sync server. `init` and `write` are local only; `status`, `edit`, `create`, `items` and the other team verbs below are team only. `list` (or `ls`), `read`, `move` and `search` use the local wiki when the project has one, and the team wiki otherwise or when the call names a team target (a `collab://` uri, a console link, `--repo`, or `--org` with `--project`). `--team` or `--local` forces either one.
-
-### Team wiki
-
-The team commands work on a Nimbalyst team project's Wiki on the sync server with your Nimbalyst Teams sign-in, not through a running Nimbalyst app. Each one calls the same wiki tool a terminal agent uses through the `nimbalyst-wiki` Claude Code plugin, with the same arguments, so a script and an agent see the same results. A repository reaches its pages through the team project a team admin connected its remote to; who belongs is decided in Nimbalyst Teams. Only team pages are reachable; Personal pages live in the desktop app.
-
-```sh
-nim login                      # device code, approved in the Nimbalyst console
-nim whoami / nim logout
-nim wiki status               # unbound (with your teams) | bound | ambiguous
-nim wiki bind --org <id> --project <id>                  # team admins
-nim wiki create-project --org <id> --name <n> [--bind]   # team admins
-nim wiki pin --org <id> --project <id>                   # one of the projects this repo resolves to
-
-nim wiki list                                            # the page tree, with links
-nim wiki read collab://org:<o>:doc:<id>                  # a page body as markdown
-nim wiki edit <uri> --old "exact text" --new "replacement"
-nim wiki create "Flag storage" --parent <pageId> --body-file notes.md
-nim wiki move CFS-2 --kind item --parent <pageId>
-nim wiki set-type <pageId> technology
-nim wiki items --type technology --where maturity=beta --json
-nim wiki create-item technology "Flagship" --field maturity=beta --body-file body.md
-nim wiki comments --page <uri>                           # citable comments
-```
-
-`nim --help` lists every verb: `list`, `read`, `edit`, `create`, `create-folder`, `move`, `rename`, `delete`, `set-type`, `members`, `types`, `define-type`, `items`, `item`, `create-item`, `update-item`, `comments`. Edits land directly, as an agent's do; each page's history is how a person reverts one.
-
-`repo` is `git remote get-url origin`. `.nimbalyst/wiki.json` holds an optional `{ orgId, projectId }` pin, sent as `project` to choose among projects you can already reach; it grants nothing. `--repo`, or `--org` with `--project`, targets something else and ignores the current directory's wiki.json. `nim wiki pin` only accepts a project the repository actually resolves to (one of an ambiguous match, or its bound project), and only for the current checkout. Tokens live in `credentials.json` (mode 0600, directory 0700) under the user config dir, are written under a lock, and refresh on their own; `nim logout` revokes the session on the server before deleting them.
-
-Env: `NIM_SERVER` (default `https://sync.nimbalyst.com`; `http://` only for localhost), `NIM_CONFIG_DIR` (credentials location), `NIM_GITHUB_NATIVE=on` (the earlier GitHub sign-in for `nim login`, off by default; `NIM_GITHUB_CLIENT_ID` configures its device flow).
-
-### Local wiki
-
-A local wiki is a folder of markdown pages (and CSV tables for table types) in the project, with no account or running app needed. The format is `@nimbalyst/local-wiki`'s `FORMAT.md`; the desktop app reads and writes the same files.
-
-```sh
-nim wiki init                                  # nimbalyst-local/wiki, a Home page, .gitignore entry
-nim wiki init --location docs/wiki             # a checked-in folder instead; .gitignore untouched
-nim wiki list [--json]                         # or ls
-nim wiki read <id|path|title> [--json]         # --json includes the body version
-nim wiki write <id|path|title> [--file F] [--expected-version V] [--create [--parent P]]
-nim wiki move <page> [--parent P | --root | --before P | --after P] [--title T]
-nim wiki search <words> [--limit N] [--json]
-nim wiki serve [--port N] [--no-open]          # opens the wiki in your browser (loopback only, token-protected)
-```
-
-- The folder is `--location`, else `location` in `.nimbalyst/local-wiki.json` (relative to the project root; `init` writes it), else `nimbalyst-local/wiki`. In a git worktree the project root is the main checkout, so worktrees share one wiki.
-- `init` adds `nimbalyst-local/` to `.gitignore` only when the wiki is under it and git does not already ignore it.
-- `write` reads the body from `--file` or stdin. With `--expected-version` (from `read --json`) it refuses to overwrite a page that changed since, with exit code `7` and nothing written.
-- `nim tracker list/get/show/create/update` use the local wiki for wiki types: a type whose `.nimbalyst/trackers/<type>.yaml` declares `storage: pages` or `storage: table` (list and create, from its first item), a type that already has typed pages in the wiki (list), or the id of a typed page or table row there (get, show, update). `--local` forces the wiki. New items of a type without `storage:` are refused in the wiki (its items live in the app database). Everything else goes to the app database as before.
-
-## `nim mcp`
-
-`nim mcp` runs an MCP server on stdio for agents such as Claude Code: newline-delimited JSON-RPC (`initialize`, `tools/list`, `tools/call`, `ping`), with stdout reserved for protocol messages and all logging on stderr. It exits when stdin closes.
-
-```sh
-claude mcp add nimbalyst-local -- nim mcp
-```
-
-It serves the local wiki under the same tool names as the team wiki server: `listPages`, `searchPages`, `readCollabDoc`, `applyCollabDocEdit` (exact replacements, or `content` for the whole body, with an optional `expectedVersion`), `createSharedDoc`, `createSharedFolder`, `moveSharedItem`, `renameSharedItem`, `deleteSharedItem` (to the wiki's `.trash/`), `setPageType`, `setPageFields`, and `tracker_list_types`, `tracker_list`, `tracker_get`, `tracker_create`, `tracker_update` for types placed in the wiki. Pages are addressed as `local-wiki://<id>`, by id, or by path. It also serves `initLocalWiki`, which creates the wiki (default `nimbalyst-local/wiki`, or a `location` relative to the project root), so an agent can start one without anyone running `nim wiki init`. The list does not change during a session: without a wiki each tool answers that `initLocalWiki` creates one. Team data is never read or written here: a call with `section: 'team'`, a `collab://` uri, a console link or a team issue key is refused and names the tool to call on the `nimbalyst-team` server instead. `--workspace` and `--location` choose the wiki as for `nim wiki`.
 
 ## Notes for maintainers
 

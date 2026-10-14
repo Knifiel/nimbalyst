@@ -25,12 +25,21 @@ import type { Store } from 'jotai/vanilla/store';
 // renderer atom module in behind it.
 import { store } from '@nimbalyst/runtime/store';
 import { stytchAuthAtom } from '../atoms/stytchAuth';
-import { invalidateElectronCollabScopes } from '../atoms/collabDocuments';
+import { invalidateElectronCollabScopes, invalidateElectronCollabScopeWithoutTeam } from '../atoms/collabDocuments';
 
 export function initCollabScopeListeners(targetStore: Store = store): () => void {
   const unsubscribeOrgChanged = window.electronAPI.on(
     'team:workspace-org-changed',
     () => { invalidateElectronCollabScopes(); },
+  );
+  // Main matched a workspace to a team from the refreshed team directory. A
+  // window that resolved "no team" before the directory had it asks again;
+  // the match also re-fires for workspaces already showing their team.
+  const unsubscribeMatched = window.electronAPI.on(
+    'team:workspace-matched',
+    (payload: { workspacePath?: string } | undefined) => {
+      if (payload?.workspacePath) invalidateElectronCollabScopeWithoutTeam(payload.workspacePath);
+    },
   );
 
   // Only a real sign-in/sign-out flips the answer. The atom starts null while
@@ -50,6 +59,7 @@ export function initCollabScopeListeners(targetStore: Store = store): () => void
 
   return () => {
     unsubscribeOrgChanged();
+    unsubscribeMatched();
     unsubscribeAuth();
   };
 }

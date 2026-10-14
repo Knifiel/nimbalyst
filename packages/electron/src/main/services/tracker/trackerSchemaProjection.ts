@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
-import simpleGit from 'simple-git';
+import { createGit } from '../gitClient';
 import {
   globalRegistry,
   parseTrackerYAML,
@@ -355,7 +355,7 @@ export async function isGitTrackedTrackerSchemaFile(
   const relativePath = path.relative(workspacePath, filePath);
   if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) return false;
   try {
-    const result = await simpleGit(workspacePath).raw([
+    const result = await createGit(workspacePath).raw([
       '--no-optional-locks',
       'ls-files',
       '--cached',
@@ -524,7 +524,7 @@ async function gitTrackedSchemaPaths(
     .filter((filePath) => filePath && !filePath.startsWith('..') && !path.isAbsolute(filePath));
   if (relativePaths.length === 0) return new Set();
   try {
-    const raw = await simpleGit(workspacePath).raw([
+    const raw = await createGit(workspacePath).raw([
       '--no-optional-locks', 'ls-files', '--cached', '-z', '--', ...relativePaths,
     ]);
     return new Set(raw.split('\0').filter(Boolean).map((filePath) => path.resolve(workspacePath, filePath)));

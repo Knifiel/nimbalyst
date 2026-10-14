@@ -28,10 +28,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Edits inside a repository cloned in the project and ignored by its `.gitignore` now reach the file tree and open editors, following that clone's own ignore rules.
 - Git repositories cloned inside a project and ignored by its `.gitignore` now get status badges and appear in the Git panel's repo picker and the title-bar branch menu.
 - The pull request panel no longer reports the GitHub CLI as signed out when `gh auth status` is slow to answer.
-- Cmd+Alt+W (Ctrl+Alt+W on Windows and Linux) now opens the new-worktree dialog, like the New Worktree menu item it is shown next to, instead of creating a worktree with a generated name
-- In a project spanning several repositories, pulling or pushing one of them from the title bar shows its progress and names the repository, and no longer greys out pull and push for the others while it runs
 - A Claude Code session no longer keeps showing "Waiting for your response" after you answer its question while it carries on working.
 - After you start a new session to implement a plan, the planning session's plan card says "Deferred to new session" instead of "Denied"
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.81.3] - 2026-10-14
+
+
+### Added
+<!-- New features go here -->
+- nimbalyst-wiki plugin: `/nimbalyst-wiki:team` moves a local wiki to a new or existing Nimbalyst team from Claude Code, opens it in the browser and invites teammates by email or invite link, with no desktop app needed.
+- nimbalyst-wiki plugin: in Claude Code and Codex, the agent tells you when a newer plugin version is out and which commands install it (turn off with `NIMBALYST_WIKI_NO_UPDATE_CHECK=1`).
+- Local wiki browser view (`nim wiki serve`): markdown pages store pasted and dropped files in the page's `.assets/` folder, link other pages or create one from `@`, insert references to the wiki's typed pages from `#`, show linked drawings and other editor pages live, and find and replace with Cmd+F.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+- Shared team wiki and feedback request links open in the right project with the right editor, or show why they can't, instead of a blank tab or nothing.
+- Local wiki browser view (`nim wiki serve`): opening a drawing page, or a canvas with a drawing card, and then navigating away no longer erases the drawing.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.81.2] - 2026-10-13
+
+
+### Added
+<!-- New features go here -->
+- nimbalyst-wiki plugin: `/nimbalyst-wiki:start` tour, opens the local wiki in the browser with nothing to install, MIT license.
+- Local wiki browser view opens, edits and creates drawings, mind maps, spreadsheets, data models, mockups and canvases.
+- `nim mcp` gains mind map and Excalidraw tools so agents can build those pages without the app.
+- Local wiki table types convert to pages from the browser view, `nim wiki convert-type`, or an agent, keeping item ids.
+- Share a personal tracker type with the team from the tracker sidebar or the Wiki's Personal Types table.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- Alpha installs under 256 MiB can migrate from PGLite to SQLite automatically at startup as the staged rollout reaches them.
+- Local wiki table rows are read-only; the wiki setup skill creates page types with table columns by default.
+
+### Fixed
+<!-- Bug fixes go here -->
+- macOS Cmd+` cycles windows again while an agent drives a headless browser session.
+- iPhone keeps the landscape session list hidden across rotation and relaunch.
+- iOS left-edge swipe from the session list returns to the project list again.
+- display_to_user images render in the iOS transcript instead of a broken image.
+- Wide document tables scroll sideways with the first column pinned; phone-width screens show rows as cards.
+- New type no longer hangs on "Creating..."; it finishes, shows the server's refusal, or says the type is still syncing.
+- Set type leaves the page in place when the type has not reached the server.
+- Notice shown when a project's team tracker types are not syncing.
+- `nim wiki serve` picks up type changes live, keeps its address across restarts, and catches edits made right after start.
+- Local wiki fields with reserved names (`activity`, `comments`) are reported as a type problem instead of showing blank.
+- Git baseline reads no longer return another file's content after a git helper process restarts.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.81.1] - 2026-10-12
+
+
+### Added
+<!-- New features go here -->
+- The nimbalyst-wiki plugin installs in the Codex CLI, with the same wiki skills and tools as in Claude Code
+- Drop or paste files into a local wiki page to attach them: images show inline, other files become links, and attachments stay with the page when it is renamed or moved
+- Claude Code sessions suggest your next prompt in the empty input after a turn; press Tab to fill it in (toggle in Agent Features)
+- Claude Agent sessions stopped by a usage limit can continue on their own once the limit resets; turn it on from the limit card in the transcript or in Agent Features
+- The iOS app can copy diagnostics (versions and recent sync errors, no session content) from Settings, the "Couldn't load sessions" screen and the sync error banner, for pasting into a bug report
+- Customize a project's initials, color, or image in Project Settings > Appearance
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- The built-in tutorial project now shows how to set up a Wiki for the project and where to find it
+- The Wiki extension is now on by default, so agents can set up and write a project's wiki without enabling it first; if you turned it off, it stays off
+- The meta agent's delegated sessions panel can now be folded away, so the transcript gets the full width on a narrow or vertical window.
+- Pages search and the tracker toolbar show active filters, tags and source as pills inside the search box; the tracker toolbar's Clear and source buttons are gone, Filter is an icon in the box, and Import moved into the New menu
+
+### Fixed
+<!-- Bug fixes go here -->
+- Sessions in projects you have not turned on in Settings > Sync no longer upload their messages to the sync server while they run
+- A prompt you send from the desktop no longer stays in the phone's input box
+- Cmd+Alt+W (Ctrl+Alt+W on Windows and Linux) now opens the new-worktree dialog, like the New Worktree menu item it is shown next to, instead of creating a worktree with a generated name
+- Codex sessions no longer fail to start when an HTTP MCP server is also listed in `~/.codex/config.toml`
+- Copilot tool calls show their tool name, arguments and result instead of "unknown", and Copilot messages are labeled "Copilot Agent"
+- Archiving a session now shows an error when it fails, and no longer hangs when a worktree's git remote stops responding
+- In a project spanning several repositories, pulling or pushing one of them from the title bar shows its progress and names the repository, and no longer greys out pull and push for the others while it runs
+- Clicking or dropping a file in the empty space below a short markdown document now lands in the editor instead of doing nothing
+- In a type's table, clicking a page title now opens the page, and the web wiki viewer shows the fields defined in the type file as columns
+- Picking a filter such as a tag in Pages search now applies it instead of discarding it
+- The phone no longer shows a "different sync key" notice that re-pairing could not clear, and its computer picker lists only computers seen in the last week, hiding the picker when there is just one
+- The phone no longer fails to open a session with "bad response from the server" after its sign-in token expires while it is reconnecting
+- Long assistant replies and question forms no longer disappear from the phone's transcript; only bulky tool output is shortened for mobile sync
 
 ### Removed
 <!-- Removed features go here -->
@@ -61,6 +150,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local wiki pages an agent edited now open in the Wiki with the edit applied instead of in red/green review
 - Removing a project's last slash command or action prompt on the desktop now removes it on the phone too
 - The iOS session list now shows an error when the device's database can't be read, instead of an empty list
+- The iOS session list no longer fails with "Couldn't load sessions" on iPhones with an older system SQLite
+- On iOS, when refreshing your sign-in keeps failing, the "Sign in again" banner now appears after the first failed retry instead of after several minutes of loading
 - The desktop no longer fails to refresh its sign-in every 30 seconds when its saved sync server address is malformed
 - A Local wiki type file written as the wiki format describes, without `icon`, `color`, `modes` or `idPrefix`, now loads; a type file that still fails to load shows in the Local section with the reason instead of its tables and typed pages silently disappearing
 - Shell commands no longer appear as sub-agents in the agent sidebar, and a stopped task no longer looks the same as one that failed.

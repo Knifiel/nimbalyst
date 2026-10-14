@@ -2,6 +2,8 @@ import React from 'react';
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { Provider, createStore } from 'jotai';
 import { afterEach, expect, it, vi } from 'vitest';
+import { openSettingsCommandAtom } from '../../store/atoms/settingsNavigation';
+import { projectAppearanceAtom } from '../../store/atoms/projectAppearance';
 import { ProjectRail } from '../ProjectRail';
 import { activeWorkspacePathAtom, multiProjectModeAtom, openProjectsAtom } from '../../store/atoms/openProjects';
 
@@ -114,5 +116,19 @@ it('commits a native drag only on drop, and ignores external drops and cancellat
   fireEvent.dragStart(source, { dataTransfer });
   fireEvent(list, Object.assign(new MouseEvent('drop', { bubbles: true, clientY: 0 }), { dataTransfer }));
   expect(store.get(openProjectsAtom).map(p => p.name)).toEqual(['C', 'A', 'B']);
+  expect(store.get(activeWorkspacePathAtom)).toBe(projects[0].path);
+});
+
+it('customizes an inactive project without switching or editing the active project', () => {
+  const store = createStore();
+  const projects = [{ path: '/p/active', name: 'Active', openedAt: 0 }, { path: '/p/FileRocket', name: 'FileRocket', openedAt: 1 }];
+  store.set(multiProjectModeAtom, true);
+  store.set(openProjectsAtom, projects);
+  store.set(activeWorkspacePathAtom, projects[0].path);
+  for (const project of projects) store.set(projectAppearanceAtom(project.path), { snapshot: { revision: 0, appearance: {} } });
+  const view = render(<Provider store={store}><ProjectRail /></Provider>);
+  fireEvent.contextMenu(view.getByRole('button', { name: 'Switch to project FileRocket' }));
+  fireEvent.click(view.getByText('Customize appearance…'));
+  expect(store.get(openSettingsCommandAtom)?.destination).toEqual({ scope: 'project', category: 'project-appearance', target: { kind: 'workspace', workspacePath: projects[1].path } });
   expect(store.get(activeWorkspacePathAtom)).toBe(projects[0].path);
 });

@@ -1,302 +1,118 @@
 # CLAUDE.md
 
-Guidance for Claude Code (claude.ai/code) when working in this repository.
+Guidance for agents working in this repository. Each rule is one line; the linked file has the detail. Most hard rules are also enforced by the git hooks and by `pnpm test:prepush-gate`, so a rule you did not read still fails the push. Past incidents behind these rules live in the linked rule files, not here.
 
-## Critical Rules (read first)
+## Hard rules
 
-### Keep Commit Messages and CHANGELOG Entries Short
+### Git and commits
 
-**Write the CHANGELOG entry only when a commit is requested — never while implementing.** `CHANGELOG.md` is touched by nearly every task, so an entry written early both describes code that is not in the tree yet and collides with every other session running against this checkout. See [parallel-sessions.md](./.claude/rules/parallel-sessions.md).
+- Never commit, push, release, restart the app, or run `pnpm run dev` unless asked. A commit request is the only time you edit `CHANGELOG.md`; see [/commit](./.claude/commands/commit.md).
+- One-sentence commit subject. One CHANGELOG bullet per feature, user-facing, no internal names. `Fixes #123` and `Fixes NIM-123` trailers close issues and tracker items.
+- The only push is `git push origin main`. Land contributions with [/land-contribution](./.claude/commands/land-contribution.md). Never push to a contributor branch, approve or merge a PR on GitHub, force-push, or use `--no-verify`. The pre-push hook refuses other destinations, test-fixture authors, oversized commits, and local-only files.
+- No `git stash`, `git reset`, `git add -A`, or amend without asking. No `Co-Authored-By` lines.
+- Never commit `nimbalyst-local/` or `agent-mistakes.md`. The pre-commit hook refuses them.
 
-**One-sentence commit subject. One-sentence CHANGELOG bullet.** Commit bodies may include short bullets for distinct key changes — one line each, no prose paragraphs, no root-cause explanations unless the diff truly can't explain itself. Match the existing voice in `[Unreleased]` and recent `git log --oneline`. If your draft is longer than the surrounding entries, cut it before submitting.
+### Tests and the gate
 
-**One feature = one CHANGELOG bullet, no matter how many commits built it.** A multi-commit feature (e.g. a whole panel landed over a dozen PRs) gets a single user-facing line, not one bullet per commit. Do NOT append a new bullet for every follow-up commit to the same feature — edit the existing bullet instead. The `[Unreleased]` section must read like a short release summary, not a commit log.
+- Every runtime behavior change ships with a unit test. For sync, main-process init, IPC, and restart-to-verify bugs the failing test comes first; see [end-to-end-verification](./.claude/rules/end-to-end-verification.md).
+- The gate is `pnpm typecheck && pnpm test:prepush`. The orchestrating session runs it once per batch; slices never run it. The pre-push hook runs it too.
+- Never run the suite twice to see what failed, and never pipe it through `tail`. Read `pnpm run test:last`.
+- A failing test on main is yours to fix. "Pre-existing" is not a reason to push.
+- Tests catch what a reader cannot see: no presentation-only tests, no asserting on component source text, no injecting CSS and asserting on it, no `expect(getBy*()).toBeTruthy()`.
+- Mock the narrowest module and import deep paths. Never mock or import the `@nimbalyst/runtime` barrel in a test. When you move an import, grep the tests for the old specifier in the same commit.
+- Put `// @vitest-environment node` first in any test that never touches the DOM. Extend an existing test file before creating one.
+- E2E: one spec per `pnpm exec playwright test` invocation, never in parallel. See [E2E_TESTING.md](./docs/E2E_TESTING.md).
 
-**Never put internal scaffolding in the CHANGELOG.** No table/column names, IPC channel names, service/store class names, env-var plumbing, migration registration, poll intervals, or "internal scaffolding for the upcoming X" bullets. The changelog answers "what can I now do / what's fixed" for a user — if a line names a symbol or a file, it's wrong. Internal-only changes (typecheck, tests, refactors, doc/agent tweaks, lint, dep bumps with no behavior change) get NO entry.
+### Data and safety
 
-**At release time, condense — don't ship the dev-time bullets verbatim.** `[Unreleased]` accumulates verbose per-commit bullets during development. Before tagging, collapse them: merge a feature's scattered bullets into one line, drop scaffolding, squash near-duplicates. If the release notes are longer than the equivalent section in a recent shipped version, cut harder.
+- Both PGLite and better-sqlite3 are live. `data->'key'` is an object on PGLite and a string on SQLite; parse defensively. Read [DATABASE.md](./packages/electron/DATABASE.md) before touching schema, queries, or JSON columns.
+- Never open the database files from another process. Query through `mcp__nimbalyst-extension-dev__database_query`.
+- Local database state is not server state. Shared trackers and documents live in Durable Objects in the `nimbalyst-collab` repository. Verify the server side with `wrangler tail` or the wrangler-backed collab E2E specs before closing a sync bug.
+- Any path that renames, moves, truncates, overwrites, or deletes user data retries first, verifies real damage, emits its event before acting, and leaves a recoverable artifact. See [destructive-data-paths](./.claude/rules/destructive-data-paths.md).
+- API keys come only from Nimbalyst settings. Never read them from `process.env`.
+- The personal JWT is for personal and mobile sync only. The team JWT authorizes all team collaboration. Use the branded types in `packages/runtime/src/auth/jwtScopes.ts`. See [IDENTITY_AUTH_AND_ROOMS.md](./docs/IDENTITY_AUTH_AND_ROOMS.md).
+- Never `app.exit()`. Never `localStorage` in the renderer. Use `safeHandle` and `safeOn` in main, never raw `ipcMain`.
 
-### Keep the Feature Inventory Current
+### Verification and observation
 
-**When adding, significantly expanding, or removing a notable product capability, update [FEATURE_INVENTORY.md](./docs/FEATURE_INVENTORY.md) during implementation.** Examples include a new editor, provider integration, collaboration workflow, automation, or CLI capability. It applies to every agent provider and to ordinary prompts as well as skills. The CHANGELOG's commit-time rule does not defer inventory maintenance.
+- Do not say "fixed" or "verified" until you observed it: a test that went red to green, a screenshot, or a log line showing the failing step succeed. End the task with that evidence, or say plainly that it is unverified.
+- Run your own observation commands. Logs: `get_main_process_logs` and `get_renderer_debug_logs`. HTTP, `wrangler tail`, and `gh` run from Bash. Live renderer state: `renderer_eval`. Never ask the user to run a command or paste output. See [DEBUGGING_LOGS.md](./docs/DEBUGGING_LOGS.md).
+- A `try { } catch { console.error }` around your change can swallow it. Grep the log for the catch message after exercising the path.
+- Check dev mode with `get_environment_info` before changing code. Ask before `restart_nimbalyst`.
 
-**Inclusion test: would someone exploring what Nimbalyst can do look for this capability by itself?** Remote agent execution and structured teammate feedback qualify. Elapsed-time counters, status badges, button placement, resizing, and automatic scrolling do not. User-visible does not automatically mean inventory-worthy. The inventory is a curated capability reference, not an exhaustive UI checklist or a second changelog.
+### Parallel sessions
 
-Read the relevant section first; group related functionality under an existing capability. Keep only details needed to understand its scope, platform, opt-in requirements, or material limitations. Correct obsolete claims even when the correction is small. Routine fixes, performance improvements, refactors, tests, dependency/model-version bumps, and interaction polish need no entry. Do not record plans or internal scaffolding as working features.
+- Slices own disjoint file sets, including `CHANGELOG.md`, `package.json`, barrels, registries, and `docs/FEATURE_INVENTORY.md`. If two slices need one file, they are one slice. No whole-file `Write` on a file you did not create. See [parallel-sessions](./.claude/rules/parallel-sessions.md).
 
-In a parallel batch, the integrating session owns the inventory; slices report the capability change and evidence instead of editing this shared file. Before the final handoff or commit proposal, report **"Feature inventory updated"** with the section, or **"No inventory impact"** with a short reason. A slice handing the update to its integrator must say it is pending; the integrator must apply it before the batch is handed off. At release preparation, reconcile the release's Added/Changed/Removed capabilities against the inventory, checking current code when scope is unclear.
+### Code conventions
 
-### Parallel Sessions Must Not Share Files
+- Static imports in the Electron main process. The build's bundle policy rejects lazy chunks. Read [MAIN_PROCESS_INIT.md](./packages/electron/MAIN_PROCESS_INIT.md) before writing `await import()` there.
+- `@floating-ui/react` with `FloatingPortal` for every popover, tooltip, and menu. Never hand-compute `position: fixed`.
+- Components never subscribe to IPC. Central listeners in `store/listeners/` update Jotai atoms; components read atoms. See [IPC_LISTENERS.md](./docs/IPC_LISTENERS.md).
+- Editors own their content state; the tab host does not. Talk to the host through `EditorHost`. See [EDITOR_STATE.md](./docs/EDITOR_STATE.md).
+- `camelCase` on the wire, `snake_case` only in SQL columns. `TIMESTAMPTZ` for every timestamp column.
+- Fail fast on missing parameters. Workspace-scoped IPC takes `workspacePath` explicitly. See [ERROR_HANDLING.md](./docs/ERROR_HANDLING.md).
+- Every meaningful component root gets a stable kebab-case class. Use `@container` queries, `--nim-*` variables, and `select-text` on content. See [UI_PATTERNS.md](./docs/UI_PATTERNS.md).
+- `NIM-###` keys are tracker-scoped. Code comments and log strings cite GitHub `#123`; commit trailers may use both. Strip a contributor's `NIM-###` from a PR before merging.
+- Alpha is a label (badge plus "(alpha)" in the CHANGELOG), never a release-channel gate.
+- No emojis. No enthusiastic filler. No time or effort estimates. No hard line wraps in markdown.
 
-Before launching parallel work, list the files each slice will touch and confirm the sets are disjoint — including shared files like `CHANGELOG.md`, `package.json`, barrels, and central registries, which a source-only check misses. If two slices need the same file, they are one slice. Slices never run the full gate; the orchestrator runs it once. See [parallel-sessions.md](./.claude/rules/parallel-sessions.md).
+### Product records
 
-### Never Push to Contributor Branches, Approve PRs, or Skip Hooks
+- When a notable capability is added, expanded, or removed, update [FEATURE_INVENTORY.md](./docs/FEATURE_INVENTORY.md) during implementation and report "Feature inventory updated" or "No inventory impact" before handoff. In a parallel batch the integrator owns it. Polish and fixes need no entry.
+- Record a decision where it is read. In a project with a Wiki, follow its "How we write this wiki" page. A bug fix needs a bug tracker item before the fix. See [TRACKER_WORKFLOWS.md](./docs/TRACKER_WORKFLOWS.md).
+- Finished work is `in-review` and the session is `validating` until the user commits. A commit is their approval; put `Fixes NIM-123` in the message and the item closes itself.
+- Shortcut changes update `KeyboardShortcutsDialog.tsx`. PostHog event changes update [POSTHOG_EVENTS.md](./docs/POSTHOG_EVENTS.md).
+- Default to no architecture diagram. See [ARCHITECTURE_DIAGRAMS.md](./docs/ARCHITECTURE_DIAGRAMS.md) for the bar.
 
-**The only push an agent makes is `git push origin main`.** Never push to a contributor's branch or fork, never merge `main` into a PR branch, never run `gh pr review --approve` or `gh pr merge`, never use `--no-verify` or force-push. Contributions land by merging the PR head into local `main` (see [/land-contribution](./.claude/commands/land-contribution.md)). A failing pre-push gate means stop and report, including for "corrective" pushes.
+## The codebase
 
-Past incident (2026-10-10): a landing session merged main into two contributors' PR branches, pushed both, approved one from the maintainer's account, and skipped the hook to undo it. A four-file PR showed up on public main as a 2729-file merge commit and had to be force-pushed away. A local-config allowlist in `.githooks/pre-push` (`nimbalyst.pushAllowUrl` / `nimbalyst.pushAllowRefs`) now refuses other destinations on the maintainer's machine.
-
-### Write and Run Tests for Behavioral Changes
-
-**Any change to runtime behavior ships with a unit test** — a new test, or an extension of an existing one. Pure refactors already covered by tests, formatting, docs, and config-only changes are exempt. Before pushing, run the gate locally: `pnpm typecheck && pnpm test:prepush`.
-
-**Never run the suite twice to find out what failed.** It takes minutes. Every run records its failures — names, files, messages, diffs, and a command to rerun only those files — to `.vitest/last-run.log`. Read it with `pnpm run test:last`, which states up front whether the tree has changed since; on `CURRENT`, re-running cannot tell you anything you do not already have. Never pipe a test run through `tail -n`: it truncates exactly the failure block you need and costs another full run. Capture to a file, then read the file. When handing failures to another session, paste the failure list into its prompt. The repo's pre-push hook runs this automatically; it installs on `pnpm install` (or `pnpm run hooks:install`). Never push to `main` with a red suite — CI on `main` is a backstop, not the gate. For high-risk areas (sync/collab, main-process init, IPC, restart-to-verify bugs) the test comes **first** and must fail before the fix — see [end-to-end-verification.md](./.claude/rules/end-to-end-verification.md).
-
-**A test's job is to catch a regression a reader cannot see.** The test corpus is ~2M tokens, and every future session pays to read the tests next to the code it touches. A test that only re-states what is obvious on screen is pure cost. Write fewer, denser tests:
-
-- **No presentation-only tests** — icon names, exact title strings, tab ordering, hardcoded element counts. If a human would notice the breakage in one second of looking at the screen, it does not need a unit test. Purely visual changes (label, spacing, color) need no test at all.
-- **Never assert on component source text** via `readFileSync` + `toContain`/`toMatch`. Render it or don't test it. Genuine architectural invariants belong in a `scripts/` gate, not the vitest suite.
-- **Never assert CSS through jsdom by injecting the CSS you are about to assert on** — that is circular. Assert the `className`, or cover it in E2E where real styles load.
-- **Mock the narrowest module, never the `@nimbalyst/runtime` barrel.** Importing that barrel costs ~2.6s of module-import CPU per test file because it drags in the whole Lexical editor tree. `vi.mock('@nimbalyst/runtime/ui/icons/MaterialSymbol', …)` is cheap; `vi.mock('@nimbalyst/runtime', async (importOriginal) => ({ ...await importOriginal(), … }))` is the expensive shape — the spread forces the real barrel to load. Import from the deep path in source too, so the barrel never enters the graph. See NIM-2374.
-- **A `vi.mock()` whose specifier the module under test no longer imports is a silent no-op.** Moving a source import (barrel → deep path, or any rename) without repointing every mock of it lets the *real* module load, and the failure surfaces far from the edit — six `MetaAgentService` test files kept `vi.mock('@nimbalyst/runtime', …)` after the service moved to deep repository paths, and 22 tests died on `Session store adapter has not been provided`. When you change an import specifier in source, grep the test tree for the old specifier in the same commit.
-- **Prefer extending an existing test file** over creating a new one — but do not merge unrelated tests into a mega-file. Small and focused is correct; total volume is the enemy, not file count.
-- **Add `// @vitest-environment node` as the first line of any test that never touches the DOM.** The jsdom environment costs ~270ms per file for nothing.
-- **Don't write `expect(getBy*(...)).toBeTruthy()`** — `getBy*` already throws.
-
-### Use @floating-ui/react for All Popover/Tooltip/Menu Positioning
-
-See [floating-ui.md](./.claude/rules/floating-ui.md). Never manually calculate `position: fixed` coordinates — always use `@floating-ui/react` with `FloatingPortal`.
-
-### No Dynamic Imports in Electron Main Process
-
-**NEVER convert static imports to dynamic `await import()`** unless absolutely necessary (confirmed circular reference) AND the user has approved it. Dynamic imports cause `__ELECTRON_LOG__` double-registration crashes and side-effect timing issues. All MCP servers and services in `index.ts` use static top-level imports. The only allowed exception is `bootstrap.ts` importing `index.ts` (see [MAIN_PROCESS_INIT.md](./packages/electron/MAIN_PROCESS_INIT.md)).
-
-### CollabV3 Data Isolation — DOs for Customer Data, D1 for Entity Management Only
-
-**Never store customer, org, or team-sensitive data in the D1 shared database.** Customer data (team metadata, member roles, key envelopes, tracker items, documents, sessions) must live in Durable Objects where each entity gets its own isolated SQLite instance. D1 is only for cross-entity management lookups (e.g., git remote hash → org ID mapping). See `packages/collabv3/CLAUDE.md` for the full policy.
-
-### Never Use Environment Variables as Implicit API Key Sources
-
-**NEVER read API keys from `process.env` as a fallback for provider authentication.** API keys must come only from values the user explicitly configured in Nimbalyst settings (the electron-store `apiKeys` object or project-level overrides).
-
-Past incident: a user had `ANTHROPIC_API_KEY` in a `.env` file for unrelated work. Nimbalyst silently picked it up via `process.env`, auto-persisted it, and billed the user's personal Anthropic account $100+ instead of their Nimbalyst subscription.
-
-- No env fallbacks in `getApiKeyForProvider` — only `globalApiKeys[provider]` or project-level overrides
-- No auto-import into the settings store
-- Provider availability checks must only consider explicitly-stored keys
-
-If you are tempted to add `|| process.env.SOME_API_KEY` as a convenience fallback, **stop**.
-
-### Personal JWT vs Team JWT — Never Interchange Them
-
-Stytch B2B gives a user a **different member id per org**. The **personal JWT** (`getPersonalSessionJwt()` / `personalUserId`) is for **personal sync ONLY** (the personal index room + session/prompt/draft/settings sync to the **mobile app**). The **team JWT** (`getSessionJwt()` / `getOrgScopedJwt(orgId)`) authorizes **ALL team collaboration** (tracker rooms, schema sync, document rooms, team room, project-access gate). Conflating them is this codebase's most-repeated sync bug.
-
-Use the branded types in `packages/runtime/src/auth/jwtScopes.ts` so a mix-up is a compile error. When "a second client can't see shared data", first check it's actually authenticated (an expired session is silently logged out → no team JWT).
-
-### Database Access Rules
-
-**Nimbalyst currently supports BOTH PGLite and better-sqlite3.** The migration is in progress; both backends are active in the codebase and the user's machine may be running either. Never write code that assumes one backend. Anywhere you touch the database — schema, queries, JSON handling, write paths — read [packages/electron/DATABASE.md](./packages/electron/DATABASE.md) for the divergent behaviors first.
-
-The biggest gotcha: **JSONB sub-extraction (`data->'someKey'`) returns a parsed object on PGLite but a JSON string on SQLite.** Either select the whole `data` column and parse it, or defensively parse the sub-extracted value with the standard `typeof x === 'string' ? JSON.parse(x) : x` idiom. A real bug from this divergence corrupted tracker `labelsMap` rows on 2026-06-02 because `applyRemoteItem` trusted the sub-extraction was already an object.
-
-**NEVER directly open or query the database files using Node.js or command-line tools.** PGLite at `~/Library/Application Support/@nimbalyst/electron/pglite-db` uses PID-based locking; better-sqlite3 takes its own exclusive lock. In both cases, opening from a second process risks corruption.
-
-**ALWAYS use the MCP database query tool instead:**
-- Use `mcp__nimbalyst-extension-dev__database_query` for all database queries
-- NEVER use `node -e "const { PGlite } = require(...)"` or sqlite CLI
-
-**For sync/collab bugs, local PGLite ≠ server collab state.** `tracker_body_cache`, `documents`, and other sync-related tables only reflect the local side. The authoritative state for shared trackers/documents lives in Cloudflare Workers (`packages/collabv3/` DurableObjects) and must be inspected separately via `wrangler tail` against the prod sync worker, or via wrangler-backed E2E tests (`tracker-content-collab.spec.ts` / `tracker-sync-collab.spec.ts` patterns, `RUN_COLLAB_TESTS=1`, `document-sync:open-test` IPC for Stytch bypass). Confirming "the body is in PGLite" is not the same as confirming "the body is on the server." See `feedback_local_state_vs_server_state.md`.
-
-### Never Destroy User Data on a Heuristic
-
-See [destructive-data-paths.md](./.claude/rules/destructive-data-paths.md). Any path that renames, moves, truncates, overwrites, or deletes user data must **retry first, verify the damage is real (not a substring match on an error message), emit its event before acting, and leave a recoverable artifact with a launch heartbeat.** Never print an instruction telling the user to delete their data — restore-from-backup is the primary action.
-
-Past incident (#1347): a feature named "corruption recovery" renamed the live `pglite-db/` aside on any WASM abort, for nine months, silently. Six confirmed installs came up on empty databases; three then migrated the empty database and made it permanent.
-
-### Always Run Your Own Observation Commands — Don't Push Logs/Curl/Tail to the User
-
-**Never ask the user to run `curl`, `wrangler tail`, `tail -f`, `gh` commands, or paste logs.** The agent has direct tool access to all of these.
-
-- Logs: `mcp__nimbalyst-extension-dev__get_main_process_logs` and `get_renderer_debug_logs`
-- Database: `mcp__nimbalyst-extension-dev__database_query`
-- HTTP: `Bash` with `curl` — the agent runs it
-- Cloudflare workers: `Bash` with `wrangler tail` — the agent runs it (long-running tails can use `run_in_background`)
-- GitHub: `Bash` with `gh`
-- Runtime DOM / renderer state: `mcp__nimbalyst-extension-dev__renderer_eval`
-
-Past incident: session `702519e3` spent 23 turns debugging a Stytch JWKS rotation because the agent kept handing back commands for the user to run. The user finally said "run tail yourself!" and "you curl it!". If you catch yourself drafting "could you run X and paste the output?", stop and run X.
-
-Detailed patterns: [DEBUGGING_LOGS.md](./docs/DEBUGGING_LOGS.md).
-
-### End-to-End Verification Before Declaring Victory
-
-For any bug whose verification requires a `/restart` or a user manually exercising a UI flow, the **first** deliverable is a failing test that the fix must make pass. Never announce "fixed" before observing the bug go from broken to working — either via a test that flips red→green, or via logs showing the failing step now succeeding. See [end-to-end-verification.md](./.claude/rules/end-to-end-verification.md).
-
-Past incident: the 2026-05-20 tracker-body workstream announced "fixed" at least four times before the user finally said "you're killing me." Each announcement was based on "the code path looks right" or "tests pass," neither of which is the same as "the user can open the tracker and see the body."
-
-## Codebase Overview
-
-Nimbalyst is an extensible, AI-native workspace that supports multiple editor types through a unified extension system. While it originated as a Lexical-based markdown editor, the architecture is evolving toward a fully pluggable model where **all editors** — Lexical, Monaco, spreadsheets, diagrams, custom visual editors — are provided through extensions.
-
-This monorepo contains the Electron desktop app, runtime services (including the Lexical editor), extension SDK, native iOS app, and mobile support via Capacitor.
-
-## Extension Architecture
-
-See [EXTENSION_ARCHITECTURE.md](./docs/EXTENSION_ARCHITECTURE.md) for the EditorHost contract, supported editor types (Monaco, Lexical, custom React), the manifest format, and extension development guidelines.
-
-## Monorepo Structure
+Nimbalyst is an AI-native workspace: an Electron desktop app over a shared TypeScript runtime, native iOS and Android clients, and a collaboration server on Cloudflare. All editors (Lexical markdown, Monaco, spreadsheets, diagrams, custom React) are provided through the extension system; see [EXTENSION_ARCHITECTURE.md](./docs/EXTENSION_ARCHITECTURE.md).
 
 ```
 packages/
-  electron/       # Desktop app (Electron)
-  runtime/        # Cross-platform runtime services (AI, sync, Lexical editor)
-  ios/            # Native iOS app (SwiftUI)
-  core/           # Shared utilities
-  collabv3/       # Collaboration server (Cloudflare Workers)
-  extension-sdk/  # Extension development kit
-  extensions/     # Built-in extensions
+  electron/        # Desktop app: main process, preload, renderer
+  runtime/         # Cross-platform services: AI providers, sync, Lexical editor
+  core/            # Shared utilities
+  collab-client/   # Collaboration client used by desktop and the web console
+  collab-protocol/ # Wire types and golden fixtures shared with iOS and Android
+  extension-sdk/   # Extension development kit
+  extensions/      # Built-in extensions
+  ios/ android/    # Native clients
 ```
 
-- **Install**: `corepack enable` once (Node 24 ships corepack; `packageManager` pins pnpm), then `pnpm install` at the repository root. CI uses `pnpm install --frozen-lockfile`
-- **pnpm workspaces**; internal deps use `workspace:*`. Lockfile is `pnpm-lock.yaml` (there is no `package-lock.json`). Run a script in one package with `pnpm --filter <pkg> run <script>` or `pnpm --dir <dir> run <script>`; add a dependency with `pnpm --filter <pkg> add <dep>` (root dev dep: `pnpm add -Dw <dep>`)
-- **All pnpm settings live in the root `pnpm-workspace.yaml`** (`nodeLinker: hoisted`, `overrides`, `patchedDependencies`, `allowBuilds`, `minimumReleaseAge`); `.npmrc` is registry/auth only
-- **`allowBuilds` is an allowlist for install scripts.** A new dependency with a build script fails `pnpm install` until you add it as `true` or `false` there
-- **`minimumReleaseAge: 4320` (72h cooldown).** Versions published less than 3 days ago do not resolve; wait, or add a scoped `minimumReleaseAgeExclude` entry with a reason
-- **Patching a dependency**: `pnpm patch <pkg>@<ver>`, edit, then `pnpm patch-commit <dir>`. Patches live in `patches/` and are registered in `pnpm-workspace.yaml` (patch-package is gone)
+The collaboration server (Workers, Durable Objects, D1) and the web console live in the sibling repository `nimbalyst-collab`; client and server changes go in both. Package docs: [electron](./packages/electron/CLAUDE.md), [runtime](./packages/runtime/CLAUDE.md), [ios](./packages/ios/CLAUDE.md), [android](./packages/android/CLAUDE.md).
 
-Package-specific docs: `/packages/electron/CLAUDE.md`, `/packages/runtime/CLAUDE.md`, `/packages/ios/CLAUDE.md`, `/packages/collabv3/CLAUDE.md`.
+Transcripts: `ai_agent_messages` is the only persisted source of truth; canonical events are derived in memory by `TranscriptRuntime`. See [TRANSCRIPT_ARCHITECTURE.md](./docs/TRANSCRIPT_ARCHITECTURE.md).
 
-## Development Commands
+### Commands
 
-**Electron app:**
-- Start dev: `cd packages/electron && pnpm run dev` (user runs this — don't do it yourself)
-- Build for Mac: `pnpm run build:mac:local` or `pnpm run build:mac:notarized`
-- Main process log: `~/Library/Application Support/@nimbalyst/electron/logs/main.log`
+- Install: `corepack enable` once, then `pnpm install`. All pnpm settings (overrides, patches, `allowBuilds`, the 72-hour `minimumReleaseAge`) live in `pnpm-workspace.yaml`. Add a dependency with `pnpm --filter <pkg> add <dep>`; a new dependency with a build script must be listed in `allowBuilds`.
+- Dev: the user runs `cd packages/electron && pnpm run dev`. A second instance for collab testing is `pnpm run dev:user2`.
+- Unit tests: `pnpm run test:unit`. Last failures: `pnpm run test:last`. Typecheck: `pnpm typecheck`.
+- Release: `/release-alpha [patch|minor|major]`; see [RELEASING.md](./RELEASING.md). Marketing captures: [MARKETING_SCREENSHOTS.md](./docs/MARKETING_SCREENSHOTS.md).
+- Main process log: `~/Library/Application Support/@nimbalyst/electron/logs/main.log`.
 
-**Testing:**
-- Unit: `pnpm run test:unit` (vitest), or `pnpm run test:unit:ui`
-- E2E: see [E2E_TESTING.md](./docs/E2E_TESTING.md)
+### Read before working in an area
 
-**Marketing screenshots & videos:** See [MARKETING_SCREENSHOTS.md](./docs/MARKETING_SCREENSHOTS.md). Quick: `cd packages/electron && pnpm run marketing:screenshots` (requires dev server on port 5273).
-
-**Multiple dev instances** (for collab/sync testing): `cd packages/electron && pnpm run dev:user2` uses an isolated `NIMBALYST_USER_DATA_DIR`, `VITE_PORT=5274`, and `--outDir=out2` to prevent file-watcher cross-talk. Worktrees auto-derive a per-worktree userData dir via `crystal-run.sh`.
-
-**Other packages:** iOS — `pnpm run ios:test:swift`, `pnpm run ios:build:transcript`. Collab server — `pnpm run collabv2:dev`, `pnpm run collabv2:deploy`.
-
-## Releases
-
-See [RELEASING.md](./RELEASING.md). Use `/release-alpha [patch|minor|major]`. All release notes go in the `[Unreleased]` section of `CHANGELOG.md`; the script creates versioned entries and annotated git tags.
-
-## Cross-Cutting Patterns
-
-- **Error handling** — fail fast, validate at boundaries, workspace-scoped IPC takes `workspacePath` explicitly. See [ERROR_HANDLING.md](./docs/ERROR_HANDLING.md).
-- **Naming conventions** — `camelCase` for wire protocol/JSON; `snake_case` only for SQL columns. See [NAMING_CONVENTIONS.md](./docs/NAMING_CONVENTIONS.md).
-- **React DOM markers** — Tailwind utilities don't replace semantic class names. Every meaningful component needs a stable kebab-case class on its root. See [REACT_DOM_MARKERS.md](./docs/REACT_DOM_MARKERS.md).
-
-## Data Persistence
-
-The app uses **PGLite** (PostgreSQL in WebAssembly) for all data storage.
-
-- **Never use `localStorage` in the renderer.** Use app-settings store (global), workspace-settings store (per-project), or PGLite (complex data like AI sessions/document history).
-- **All database timestamps must use `TIMESTAMPTZ`.** Never create `TIMESTAMP` (without timezone) columns; migrate legacy tables.
-
-See [DATABASE.md](./packages/electron/DATABASE.md) for tables, locations, shutdown rules, and timestamp handling.
-
-## Transcript Storage
-
-Two-tier architecture — `ai_agent_messages` (raw append-only log, sole source of truth) → `ai_transcript_events` (canonical, provider-agnostic, derived). The `TranscriptTransformer` is the single writer of canonical events; providers only write raw. See [TRANSCRIPT_ARCHITECTURE.md](./docs/TRANSCRIPT_ARCHITECTURE.md).
-
-## Documentation Reference
-
-**Read the relevant doc in its entirety before making changes in that area.** These contain authoritative patterns, anti-patterns, and architectural decisions.
-
-| File | Read when… |
+| Area | Doc |
 | --- | --- |
-| [EXTENSION_ARCHITECTURE.md](./docs/EXTENSION_ARCHITECTURE.md) | Working on extensions, creating editors, modifying editor↔host communication, adding new editor types. |
-| [IPC_LISTENERS.md](./docs/IPC_LISTENERS.md) | Adding IPC events, debugging stale closures / race conditions in event handling, or seeing `MaxListenersExceededWarning`. |
-| [IPC_GUIDE.md](./docs/IPC_GUIDE.md) | Writing main-process IPC handlers, adding `electronAPI` methods, or debugging main↔renderer IPC. |
-| [EDITOR_STATE.md](./docs/EDITOR_STATE.md) | Working on editor components or TabEditor infrastructure; debugging editor state. |
-| [JOTAI.md](./docs/JOTAI.md) | Working with Jotai atoms, debugging UI/state divergence, or adding new atoms. |
-| [STATE_PERSISTENCE.md](./docs/STATE_PERSISTENCE.md) | Adding fields to any persisted state, or debugging "Cannot read properties of undefined" on app load. |
-| [UI_PATTERNS.md](./docs/UI_PATTERNS.md) | Writing UI components, styling with CSS/Tailwind, or adding responsive behavior. |
-| [ERROR_HANDLING.md](./docs/ERROR_HANDLING.md) | Writing IPC handlers or service methods that take required parameters or handle workspace state. |
-| [NAMING_CONVENTIONS.md](./docs/NAMING_CONVENTIONS.md) | Designing wire protocols, sync code, or SQL schemas. |
-| [AI_PROVIDER_TYPES.md](./docs/AI_PROVIDER_TYPES.md) | Working on AI integration, adding providers, or modifying model selection. |
-| [TRANSCRIPT_ARCHITECTURE.md](./docs/TRANSCRIPT_ARCHITECTURE.md) | Working on transcript rendering, parsers, the canonical event pipeline, or mobile transcript sync. |
-| [CONTEXT_WINDOW_USAGE_TRACKING.md](./docs/CONTEXT_WINDOW_USAGE_TRACKING.md) | Working on context-usage display, token tracking, or `ClaudeCodeProvider` streaming. |
-| [INTERNAL_MCP_SERVERS.md](./docs/INTERNAL_MCP_SERVERS.md) | Adding MCP server functionality or new tools for AI agents. |
-| [CUSTOM_TOOL_WIDGETS.md](./docs/CUSTOM_TOOL_WIDGETS.md) | Creating visual displays for MCP tool results or customizing tool rendering. |
-| [INTERACTIVE_PROMPTS.md](./docs/INTERACTIVE_PROMPTS.md) | Working on durable prompts (AskUserQuestion, ExitPlanMode, GitCommitProposal, ToolPermission). |
-| [WORKTREES.md](./docs/WORKTREES.md) | Working on worktree features, session isolation, or session↔worktree linkage. |
-| [SESSION_HIERARCHY.md](./docs/SESSION_HIERARCHY.md) | Creating/parenting sessions or debugging session grouping in the left pane. |
-| [HELP_WALKTHROUGHS.md](./docs/HELP_WALKTHROUGHS.md) | Adding help tooltips, creating walkthroughs, or modifying help content. |
-| [REACT_DOM_MARKERS.md](./docs/REACT_DOM_MARKERS.md) | Working on React UI, adding components, or improving testability/devtools navigation. |
-| [WALKTHROUGHS.md](./docs/WALKTHROUGHS.md) | Creating multi-step walkthroughs or debugging walkthrough flow. |
-| [E2E_TESTING.md](./docs/E2E_TESTING.md) | Writing/debugging E2E tests, or running them as an AI agent (especially in worktrees). |
-| [DIALOGS.md](./docs/DIALOGS.md) | Adding or modifying modal dialogs. |
-| [AGENT_PERMISSIONS.md](./docs/AGENT_PERMISSIONS.md) | Working on agent permissions, approval flows, or runtime permission checks. |
-| [ANALYTICS_GUIDE.md](./docs/ANALYTICS_GUIDE.md) | Adding/modifying PostHog events, or using PostHog MCP tools. |
-| [POSTHOG_EVENTS.md](./docs/POSTHOG_EVENTS.md) | Adding, modifying, or removing any PostHog analytics event — keep this in sync. |
-| [POSTHOG_MCP_INTEGRATION.md](./docs/POSTHOG_MCP_INTEGRATION.md) | Using PostHog MCP tools or extending PostHog functionality. |
-| [THEMING.md](./packages/electron/THEMING.md) | Working on themes or color schemes. |
-| [RELEASING.md](./RELEASING.md) | Preparing a release or debugging release scripts. |
-| [MARKETING_SCREENSHOTS.md](./docs/MARKETING_SCREENSHOTS.md) | Adding marketing screenshots/videos or modifying capture choreography. |
-| [ANDROID_MARKETING_SCREENSHOTS.md](./docs/ANDROID_MARKETING_SCREENSHOTS.md) | Capturing Play Store screenshots or the reviewer screencast for the Android app. |
-| [FILE_WATCHING_AND_CHANGE_TRACKING.md](./docs/FILE_WATCHING_AND_CHANGE_TRACKING.md) | Working on file watchers, AI change detection, diff display, or the FilesEditedSidebar. |
-| [WEEKLY_DASHBOARD.md](./docs/WEEKLY_DASHBOARD.md) | Adding/modifying insights on the Weeklys PostHog dashboard. |
-| [VOICE_MODE.md](./docs/VOICE_MODE.md) | Working on voice mode, voice-agent prompts, audio pipeline, or session lifecycle. |
-| [TRACKER_WORKFLOWS.md](./docs/TRACKER_WORKFLOWS.md) | Recording a decision, or creating a bug tracker item as part of a fix. |
-| [ARCHITECTURE_DIAGRAMS.md](./docs/ARCHITECTURE_DIAGRAMS.md) | Considering whether a change is complex enough to warrant an Excalidraw diagram. |
-| [DEBUGGING_LOGS.md](./docs/DEBUGGING_LOGS.md) | Investigating bugs — use the log access tools, don't ask the user to paste logs. |
-| [IDENTITY_AUTH_AND_ROOMS.md](./docs/IDENTITY_AUTH_AND_ROOMS.md) | Anything touching encryption, key custody, room taxonomy, or the two JWTs. The `Encrypted*` names in the team lanes are vestigial — check the lane table before concluding anything from a name. |
-| [RENDER_PERFORMANCE.md](./docs/RENDER_PERFORMANCE.md) | Chasing excessive React re-renders, or adding a render-budget test to a hot surface. |
-| [MAIN_PROCESS_INIT.md](./packages/electron/MAIN_PROCESS_INIT.md) | Working on Electron main-process bootstrap, singleton init, or IPC handler registration. |
-| [DATABASE.md](./packages/electron/DATABASE.md) | Working with PGLite tables, shutdown, or timestamp handling. |
+| Extensions, editors, editor-host contract | [EXTENSION_ARCHITECTURE.md](./docs/EXTENSION_ARCHITECTURE.md), [EDITOR_STATE.md](./docs/EDITOR_STATE.md) |
+| IPC handlers, `electronAPI`, event listeners | [IPC_GUIDE.md](./docs/IPC_GUIDE.md), [IPC_LISTENERS.md](./docs/IPC_LISTENERS.md) |
+| Jotai atoms, persisted state, app load errors | [JOTAI.md](./docs/JOTAI.md), [STATE_PERSISTENCE.md](./docs/STATE_PERSISTENCE.md) |
+| Main-process bootstrap, singletons, handler registration | [MAIN_PROCESS_INIT.md](./packages/electron/MAIN_PROCESS_INIT.md) |
+| Database tables, shutdown, timestamps, backend divergence | [DATABASE.md](./packages/electron/DATABASE.md) |
+| Encryption, key custody, rooms, the two JWTs | [IDENTITY_AUTH_AND_ROOMS.md](./docs/IDENTITY_AUTH_AND_ROOMS.md) |
+| Tracker schemas, sharing, numbering, decisions, bugs | [TRACKER_SCHEMA_SHARING.md](./docs/TRACKER_SCHEMA_SHARING.md), [TRACKER_WORKFLOWS.md](./docs/TRACKER_WORKFLOWS.md) |
+| AI providers, model selection, context tracking | [AI_PROVIDER_TYPES.md](./docs/AI_PROVIDER_TYPES.md), [CONTEXT_WINDOW_USAGE_TRACKING.md](./docs/CONTEXT_WINDOW_USAGE_TRACKING.md) |
+| Transcript rendering, MCP servers, tool widgets | [TRANSCRIPT_ARCHITECTURE.md](./docs/TRANSCRIPT_ARCHITECTURE.md), [INTERNAL_MCP_SERVERS.md](./docs/INTERNAL_MCP_SERVERS.md), [CUSTOM_TOOL_WIDGETS.md](./docs/CUSTOM_TOOL_WIDGETS.md) |
+| Interactive prompts, permissions, voice | [INTERACTIVE_PROMPTS.md](./docs/INTERACTIVE_PROMPTS.md), [AGENT_PERMISSIONS.md](./docs/AGENT_PERMISSIONS.md), [VOICE_MODE.md](./docs/VOICE_MODE.md) |
+| Sessions, worktrees, session hierarchy | [WORKTREES.md](./docs/WORKTREES.md), [SESSION_HIERARCHY.md](./docs/SESSION_HIERARCHY.md) |
+| UI, dialogs, themes, DOM markers, render performance | [UI_PATTERNS.md](./docs/UI_PATTERNS.md), [DIALOGS.md](./docs/DIALOGS.md), [THEMING.md](./packages/electron/THEMING.md), [REACT_DOM_MARKERS.md](./docs/REACT_DOM_MARKERS.md), [RENDER_PERFORMANCE.md](./docs/RENDER_PERFORMANCE.md) |
+| Help tooltips, walkthroughs, tips | [HELP_WALKTHROUGHS.md](./docs/HELP_WALKTHROUGHS.md), [WALKTHROUGHS.md](./docs/WALKTHROUGHS.md) |
+| File watching, change tracking, diffs | [FILE_WATCHING_AND_CHANGE_TRACKING.md](./docs/FILE_WATCHING_AND_CHANGE_TRACKING.md) |
+| E2E tests, debugging with logs | [E2E_TESTING.md](./docs/E2E_TESTING.md), [DEBUGGING_LOGS.md](./docs/DEBUGGING_LOGS.md) |
+| Analytics events, weekly dashboard | [ANALYTICS_GUIDE.md](./docs/ANALYTICS_GUIDE.md), [POSTHOG_EVENTS.md](./docs/POSTHOG_EVENTS.md), [WEEKLY_DASHBOARD.md](./docs/WEEKLY_DASHBOARD.md) |
+| Releases, marketing captures | [RELEASING.md](./RELEASING.md), [MARKETING_SCREENSHOTS.md](./docs/MARKETING_SCREENSHOTS.md), [ANDROID_MARKETING_SCREENSHOTS.md](./docs/ANDROID_MARKETING_SCREENSHOTS.md) |
 
-## AI Features (quick reference)
-
-- **AI Chat Panel**: multi-provider (Claude, OpenAI, LM Studio, Claude Code), document-aware; Cmd+Shift+A
-- **Session Manager**: global view (Cmd+Alt+S); search, export, delete
-- **Model Configuration**: dynamic from provider APIs; no hardcoded models
-- **Git Worktrees**: isolated AI coding sessions via "New Worktree" button
-
-## Tracker Workflows
-
-Tracker sharing model: **a tracker is personal or it is the team's; if it is the team's, the server owns it — schema and items together — and `.nimbalyst/trackers/*.yaml` is the local copy.** Read [TRACKER_SCHEMA_SHARING.md](./docs/TRACKER_SCHEMA_SHARING.md) before changing a tracker schema or sharing and numbering behavior.
-
-Record a decision where it is read. In a project with a Wiki, follow its "How we write this wiki" page: mark the decision as a sentence in the page it affects, and add a **decision** tracker item as well only when no single page owns it, work or commits hang off it, it is not settled, or its reasons don't fit in the mark. Without a Wiki, put it in the plan doc or a decision item. Not every choice needs a record. When fixing a bug, ensure a **bug** tracker item exists before writing fix code. See [TRACKER_WORKFLOWS.md](./docs/TRACKER_WORKFLOWS.md) for the exact `tracker_create` calls and lifecycle.
-
-### `NIM-###` Keys Are Tracker-Scoped — Cite GitHub Issues in Source
-
-**`NIM-###` issue keys are scoped to the tracker room for a Nimbalyst workspace or team project. They do not resolve anywhere else** — peer installs in the same room share an identity, but the same key can point at a different item in an unrelated workspace. In a public repo they are worse than no reference: a reader who looks one up can land on an unrelated item and believe it is authoritative.
-
-- **Code comments and runtime log strings** reference the GitHub issue: `// #1146: typed workstream containers are always roots`. If there is no GitHub issue, write the reason in prose instead of citing a key.
-- **Commit messages** keep `Fixes NIM-123` — that trailer is what `CommitTrackerLinker` uses to auto-close the item, and it never ships inside the product. Add `Fixes #123` alongside it when a GitHub issue also exists.
-- **Existing `NIM-###` references in source stay put.** This applies to new code; there is no retro sweep.
-
-A contributed PR carrying a `NIM-###` reference is always wrong — it came from *their* tracker. Strip it or map it to the GitHub issue before merging.
-
-## Architecture Diagrams for Decisions
-
-**Default: no diagram.** Only when a change rearranges how three or more components relate — and the topology is genuinely non-obvious from prose — create an Excalidraw diagram in `nimbalyst-local/architecture/` and share the file link. Never diagram linear sequences, phased rollouts, single components, bug fixes, or a restatement of your own section headings. See [ARCHITECTURE_DIAGRAMS.md](./docs/ARCHITECTURE_DIAGRAMS.md) for the full bar.
-
-## Verifying Development Mode
-
-Before making code changes, use `mcp__nimbalyst-extension-dev__get_environment_info` to verify Nimbalyst is running in dev mode. If the user is running a packaged build, code changes won't take effect — tell them to start the dev server.
-
-## Debugging with Log Access Tools
-
-See the Critical Rules block above ("Always Run Your Own Observation Commands"). Detailed patterns: [DEBUGGING_LOGS.md](./docs/DEBUGGING_LOGS.md).
-
-## General Development Guidelines
-
-- **Never use emojis** — not in commits, code, or documentation, unless explicitly requested
-- **Never use overly enthusiastic phrases** ("Perfect!", "Terrific!", etc.)
-- **Never commit changes unless explicitly asked**
-- **Never commit files under `nimbalyst-local/`** — gitignored, local-only working files
-- **Never provide time or effort estimates**
-- **Don't disable tests without asking first**
-- **Don't run `pnpm run dev` yourself** — user does that
-- **Never release without being explicitly instructed**
-- **Don't `git reset` or `git add -A` without asking**
-- **Don't add `Co-Authored-By` lines to commit messages**
-- **Never restart Nimbalyst without explicit permission** — always ask before `restart_nimbalyst`
-- **Never mark work done before the user approves it — but a commit IS their approval.** Until the work is committed, set tracker items to `in-review` and session phase to `validating`, never `done` / `complete`. Once the user commits the work, they have reviewed it and agreed it's finished: put a closing reference (`Fixes NIM-123`) in the commit message and the item closes itself; also set session phase to `complete`. Do not leave finished, committed work parked in `in-review`. `approved` on the review lane remains human-only.
-
-**Keyboard Shortcuts**: when adding or modifying shortcuts, update `KeyboardShortcutsDialog.tsx`.
-
-## Support
-
-User support docs live in `support/`. Notable: `force-restore-database-backup.md` for manual database restore.
-if i ask you to propose a commit, first update the `CHANGELOG.md` (at the repo root) and include it in the commit proposal
-if a commit is intended to fix a github issue, include the issue number and a closing reference in the commit message when appropriate (fixes #123 or closes #123)
+Support docs for users live in `support/`.

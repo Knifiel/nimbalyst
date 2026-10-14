@@ -15,6 +15,8 @@ interface Env {
   EXTENSIONS_BUCKET: R2Bucket;
   DOWNLOAD_COUNTS: KVNamespace;
   VERSION: string;
+  /** The commit this deploy was built from, set by scripts/deploy.sh; worker-status.mjs diffs from it. */
+  GIT_COMMIT?: string;
   /** Public R2 bucket URL for direct file access (e.g. https://cdn.extensions.nimbalyst.com) */
   CDN_BASE_URL: string;
 }
@@ -77,6 +79,7 @@ export default {
           {
             status: 'ok',
             version: env.VERSION,
+            commit: env.GIT_COMMIT ?? null,
             timestamp: new Date().toISOString(),
           },
           200,

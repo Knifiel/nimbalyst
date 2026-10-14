@@ -8,7 +8,7 @@ import type { TrackerFilterField } from './trackerFilterFields';
 export interface TrackerFilterValueMenuProps {
   field: TrackerFilterField;
   anchorRect: DOMRect | null;
-  placement?: 'left' | 'below';
+  placement?: 'left' | 'right' | 'below';
   selectedValues?: ReadonlySet<string>;
   onSelect: (value: string | string[] | number, op?: TrackerFilterOp) => void;
   onClear?: () => void;
@@ -151,8 +151,10 @@ export function TrackerFilterValueMenu({
   const viewportHeight = typeof window === 'undefined' ? 900 : window.innerHeight;
   const left = placement === 'left'
     ? Math.max(8, (anchorRect?.left ?? 376) - 368)
+    : placement === 'right'
+    ? Math.max(8, Math.min(viewportWidth - 368, (anchorRect?.right ?? 8) + 8))
     : Math.max(8, Math.min(viewportWidth - 368, anchorRect?.left ?? 8));
-  const top = placement === 'left'
+  const top = placement !== 'below'
     ? Math.max(8, Math.min(viewportHeight - 180, (anchorRect?.top ?? 180) - 86))
     : Math.max(8, Math.min(viewportHeight - 180, (anchorRect?.bottom ?? 40) + 6));
 

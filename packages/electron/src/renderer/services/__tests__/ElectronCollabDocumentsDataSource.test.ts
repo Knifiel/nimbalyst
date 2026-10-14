@@ -61,6 +61,37 @@ describe('ElectronCollabDocumentsDataSource', () => {
     }
   });
 
+  it("marks the index loaded only after the current connection's team reply", async () => {
+    let config!: TeamSyncConfig;
+    const provider = {
+      connect: vi.fn(async () => undefined), getStatus: () => 'connected',
+      getDocuments: () => [], getFolders: () => [], getTypePlacements: () => null, getItemPlacements: () => null,
+      // Kept across a disconnect by TeamSync, so it cannot be the signal.
+      getTeamState: () => ({ members: [], metadata: { teamProjectId: 'project-a' } }), isPageTree: () => true, destroy: vi.fn(),
+    };
+    const source = new ElectronCollabDocumentsDataSource({
+      scope, getJwt: async () => asTeamJwt('team-jwt'),
+      createProvider: (next) => { config = next; return provider as any; },
+    });
+    const snapshots: Array<boolean | undefined> = [];
+    source.subscribe((change) => { if (change.type === 'snapshot') snapshots.push(change.snapshot.indexLoaded); });
+    expect((await source.snapshot()).indexLoaded).toBeUndefined();
+
+    config.onStatusChange?.('connected');
+    config.onTeamStateLoaded?.({ members: [], documents: [], folders: [] } as any);
+    expect(snapshots.at(-1)).toBe(true);
+
+    config.onStatusChange?.('disconnected');
+    config.onTypePlacementsRemoved?.(['module']);
+    expect(snapshots.at(-1)).toBeUndefined();
+    config.onStatusChange?.('connecting');
+    config.onStatusChange?.('connected');
+    expect((await source.snapshot()).indexLoaded).toBeUndefined();
+
+    config.onTeamStateLoaded?.({ members: [], documents: [], folders: [] } as any);
+    expect(snapshots.at(-1)).toBe(true);
+  });
+
   it('stores page fields only on a server that says so, confirmed by the echo that holds the patch', async () => {
     vi.useFakeTimers();
     let config!: TeamSyncConfig;
@@ -77,7 +108,10 @@ describe('ElectronCollabDocumentsDataSource', () => {
     const setFields = () => source.command({ type: 'set-document-fields', documentId: 'page-1', fields: { status: 'current', owner: null } });
     const row = { documentId: 'page-1', title: 'Design', documentType: 'markdown', createdBy: 'member', createdAt: 1, updatedAt: 2 };
     try {
-      expect((await source.snapshot()).pageFields).toBe(true);
+      const first = await source.snapshot();
+      expect(first.pageFields).toBe(true);
+      // Connected but the team room has not answered: the empty list is not the index.
+      expect(first.indexLoaded).toBeUndefined();
       let done = false;
       const pending = setFields().then(() => { done = true; });
       await vi.advanceTimersByTimeAsync(0);
@@ -200,6 +234,7 @@ describe('ElectronCollabDocumentsDataSource', () => {
       pageTree: true,
       // The session splits other projects off; a null-project row is the primary's.
       primaryProjectId: 'project-primary',
+      // Cached team state alone is not this connection's reply: no indexLoaded.
     });
     config.onDocumentChanged?.({
       documentId: 'doc-2',

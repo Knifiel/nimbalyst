@@ -119,6 +119,21 @@ class SessionRoomHandlerTest {
     }
 
     @Test
+    fun `an unreadable inline row from a prior key epoch does not stall history`() = runBlocking {
+        seedSession()
+        val prior = message(2).apply { addProperty("encryptedContent", CryptoManager.fromSeed("old", "user-1").encrypt("x").encrypted) }
+        val response = JsonObject().apply {
+            addProperty("type", "syncResponse")
+            add("messages", JsonArray().apply { add(message(1)); add(prior); add(message(3)) })
+            addProperty("hasMore", true)
+            addProperty("revisionCursor", 3)
+        }.toString()
+        handler.handle(response, "s1")
+        assertEquals(2, repository.messageCount("s1"))
+        assertEquals(3L, JsonParser.parseString(sent.last()).asJsonObject.get("sinceRevision").asLong)
+    }
+
+    @Test
     fun `history that arrives before the session row is requested again once the row commits`() = runBlocking {
         handler.handle(page(1..3, hasMore = false), "s1")
         assertEquals(0, repository.messageCount("s1"))

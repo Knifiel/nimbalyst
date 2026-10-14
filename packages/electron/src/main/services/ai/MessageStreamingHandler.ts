@@ -6,6 +6,8 @@ import { codexQuestionTurns } from './codexQuestionTurns';
 import { supersedeOpenQuestions } from './supersedeOpenQuestions';
 import { beginTurnSetup, TurnSetupCancelledError } from './turnSetupStages';
 import { canDispatchIntoDrain } from './drainFollowUp';
+import { publishTurnNotExecuting } from './turnExecutingSync';
+import { cancelUsageLimitResume, maybeScheduleUsageLimitResume } from './usageLimitAutoResume';
 /**
  * Streaming message handler for AIService.
  *
@@ -92,6 +94,7 @@ import { ToolUsageService } from '../ToolUsageService';
 import { historyManager } from '../../HistoryManager';
 import { addGitignoreBypass } from '../../file/WorkspaceEventBus';
 import { getSyncProvider, isDesktopTrulyAway } from '../SyncManager';
+import { publishContextUsage } from './publishContextUsage';
 import { requestMobilePush } from './mobilePushRequest';
 import { createAskUserQuestionListeners } from './askUserQuestionListeners';
 import { createTeammateIdleWakeListener } from './teammateIdleWake';
@@ -1279,6 +1282,7 @@ export class MessageStreamingHandler {
       let providerError: string | undefined;
       let providerCrashed = false;  // The agent subprocess died from a native fault (#1361)
       let sawCompleteChunk = false;  // A terminal 'complete' chunk arrived
+      let endedSessionAtComplete = false;  // This turn called endSession; a later 'running' is a new turn
       let settledOnErrorChunk = false;  // The error branch already ended the session
       let firstChunkTime: number | undefined;
       let chunkCount = 0;
@@ -1491,6 +1495,8 @@ export class MessageStreamingHandler {
       const { isToolLoopSession, toolLoopTools, toolLoopSystemPrompt } = resolveToolLoopTurnConfig(session, effectiveWorkspacePath);
 
       setup.finish();
+      // Awaited so it can never cancel the resume this same turn schedules on its own limit error.
+      await cancelUsageLimitResume(session.id).catch(error => logger.main.error('[AIService] Failed to cancel usage-limit resume:', error));
       for await (const chunk of provider.sendMessage(messageToSend, contextWithSession, session.id, sessionMessages, effectiveWorkspacePath, attachments, toolLoopTools, toolLoopSystemPrompt)) {
         if (!chunk) continue;
         chunkCount++;
@@ -1506,6 +1512,11 @@ export class MessageStreamingHandler {
           });
         }
         switch (chunk.type) {
+          case 'prompt_suggestion': {
+            // Ephemeral next-prompt prediction: straight to the renderer, never stored or synced.
+            if (chunk.suggestion) safeSend(event, 'ai:promptSuggestion', { sessionId: session.id, suggestion: chunk.suggestion });
+            break;
+          }
           case 'context_usage': {
             // Mid-turn context-fill snapshot (NIM-868). Updates ONLY
             // currentContext so the indicator refreshes per assistant step
@@ -1534,23 +1545,8 @@ export class MessageStreamingHandler {
               // Push live context usage to mobile sync
               const syncProvider = getSyncProvider();
               if (syncProvider) {
-                // Streaming chunks must not wait for index publication. This task catches failures internally.
-                void (async () => {
-                  try {
-                    const outcome = await syncProvider.pushChange(session.id, {
-                      type: 'metadata_updated',
-                      metadata: {
-                        currentContext: {
-                          tokens: partialContextFill,
-                          contextWindow: partialContextWindow,
-                        },
-                      },
-                    });
-                    warnIfUnpublished(message => logger.main.warn(message), session.id, '[AIService] Failed to publish sync change', outcome);
-                  } catch (error) {
-                    logger.main.warn(`[AIService] Failed to publish sync change for session ${session.id}:`, error);
-                  }
-                })();
+                // Streaming chunks must not wait for publication; the helper catches its own failures.
+                void publishContextUsage(syncProvider, session.id, { tokens: partialContextFill, contextWindow: partialContextWindow });
               }
 
               session.tokenUsage = updatedUsage;
@@ -2232,7 +2228,12 @@ export class MessageStreamingHandler {
               isBedrockToolError,
               isServerError,
               isCodexAuthRequired: chunk.isCodexAuthRequired || false,
+              isUsageLimit: chunk.usageLimitType !== undefined,
             });
+            if (chunk.usageLimitResetsAtMs !== undefined) {
+              maybeScheduleUsageLimitResume({ sessionId: session.id, workspacePath, resetsAtMs: chunk.usageLimitResetsAtMs })
+                .catch(error => logger.main.error('[AIService] Failed to schedule usage-limit resume:', error));
+            }
 
             // An in-band 'error' chunk from a tool-loop agent (Gemini's only
             // failure-settle path) does NOT throw, so the outer catch never runs
@@ -2373,20 +2374,7 @@ export class MessageStreamingHandler {
               if (contextFillTokens !== undefined && contextWindowForDisplay) {
                 const syncProvider = getSyncProvider();
                 if (syncProvider) {
-                  try {
-                    const outcome = await syncProvider.pushChange(session.id, {
-                      type: 'metadata_updated',
-                      metadata: {
-                        currentContext: {
-                          tokens: contextFillTokens,
-                          contextWindow: contextWindowForDisplay,
-                        },
-                      },
-                    });
-                    warnIfUnpublished(message => logger.main.warn(message), session.id, '[AIService] Failed to publish sync change', outcome);
-                  } catch (error) {
-                    logger.main.warn(`[AIService] Failed to publish sync change for session ${session.id}:`, error);
-                  }
+                  await publishContextUsage(syncProvider, session.id, { tokens: contextFillTokens, contextWindow: contextWindowForDisplay });
                 }
               }
 
@@ -2430,20 +2418,7 @@ export class MessageStreamingHandler {
               if (reportsCurrentContext && contextFillTokens !== undefined && reportedContextWindow) {
                 const syncProvider = getSyncProvider();
                 if (syncProvider) {
-                  try {
-                    const outcome = await syncProvider.pushChange(session.id, {
-                      type: 'metadata_updated',
-                      metadata: {
-                        currentContext: {
-                          tokens: contextFillTokens,
-                          contextWindow: reportedContextWindow,
-                        },
-                      },
-                    });
-                    warnIfUnpublished(message => logger.main.warn(message), session.id, '[AIService] Failed to publish sync change', outcome);
-                  } catch (error) {
-                    logger.main.warn(`[AIService] Failed to publish sync change for session ${session.id}:`, error);
-                  }
+                  await publishContextUsage(syncProvider, session.id, { tokens: contextFillTokens, contextWindow: reportedContextWindow });
                 }
               }
 
@@ -2608,6 +2583,12 @@ export class MessageStreamingHandler {
               // logger.main.info(`[AIService] Deferring endSession for ${session.id} - ${reason}`);
             } else {
               await stateManager.endSession(session.id);
+              endedSessionAtComplete = true;
+              // The stream stays open a few seconds for the next-prompt suggestion, which would hold the
+              // post-loop publish back; the phone hears the turn ended now (the later publish repeats it).
+              if (syncProvider && session.provider === 'claude-code' && (provider as any).willAwaitPromptSuggestion?.() === true) {
+                void publishTurnNotExecuting(syncProvider, session.id);
+              }
               // Stop file watcher after a brief delay to let pending
               // watcher events drain through WorkspaceFileEditAttributionService.
               // The manager cancels the scheduled stop if a new turn starts
@@ -2822,16 +2803,12 @@ export class MessageStreamingHandler {
       }
 
       // Clear executing and pending prompt flags for mobile sync
-      if (syncProvider && !this.svc.sessionsProcessingQueue.has(session.id)) {
-        try {
-          const outcome = await syncProvider.pushChange(session.id, {
-            type: 'metadata_updated',
-            metadata: { isExecuting: false, hasPendingPrompt: false, updatedAt: Date.now() },
-          });
-          warnIfUnpublished(message => logger.main.warn(message), session.id, '[AIService] Failed to publish sync change', outcome);
-        } catch (error) {
-          logger.main.warn(`[AIService] Failed to publish sync change for session ${session.id}:`, error);
-        }
+      // A follow-up that adopted this turn's live query during the prompt-suggestion wait is already
+      // running; don't mark it idle.
+      const liveState = endedSessionAtComplete ? stateManager.getSessionState(session.id) : undefined;
+      const followUpRunning = !!liveState && (liveState.status === 'running' || liveState.isStreaming);
+      if (syncProvider && !this.svc.sessionsProcessingQueue.has(session.id) && !followUpRunning) {
+        await publishTurnNotExecuting(syncProvider, session.id);
       }
 
       // Clean up queued prompt tracking

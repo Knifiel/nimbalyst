@@ -77,6 +77,38 @@ export function writeLocationSetting(root: string, dir: string): void {
   fs.writeFileSync(file, JSON.stringify({ ...existing, location }, null, 2) + '\n');
 }
 
+/** Set once the local wiki has been moved to a team project; the files stay as the recoverable copy. */
+export interface MigratedTo {
+  orgId: string;
+  projectId: string;
+  /** ISO time of the verified move. */
+  at: string;
+}
+
+function readSettingFile(root: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(settingPath(root), 'utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function readMigratedTo(root: string): MigratedTo | undefined {
+  const value = readSettingFile(root).migratedTo as Partial<MigratedTo> | undefined;
+  if (typeof value?.orgId !== 'string' || typeof value?.projectId !== 'string') return undefined;
+  return { orgId: value.orgId, projectId: value.projectId, at: typeof value.at === 'string' ? value.at : '' };
+}
+
+/** Records the move in `.nimbalyst/local-wiki.json`, keeping every other key. */
+export function writeMigratedTo(root: string, migratedTo: MigratedTo): void {
+  const file = settingPath(root);
+  // A setting file we cannot parse holds the wiki's location; never write over it.
+  if (fs.existsSync(file)) readLocationSetting(root);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ ...readSettingFile(root), migratedTo }, null, 2) + '\n');
+}
+
 export interface WikiLocation {
   projectRoot: string;
   /** Absolute wiki folder. */

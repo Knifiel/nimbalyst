@@ -99,6 +99,38 @@ export function formatPageLink(text: string, relPath: string, fragment: string, 
 }
 
 /**
+ * Rewrites the destination of every relative image and non-page link (an
+ * attachment). `replace` gets the decoded path and returns a new decoded path,
+ * or null to leave the link as written; the rest of the link is kept.
+ */
+export function rewriteFileLinks(body: string, replace: (path: string) => string | null): string {
+  const excluded = excludedRanges(body);
+  let out = '';
+  let cursor = 0;
+  LINK.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = LINK.exec(body))) {
+    const start = match.index;
+    if (excluded.some(([s, e]) => start >= s && start < e)) continue;
+    if (match[1] !== '!' && match[4] !== undefined && ID_TITLE.test(match[4])) continue;
+    let rawDest = match[3];
+    const bracketed = rawDest.startsWith('<');
+    if (bracketed) rawDest = rawDest.slice(1, -1);
+    const hash = rawDest.indexOf('#');
+    const pathPart = hash >= 0 ? rawDest.slice(0, hash) : rawDest;
+    if (pathPart === '' || /^[a-z][a-z0-9+.-]*:/i.test(pathPart) || pathPart.startsWith('/')) continue;
+    if (match[1] !== '!' && (/\.md$/i.test(pathPart) || pathPart.endsWith('/'))) continue;
+    const next = replace(safeDecode(pathPart));
+    if (next === null) continue;
+    const dest = encodeLinkPath(next) + (hash >= 0 ? rawDest.slice(hash) : '');
+    const destStart = body.indexOf(match[3], start + match[1].length + match[2].length + 2);
+    out += body.slice(cursor, destStart) + dest;
+    cursor = destStart + match[3].length;
+  }
+  return cursor === 0 ? body : out + body.slice(cursor);
+}
+
+/**
  * Rewrites page links. `replace` gets each page link with its ordinal among
  * the page links in this body and returns the new path and id, or null to
  * leave the link as written.

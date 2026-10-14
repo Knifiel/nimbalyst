@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { asPersonalJwt, asPersonalMemberId } from '../../auth/jwtScopes';
 
 import { createCollabV3Sync } from '../CollabV3Sync';
-import { encrypt } from '../collabV3Crypto';
+import { decrypt, encrypt } from '../collabV3Crypto';
 
 class FakeWebSocket {
   static readonly OPEN = 1;
@@ -294,4 +294,39 @@ describe('CollabV3 queued prompt clearing', () => {
 
     provider.disconnectAll();
   });
+
+  it('sends the session room nothing for the per-message timestamp push, and still sends real metadata', async () => {
+    const { provider } = await createIndexedProvider();
+    const connecting = provider.connect('session-1');
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+    const sessionSocket = FakeWebSocket.instances[1];
+    sessionSocket.open();
+    await connecting;
+    const frames = () => sessionSocket.send.mock.calls.map(([payload]) => JSON.parse(payload as string).type);
+    const before = frames().length;
+
+    await provider.pushChange('session-1', { type: 'metadata_updated', metadata: { updatedAt: 2_000 } });
+    expect(frames().slice(before)).toEqual([]);
+
+    await provider.pushChange('session-1', { type: 'metadata_updated', metadata: { isExecuting: true } });
+    expect(frames().slice(before)).toContain('updateMetadata');
+    provider.disconnectAll();
+  });
+
+  it('keeps the latest live context when an older server row replaces the cache before the turn-end write', async () => {
+    const { provider, indexSocket, encryptionKey } = await createIndexedProvider();
+    const context = (tokens: number) => ({ tokens, contextWindow: 200_000 });
+    await provider.publishLiveContext!('session-1', context(900));
+    // The reconcile's index read (or another device's echo) brings back the stored, older value.
+    const stored = indexUpdates(indexSocket).at(-1)!.session;
+    const older = await encrypt(JSON.stringify({ currentContext: context(100) }), encryptionKey);
+    indexSocket.receive({ type: 'indexBroadcast', session: { ...stored, encryptedClientMetadata: older.encrypted, clientMetadataIv: older.iv } });
+    await vi.waitFor(() => expect((provider.getCachedIndexEntry?.('session-1') as { currentContext?: { tokens: number } } | undefined)?.currentContext?.tokens).toBe(100));
+
+    await provider.pushChange('session-1', { type: 'metadata_updated', metadata: { isExecuting: false, updatedAt: 3_000 } });
+    const turnEnd = indexUpdates(indexSocket).at(-1)!.session;
+    const persisted = JSON.parse(await decrypt(turnEnd.encryptedClientMetadata, turnEnd.clientMetadataIv, encryptionKey));
+    expect(persisted.currentContext).toEqual(context(900));
+  });
 });
+

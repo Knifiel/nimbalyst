@@ -64,6 +64,10 @@ export const PAGE_TOOL_NAMES = [
   'pages_status',
   'pages_bind_repo',
   'pages_create_project',
+  'pages_import',
+  'team_create',
+  'team_invite',
+  'team_invite_link_create',
   'listPages',
   'searchPages',
   'readCollabDoc',
@@ -145,6 +149,31 @@ const PARENT_ID = {
 
 const stringArray = (description: string) => ({ type: 'array', items: { type: 'string' }, description });
 
+/** `pages_import` batch caps: one call carries at most this many pages, and at most this many bytes of page bodies. */
+export const PAGES_IMPORT_MAX_PAGES = 50;
+export const PAGES_IMPORT_MAX_BODY_BYTES = 900 * 1024;
+export const PAGES_IMPORT_MAX_TYPES = 20;
+/** `team_invite`: emails per call. */
+export const TEAM_INVITE_MAX_EMAILS = 20;
+
+const ORG_INVITE_ROLE = {
+  type: 'string',
+  enum: ['member', 'admin', 'viewer', 'guest'],
+  description: "Team role. Default 'member'.",
+} as const;
+
+/** The project roles an invitation or invite link can grant; the server's `project_access` roles. */
+export const TEAM_PROJECT_ROLES = ['project-admin', 'project-editor', 'project-viewer'] as const;
+export type TeamProjectRole = (typeof TEAM_PROJECT_ROLES)[number];
+/** What an invitation with a project grants when no role is named. */
+export const DEFAULT_INVITE_PROJECT_ROLE: TeamProjectRole = 'project-editor';
+
+const INVITE_PROJECT_ROLE = {
+  type: 'string',
+  enum: [...TEAM_PROJECT_ROLES],
+  description: "Role on `projectId`. Default 'project-editor' when projectId is given; 'editor' and 'viewer' are accepted for project-editor and project-viewer.",
+} as const;
+
 // ---------------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------------
@@ -155,14 +184,14 @@ export const PAGE_TOOL_CONTRACT: readonly PageToolContract[] = [
     availability: 'remoteOnly',
     readOnly: true,
     description:
-      "Which team project this repository's pages belong to, and who you are signed in as. Returns state bound (use it), ambiguous (several projects: ask the user which, write { orgId, projectId } to .nimbalyst/wiki.json and pass it as `project`), or unbound (a team admin can bind it with pages_bind_repo or pages_create_project; anyone else should ask a team admin). A bound result carries the Home page link and the guide page link when the project has one.",
+      "Which team project this repository's pages belong to, and who you are signed in as. Returns state bound (use it), ambiguous (several projects: ask the user which, write { orgId, projectId } to .nimbalyst/wiki.json and pass it as `project`), or unbound (a team admin can bind it with pages_bind_repo or pages_create_project; anyone else should ask a team admin). An unbound result with no teams carries `next`: create a team with team_create, or in the browser at next.consoleLink. A bound result carries the Home page link and the guide page link when the project has one.",
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'pages_bind_repo',
     availability: 'remoteOnly',
     readOnly: false,
-    description: 'Team admins only. Bind this repository to an existing team project.',
+    description: 'Team admins only. Bind this repository to an existing team project. Returns the project and its homeLink.',
     inputSchema: {
       type: 'object',
       properties: { repo: PAGE_TOOL_REPO_ARG, orgId: { type: 'string' }, projectId: { type: 'string' } },
@@ -178,6 +207,105 @@ export const PAGE_TOOL_CONTRACT: readonly PageToolContract[] = [
       type: 'object',
       properties: { orgId: { type: 'string' }, name: { type: 'string', description: 'The project name.' } },
       required: ['orgId', 'name'],
+    },
+  },
+  {
+    name: 'pages_import',
+    availability: 'remoteOnly',
+    readOnly: false,
+    description:
+      `Import a local wiki into the bound team project in batches: pages, typed pages and their types in one call. Editors and above. Upserts by (project, source.wikiId, localId): a re-run updates the pages it already created and an interrupted move resumes, never duplicates. A parentLocalId may name a page imported in an earlier batch. Types are ensured before typed pages. At most ${PAGES_IMPORT_MAX_PAGES} pages and ${PAGES_IMPORT_MAX_BODY_BYTES} bytes of bodies per call; send parents before children. Bodies are stored verbatim (decision marks included); to rewrite links, call again with the rewritten bodies for the same localIds. A body a person has edited since the import wrote it is not overwritten (error body_edited). Returns idMap (localId to nodeId, id, issueKey, link, uri), created, updated and per-page errors.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: PAGE_TOOL_REPO_ARG,
+        source: {
+          type: 'object',
+          description: 'The local wiki: its stable id from .nimbalyst/local-wiki.json.',
+          properties: { wikiId: { type: 'string' } },
+          required: ['wikiId'],
+        },
+        types: {
+          type: 'array',
+          description: `Types the typed pages use, created when missing (at most ${PAGES_IMPORT_MAX_TYPES}). definition is the tracker_define_type schema.`,
+          items: {
+            type: 'object',
+            properties: { id: { type: 'string' }, name: { type: 'string' }, definition: { type: 'object' } },
+            required: ['id', 'name', 'definition'],
+          },
+        },
+        pages: {
+          type: 'array',
+          description: 'Pages in parent-first order. May be empty when a first batch carries only types.',
+          items: {
+            type: 'object',
+            properties: {
+              localId: { type: 'string', description: "The page's id in the local wiki." },
+              parentLocalId: { type: ['string', 'null'], description: 'Parent localId, or null for the top of the wiki.' },
+              title: { type: 'string' },
+              order: { type: 'number', description: 'Sort order among its siblings.' },
+              kind: { type: 'string', enum: ['page', 'typedPage'] },
+              typeId: { type: 'string', description: 'The type, for a typed page.' },
+              fields: { type: 'object', description: "A page's fields, or a typed page's field values." },
+              body: { type: 'string', description: 'Markdown body, verbatim.' },
+            },
+            required: ['localId', 'parentLocalId', 'title', 'kind', 'body'],
+          },
+        },
+      },
+      required: ['source', 'pages'],
+    },
+  },
+  {
+    name: 'team_create',
+    availability: 'remoteOnly',
+    readOnly: false,
+    description:
+      "Create a Nimbalyst team for the signed-in user, who becomes its admin. Keys are server-managed, so teammates need nothing installed. With `repo`, the team's first project is bound to this repository in the same call (state bound); otherwise state created. Returns orgId, projectId, state and homeLink to open in the browser. A person can create at most 5 teams a day.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The team name, as teammates will see it in their invitation.' },
+        repo: PAGE_TOOL_REPO_ARG,
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'team_invite',
+    availability: 'remoteOnly',
+    readOnly: false,
+    description:
+      `Team admins only. Email an invitation to each address; invitees open the team in the browser with nothing to install. Before calling, show the user the exact list of email addresses and get their confirmation; never invite an address the user did not confirm. At most ${TEAM_INVITE_MAX_EMAILS} addresses per call. Returns a status per email.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        orgId: { type: 'string' },
+        emails: stringArray('The addresses the user confirmed.'),
+        role: ORG_INVITE_ROLE,
+        projectId: { type: 'string', description: 'Also grant this project.' },
+        projectRole: INVITE_PROJECT_ROLE,
+      },
+      required: ['orgId', 'emails'],
+    },
+  },
+  {
+    name: 'team_invite_link_create',
+    availability: 'remoteOnly',
+    readOnly: false,
+    description:
+      'Team admins only. Create a shareable invite link: anyone who opens it and signs in joins the team with `role` (default member). It expires, can be limited to a number of uses, and can be revoked from the console Members page. Confirm with the user before creating one, since anyone holding the link can join.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        orgId: { type: 'string' },
+        role: ORG_INVITE_ROLE,
+        projectId: { type: 'string', description: 'Also grant this project.' },
+        projectRole: INVITE_PROJECT_ROLE,
+        expiresIn: { type: 'integer', minimum: 3600, maximum: 2592000, description: 'Seconds until the link expires, 1 hour to 30 days. Default 7 days.' },
+        maxUses: { type: 'integer', minimum: 1, maximum: 1000, description: 'How many people may use it, at most 1000. Default: unlimited until it expires.' },
+      },
+      required: ['orgId'],
     },
   },
   {
@@ -654,15 +782,96 @@ export type PagesStatusResult =
       guideLink?: string;
     }
   | { state: 'ambiguous'; user: PagesSignedInUser; projects: PagesProjectRef[] }
-  | { state: 'unbound'; user: PagesSignedInUser; teams: PagesTeamSummary[] };
+  | { state: 'unbound'; user: PagesSignedInUser; teams: PagesTeamSummary[]; next?: PagesStatusNextStep };
+
+/** What a signed-in user with no team does next: the tool, or the console page that does the same. */
+export interface PagesStatusNextStep {
+  tool: 'team_create';
+  consoleLink: string;
+}
 
 export interface PagesBindRepoResult {
   project: PagesProjectRef;
+  homeLink: string;
 }
 
 export interface PagesCreateProjectResult {
   project: PagesProjectRef;
-  homeLink?: string;
+  bound: boolean;
+  homeLink: string;
+}
+
+export interface TeamCreateResult {
+  orgId: string;
+  projectId: string;
+  /** `bound` when `repo` was bound to the new project, `created` otherwise. */
+  state: 'bound' | 'created';
+  homeLink: string;
+  guideLink?: string;
+  /** Set when `repo` was given but could not be bound; the team exists. */
+  warning?: string;
+}
+
+export interface TeamInviteResult {
+  orgId: string;
+  results: Array<{
+    email: string;
+    status: 'invited' | 'failed';
+    /** On failure: a refusal code (admin_required, limited, invalid_request, ...). */
+    code?: string;
+    message?: string;
+    /** Set when the invitation went out but the project grant did not. */
+    projectGrantFailed?: boolean;
+  }>;
+}
+
+export interface TeamInviteLinkCreateResult {
+  url: string;
+  expiresAt: string;
+  maxUses: number | null;
+}
+
+export interface PagesImportTypeInput {
+  id: string;
+  name: string;
+  /** The `tracker_define_type` `schema`; its `type` is set to `id`. */
+  definition: Record<string, unknown>;
+}
+
+export interface PagesImportPageInput {
+  localId: string;
+  parentLocalId: string | null;
+  title: string;
+  order?: number;
+  kind: 'page' | 'typedPage';
+  typeId?: string;
+  fields?: Record<string, unknown>;
+  body: string;
+}
+
+export interface PagesImportInput {
+  repo: string;
+  project?: { orgId: string; projectId: string };
+  source: { wikiId: string };
+  types?: PagesImportTypeInput[];
+  pages: PagesImportPageInput[];
+}
+
+export interface PagesImportIdMapEntry {
+  /** `document:<id>` or `item:<id>`, as listPages reports it. */
+  nodeId: string;
+  id: string;
+  issueKey?: string;
+  link: string;
+  /** Where readCollabDoc reads the body. */
+  uri?: string;
+}
+
+export interface PagesImportResult {
+  idMap: Record<string, PagesImportIdMapEntry>;
+  created: number;
+  updated: number;
+  errors: Array<{ localId: string; code: string; message: string }>;
 }
 
 interface PageTreeNodeBase {

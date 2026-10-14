@@ -323,7 +323,7 @@ class WebSocketClient(
         // Non-sensitive client labels for server connect/disconnect telemetry.
         val platformLabel = encodedClientLabel("mobile")
         val versionLabel = encodedClientLabel(appVersion ?: "unknown")
-        return "$wsBase/sync/${params.roomId}?token=$encodedToken&platform=$platformLabel&version=$versionLabel"
+        return "$wsBase/sync/${params.roomId}?token=$encodedToken&platform=$platformLabel&version=$versionLabel&sessionPayloadVersion=1"
     }
 
     /**

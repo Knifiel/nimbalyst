@@ -99,15 +99,12 @@ public final class AppState: ObservableObject {
     // MARK: - Sync auth-degraded tracking
 
     /// Number of consecutive `.failed` results from `authManager.refreshSession`.
-    /// Reset to 0 on `.success`. At `refreshFailureBannerThreshold` we surface
-    /// the degraded banner; at `refreshFailureEscalationThreshold` we treat the
-    /// situation as `.sessionExpired` and force a logout. Without escalation,
+    /// Reset to 0 on `.success`. `RefreshFailurePolicy` decides when that
+    /// surfaces the degraded banner and when it forces a logout. Without escalation,
     /// historically the timer would retry forever -- today's Stytch JWKS
     /// rotation incident (2026-05-20) silently broke every iOS client because
     /// refreshSession returned 403 (not 401/404) and 403 mapped to `.failed`.
     private var consecutiveRefreshFailures: Int = 0
-    private static let refreshFailureBannerThreshold = 3
-    private static let refreshFailureEscalationThreshold = 5
 
     /// How long sync must stay disconnected (while authenticated and in the
     /// foreground) before the degraded banner appears. Long enough to ride out
@@ -529,14 +526,16 @@ public final class AppState: ObservableObject {
             let count = consecutiveRefreshFailures
             logger.warning("JWT refresh failed (transient, \(count) consecutive)")
 
-            if count >= AppState.refreshFailureEscalationThreshold {
+            switch RefreshFailurePolicy.action(forConsecutiveFailures: count) {
+            case .signOut:
                 logger.error("JWT refresh has failed \(count) consecutive times; escalating to sessionExpired")
                 handleSessionExpired(reason: "Your session could not be refreshed. Please sign in again.")
                 return false
-            }
-            if count >= AppState.refreshFailureBannerThreshold && !syncAuthDegraded {
+            case .banner where !syncAuthDegraded:
                 logger.warning("Surfacing degraded banner after \(count) consecutive refresh failures")
                 syncAuthDegraded = true
+            default:
+                break
             }
         }
         return false
@@ -662,6 +661,14 @@ public final class AppState: ObservableObject {
         syncManager = sync
         sync.setAppInForeground(recovery.isForeground, recover: false)
         sync.onReconnectNeeded = { [weak self] in self?.recovery.connectionFailed() }
+        sync.freshToken = { [weak self, weak sync] in
+            guard let self, let sync else { return nil }
+            return await SyncCredentials.freshToken(
+                read: { self.authManager.sessionJwt },
+                isCurrent: { account.id == KeychainManager.getActiveAccount()?.id && self.syncManager === sync && self.authManager.isAuthenticated },
+                refresh: { await self.refreshJWT() }
+            )
+        }
         recovery.configure(identity: account.id)
         if networkObserver == nil {
             networkObserver = SyncNetworkObserver { [weak self] in self?.recovery.request(reason: "network") }

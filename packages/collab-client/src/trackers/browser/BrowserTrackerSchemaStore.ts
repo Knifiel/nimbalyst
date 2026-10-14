@@ -138,6 +138,19 @@ export function resolveBrowserTrackerSchema(
   }
 }
 
+/** What the "New type" dialog tells the person when the room did not take their type. */
+function describeDefinitionRefusal(type: string, error: { code: string; message: string } | undefined): string {
+  const code = error?.code ?? 'unknown';
+  if (code === 'schemaExists') return `Someone else just created a type named "${type}". Pick another name.`;
+  if (code === 'rotationLocked') {
+    return `The team's server is not accepting changes to this project right now (rotationLocked). The type was not created.`;
+  }
+  if (code === 'createOnlyUnsupported' || isPermanentTrackerRejection(code as TrackerMutationRejectCode)) {
+    return error?.message || `The team room refused the new type (${code}).`;
+  }
+  return `The team's server couldn't take the new type right now (${code}). Try again.`;
+}
+
 export class BrowserTrackerSchemaStore {
   private readonly builtins = new Map<string, TrackerDataModel>();
   private readonly models = new Map<string, TrackerDataModel>();
@@ -188,15 +201,11 @@ export class BrowserTrackerSchemaStore {
         queueMicrotask(pending.resolve);
         return;
       }
-      const code = error?.code ?? 'unknown';
-      // A transient refusal (key rotation, custody) stays queued and is retried.
-      if (code !== 'createOnlyUnsupported' && !isPermanentTrackerRejection(code as TrackerMutationRejectCode)) return;
+      // Every refusal settles, temporary ones included. Nothing re-sends a
+      // creation until the socket reconnects, so leaving one queued is a dialog
+      // that never finishes; the person can try again instead.
       this.pendingDefinitions.delete(type);
-      pending.reject(new Error(
-        code === 'schemaExists'
-          ? `Someone else just created a type named "${type}". Pick another name.`
-          : error?.message || `The team room refused the new type (${code}).`,
-      ));
+      pending.reject(new Error(describeDefinitionRefusal(type, error)));
     },
     applyRemote: async ({ type, model }) => {
       if (this.disposed) return;

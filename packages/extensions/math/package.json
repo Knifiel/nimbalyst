@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "katex": "^0.16.45",
+    "katex": "^0.18.11",
     "rehype-katex": "^7.0.1",
     "remark-math": "^6.0.0"
   },

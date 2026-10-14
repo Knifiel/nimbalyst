@@ -1,4 +1,6 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useAtomValue } from 'jotai';
+import { interactiveWidgetHostAtom } from '../../../store/atoms/interactiveWidgetHost';
 
 // Inject rate limit widget styles once (for color-mix patterns)
 const injectRateLimitStyles = () => {
@@ -22,6 +24,9 @@ const injectRateLimitStyles = () => {
 
 interface RateLimitWidgetProps {
   content: string;
+  /** With `isLastMessage`, enables the auto-resume switch on a blocked card. */
+  sessionId?: string;
+  isLastMessage?: boolean;
 }
 
 /**
@@ -67,7 +72,7 @@ function formatResetTime(resetsAtMs: number): string {
   return `${diffMinutes}m`;
 }
 
-export const RateLimitWidget: React.FC<RateLimitWidgetProps> = ({ content }) => {
+export const RateLimitWidget: React.FC<RateLimitWidgetProps> = ({ content, sessionId, isLastMessage = false }) => {
   useEffect(() => {
     injectRateLimitStyles();
   }, []);
@@ -96,6 +101,66 @@ export const RateLimitWidget: React.FC<RateLimitWidgetProps> = ({ content }) => 
         {resetsAtMs && ` Resets in ${formatResetTime(resetsAtMs)}.`}
         {!isWarning && is1mModel && ' This 1M context model may not be available on your plan.'}
       </div>
+      {!isWarning && isLastMessage && sessionId && (
+        <AutoResumeControl sessionId={sessionId} resetsAtMs={resetsAtMs} />
+      )}
     </div>
   );
 };
+
+/**
+ * Opt-in switch for resuming once the limit resets. Only on the latest blocked
+ * card: an older one belongs to a turn that has already moved on. The wakeup
+ * banner shows the exact resume time, so this only shows on/off.
+ */
+function AutoResumeControl({ sessionId, resetsAtMs }: { sessionId: string; resetsAtMs: number | null }) {
+  const host = useAtomValue(interactiveWidgetHostAtom(sessionId));
+  // The host is a stable proxy, so a toggle does not re-render this card; keep
+  // what the user chose here, seeded from the setting.
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!host?.setUsageLimitAutoResume) return null;
+  const isOn = enabled ?? host.usageLimitAutoResumeEnabled ?? false;
+
+  const toggle = async (next: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await host.setUsageLimitAutoResume!(next, resetsAtMs);
+      setEnabled(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rate-limit-auto-resume flex items-center gap-3 text-[0.85rem]">
+      {isOn ? (
+        <>
+          <span className="text-[var(--nim-text-muted)]">Auto-resume is on. This session continues when the limit resets.</span>
+          <button
+            type="button"
+            className="rate-limit-auto-resume-off bg-transparent border-none p-0 cursor-pointer text-[var(--nim-primary)] hover:underline disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={busy}
+            onClick={() => toggle(false)}
+          >
+            Turn off
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          className="rate-limit-auto-resume-on py-2 px-3.5 rounded-md text-sm font-semibold cursor-pointer border-none bg-[var(--nim-primary)] text-white hover:bg-[var(--nim-primary-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={busy}
+          onClick={() => toggle(true)}
+        >
+          Resume automatically when the limit resets
+        </button>
+      )}
+      {error && <span className="text-[var(--nim-error)]">{error}</span>}
+    </div>
+  );
+}

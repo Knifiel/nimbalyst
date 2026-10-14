@@ -4,7 +4,9 @@ import {
   buildConsoleLink,
   consoleLinkDeepLink,
   consoleLinkFromDeepLink,
+  buildConsoleFeedbackRequestLink,
   isConsoleLink,
+  parseConsoleFeedbackRequestLink,
   parseConsoleLink,
   type ConsoleLinkTarget,
 } from '../consoleLinks.js';
@@ -96,5 +98,26 @@ describe('console links', () => {
     expect(consoleLinkFromDeepLink(deep!)).toBe(url);
     expect(consoleLinkFromDeepLink('nimbalyst://tracker/abc')).toBeNull();
     expect(consoleLinkFromDeepLink('nimbalyst://console/org/o/admin')).toBeNull();
+  });
+
+  it('builds and reads a feedback request link, which is not a page link', () => {
+    const url = buildConsoleFeedbackRequestLink('acme-co', 'req (1)');
+    expect(url).toBe('https://console.nimbalyst.com/org/acme-co/feedback/req%20%281%29');
+    expect(parseConsoleFeedbackRequestLink(url)).toEqual({ orgRouteKey: 'acme-co', requestId: 'req (1)' });
+    // Links minted with plain encodeURIComponent read the same.
+    expect(parseConsoleFeedbackRequestLink('https://console.nimbalyst.com/org/org-1/feedback/req-1?x=1#y'))
+      .toEqual({ orgRouteKey: 'org-1', requestId: 'req-1' });
+    // Page link consumers (references, embeds) must not take it for a page.
+    expect(parseConsoleLink(url)).toBeNull();
+    expect(isConsoleLink(url)).toBe(false);
+    for (const other of [
+      'https://evil.example.com/org/o/feedback/r',
+      'https://console.nimbalyst.com/org/o/feedback',
+      'https://console.nimbalyst.com/org/o/feedback/r/extra',
+      'https://console.nimbalyst.com/org/o/project/p/document/d',
+      'https://console.nimbalyst.com/org/%E0%A4%A/feedback/r',
+    ]) {
+      expect(parseConsoleFeedbackRequestLink(other)).toBeNull();
+    }
   });
 });

@@ -59,8 +59,8 @@ function initTool(context: LocalWikiContext): McpTool {
   };
 }
 
-export function createLocalToolMap(context: LocalWikiContext): ToolMap {
+export function createLocalToolMap(context: LocalWikiContext, extra: McpTool[] = []): ToolMap {
   const tools = new ToolMap();
-  for (const tool of [initTool(context), ...pageTools(context), ...trackerTools(context)]) tools.register(tool);
+  for (const tool of [initTool(context), ...pageTools(context), ...trackerTools(context), ...extra]) tools.register(tool);
   return tools;
 }

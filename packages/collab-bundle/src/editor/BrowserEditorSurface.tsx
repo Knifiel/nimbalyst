@@ -12,6 +12,7 @@ import {
 } from './presenceAnnouncements';
 import type { CollabEditorPresence } from './types';
 import { openClickedPageReference } from './consoleLinkOpener';
+import { SearchReplaceStateManager } from '@nimbalyst/runtime/plugins/SearchReplace/SearchReplaceStateManager';
 
 /** Long enough to fold a reconnect's leave/rejoin pair into one message. */
 const PRESENCE_ANNOUNCE_DEBOUNCE_MS = 900;
@@ -23,7 +24,16 @@ export type PresenceSubscription = (
 interface BrowserEditorSurfaceProps {
   config: EditorConfig;
   subscribeToPresence?: PresenceSubscription;
+  /** Cmd/Ctrl+F in the document opens the shared find and replace bar above it. */
+  findInPage?: boolean;
 }
+
+/** Loaded with the first document that offers find, so hosts without it never pay for the bar. */
+const SearchReplaceBar = React.lazy(() =>
+  import('@nimbalyst/runtime/plugins/SearchReplace/SearchReplaceBar').then((module) => ({ default: module.SearchReplaceBar })));
+
+const isFindShortcut = (event: React.KeyboardEvent) =>
+  (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'f';
 
 /**
  * Polite announcements of who joined or left, for assistive tech only.
@@ -125,8 +135,21 @@ function releaseTabFromDocument(event: React.KeyboardEvent<HTMLDivElement>): voi
 export function BrowserEditorSurface({
   config,
   subscribeToPresence,
+  findInPage = false,
 }: BrowserEditorSurfaceProps): React.JSX.Element {
   const [editor, setEditor] = React.useState<LexicalEditor | null>(null);
+  // The bar keys its state by "tab"; each mounted document is its own.
+  const findId = `browser-find-${React.useId()}`;
+  React.useEffect(() => () => SearchReplaceStateManager.clearState(findId), [findId]);
+  const onKeyDownCapture = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    releaseTabFromDocument(event);
+    // Only from inside this document: the browser's own find stays everywhere else.
+    if (findInPage && isFindShortcut(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      SearchReplaceStateManager.openAndFocus(findId);
+    }
+  };
   const editorConfig = React.useMemo(() => ({
     ...config,
     onEditorReady: (value: Parameters<NonNullable<EditorConfig['onEditorReady']>>[0]) => {
@@ -137,13 +160,18 @@ export function BrowserEditorSurface({
   return (
     <div
       className="collab-bundle-editor"
-      onKeyDownCapture={releaseTabFromDocument}
+      onKeyDownCapture={onKeyDownCapture}
       onClick={(event) => openClickedPageReference(event.nativeEvent)}
       onAuxClick={(event) => openClickedPageReference(event.nativeEvent)}
     >
       {subscribeToPresence && (
         <PresenceAnnouncements subscribeToPresence={subscribeToPresence} />
       )}
+      {findInPage && editor ? (
+        <React.Suspense fallback={null}>
+          <SearchReplaceBar filePath={findId} fileName="" editor={editor} />
+        </React.Suspense>
+      ) : null}
       <DecisionOutline editor={editor} />
       <NimbalystEditor config={editorConfig} />
     </div>

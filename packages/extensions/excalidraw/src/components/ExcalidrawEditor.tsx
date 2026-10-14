@@ -231,8 +231,9 @@ export const ExcalidrawEditor = forwardRef<any, EditorHostProps>(function Excali
     getCurrentContent: (): ExcalidrawFile => {
       const api = excalidrawAPIRef.current;
       if (!api) {
-        // console.error('[Excalidraw] Cannot save: API not ready');
-        return createEmptyFile(defaultBgRef.current);
+        // Throwing fails the save and keeps the page dirty; an empty file here
+        // would overwrite a drawing that has not finished loading.
+        throw new Error('Cannot save the drawing before the canvas is ready');
       }
 
       const appState = api.getAppState();

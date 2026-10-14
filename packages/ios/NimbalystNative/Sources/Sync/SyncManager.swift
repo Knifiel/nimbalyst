@@ -14,7 +14,7 @@ import os
 public final class SyncManager: ObservableObject {
     let logger = Logger(subsystem: "com.nimbalyst.app", category: "SyncManager")
 
-    private let crypto: CryptoManager
+    let crypto: CryptoManager
     private let database: DatabaseManager
     let indexClient: WebSocketClient = {
         let client = WebSocketClient()
@@ -86,10 +86,13 @@ public final class SyncManager: ObservableObject {
     /// SyncErrorCoalescer -- alternating draft and read-receipt failures against
     /// one dead socket are a single interruption.
     private var errorCoalescer = SyncErrorCoalescer()
+    private var errorAnalytics = SyncErrorAnalyticsThrottle()
 
     /// The only way `syncError` is set. Every failure path goes through here so
-    /// the coalescing rule cannot be bypassed by a new call site.
+    /// the coalescing rule cannot be bypassed by a new call site. Each report is
+    /// also kept for "Copy diagnostics" and, throttled, sent to analytics.
     func report(_ error: SyncError) {
+        errorAnalytics.observe(error)
         guard let published = errorCoalescer.accept(error) else { return }
         syncError = published
     }
@@ -430,6 +433,12 @@ public final class SyncManager: ObservableObject {
         didSet { indexClient.onReconnectNeeded = onReconnectNeeded }
     }
 
+    /// The session room retries on its own, so it reads the token per attempt
+    /// instead of reusing the one from the last index connect.
+    public var freshToken: (@MainActor () async -> String?)? {
+        didSet { sessionClient.freshToken = freshToken }
+    }
+
     func waitForConnection() async -> Bool { await indexClient.waitForReady() }
 
     /// Retire transport before awaiting auth, so creation cannot use a stale
@@ -721,7 +730,9 @@ public final class SyncManager: ObservableObject {
         case "createWorktreeResponseBroadcast":
             handleCreateWorktreeResponse(data)
         case "voiceToolResponseBroadcast":
-            handleVoiceToolResponse(data)
+            if let requestId = voiceTools.receive(data) { requests.resolve(requestId: requestId) }
+        case "sessionContextBroadcast":
+            liveContext.apply(data)
         case "error":
             handleIndexError(data)
         default:
@@ -825,10 +836,8 @@ public final class SyncManager: ObservableObject {
         return await voiceTools.call(toolName: "nimbalyst_live_v1", argsJson: json, projectId: scope.projectId, scope: scope)
     }
 
-    private func handleVoiceToolResponse(_ data: Data) {
-        guard let requestId = voiceTools.receive(data) else { return }
-        requests.resolve(requestId: requestId)
-    }
+    /// Mid-turn context usage relayed, never stored, by the server.
+    private lazy var liveContext = LiveSessionContextApplier(crypto: crypto, database: database)
 
     // MARK: - Settings Sync
 
@@ -920,7 +929,7 @@ public final class SyncManager: ObservableObject {
             sinceSeq = nil
         }
 
-        let request = SessionSyncRequest(sinceSeq: sinceSeq)
+        let request = SessionSyncRequest(sinceRevision: forceFullSync ? 0 : transcriptRevisionCursor((try? database.syncState(forRoom: sessionId))?.lastCursor), sinceSeq: sinceSeq)
         guard let data = try? JSONEncoder().encode(request),
               let json = String(data: data, encoding: .utf8) else {
             logger.error("requestSessionSync failed to encode request for session \(sessionId)")
@@ -964,6 +973,8 @@ public final class SyncManager: ObservableObject {
         switch envelope.type {
         case "syncResponse":
             handleSessionSyncResponse(data, sessionId: sessionId)
+        case "messagePayloadPart":
+            acceptPayloadPart(data, sessionId: sessionId)
         case "messageBroadcast":
             handleMessageBroadcast(data, sessionId: sessionId)
         case "metadataBroadcast":
@@ -997,10 +1008,10 @@ public final class SyncManager: ObservableObject {
         // Buffer messages for batch insert
         sessionSyncBuffer.append(contentsOf: response.messages)
 
-        if response.hasMore, let cursor = response.cursor {
+        if response.hasMore, let cursor = response.revisionCursor.map(String.init) ?? response.cursor {
             // Request next page
             let sinceSeq = Int(cursor)
-            let request = SessionSyncRequest(sinceSeq: sinceSeq)
+            let request = SessionSyncRequest(sinceRevision: response.revisionCursor, sinceSeq: response.revisionCursor == nil ? sinceSeq : nil)
             if let data = try? JSONEncoder().encode(request),
                let json = String(data: data, encoding: .utf8) {
                 requests.send(kind: .sessionSyncPage, channel: .session, json: json)
@@ -1025,23 +1036,31 @@ public final class SyncManager: ObservableObject {
             return msg
         }
 
+        let maxRevision = sessionSyncBuffer.compactMap(\.revision).max()
+        let receivedEntries = sessionSyncBuffer
+        // An inline row that fails to decrypt is from a prior key epoch and never
+        // becomes readable; only an incomplete chunked row may heal on a refetch.
+        let holdsCursor = receivedEntries.contains { $0.payload != nil && failedIds.contains($0.id) }
         sessionSyncBuffer = []
 
         // Log decryption results
         if !failedIds.isEmpty {
             logger.error("Decryption failed for \(failedIds.count)/\(totalCount) messages in session \(sessionId). Failed sequences: \(failedSeqs.prefix(10))")
+            recordUnreadableHistory(failed: failedIds.count, of: totalCount)
         }
 
         do {
             try database.appendMessages(messages)
+            for entry in receivedEntries where !failedIds.contains(entry.id) { sessionPayloads.release(entry, sessionId: sessionId) }
 
+            let previous = try database.syncState(forRoom: sessionId)
             // Update sync watermark to max sequence
             if let maxSeq = messages.map(\.sequence).max() {
                 let now = Int(Date().timeIntervalSince1970 * 1000)
                 let syncState = SyncState(
                     roomId: sessionId,
-                    lastCursor: nil,
-                    lastSequence: maxSeq,
+                    lastCursor: !holdsCursor ? maxRevision.map { "r:\(max($0, transcriptRevisionCursor(previous?.lastCursor)))" } ?? previous?.lastCursor : previous?.lastCursor,
+                    lastSequence: max(maxSeq, previous?.lastSequence ?? 0),
                     lastSyncedAt: now
                 )
                 try database.updateSyncState(syncState)
@@ -1106,6 +1125,9 @@ public final class SyncManager: ObservableObject {
 
         do {
             try database.appendMessage(message)
+            if !sessionSyncBuffer.contains(where: { $0.payload?.transferId == broadcast.message.payload?.transferId }) {
+                sessionPayloads.release(broadcast.message, sessionId: sessionId)
+            }
 
             // #NIM-5924: the watermark only moves forward. A broadcast that
             // arrives late, or out of order after a reconnect, used to rewind
@@ -1115,7 +1137,7 @@ public final class SyncManager: ObservableObject {
             guard message.sequence > lastSequence else { return }
             try database.updateSyncState(SyncState(
                 roomId: sessionId,
-                lastCursor: nil,
+                lastCursor: (try database.syncState(forRoom: sessionId))?.lastCursor,
                 lastSequence: message.sequence,
                 lastSyncedAt: Int(Date().timeIntervalSince1970 * 1000)
             ))
@@ -1214,28 +1236,8 @@ public final class SyncManager: ObservableObject {
 
     // MARK: - Message Decryption
 
-    private func decryptServerMessage(_ entry: ServerMessageEntry, sessionId: String) -> Message? {
-        let decrypted: String?
-        do {
-            decrypted = try crypto.decrypt(encryptedBase64: entry.encryptedContent, ivBase64: entry.iv)
-        } catch {
-            logger.error("Failed to decrypt message \(entry.id) seq=\(entry.sequence) in session \(sessionId): \(error.localizedDescription). encryptedContent length=\(entry.encryptedContent.count), iv length=\(entry.iv.count)")
-            return nil
-        }
-
-        return Message(
-            id: entry.id,
-            sessionId: sessionId,
-            sequence: entry.sequence,
-            source: entry.source,
-            direction: entry.direction,
-            encryptedContent: entry.encryptedContent,
-            iv: entry.iv,
-            contentDecrypted: decrypted,
-            metadataJson: nil,
-            createdAt: entry.createdAt
-        )
-    }
+    /// See SyncManager+SessionPayloads.swift.
+    let sessionPayloads = SessionPayloadStore()
 
     // MARK: - Draft Input Sync
 

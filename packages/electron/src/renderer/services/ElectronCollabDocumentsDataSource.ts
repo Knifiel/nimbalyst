@@ -170,6 +170,12 @@ export class ElectronCollabDocumentsDataSource implements CollabDocsDataSource {
   private readonly observeStatus?: ElectronCollabDocumentsDataSourceEvents['observeStatus'];
   private connectPromise: Promise<void> | null = null;
   private disposed = false;
+  /**
+   * The current connection's team reply has arrived. TeamSync keeps its team
+   * state and rows across a disconnect, so those prove nothing about pages
+   * created while offline; only this connection's reply does.
+   */
+  private indexLoadedOnConnection = false;
 
   constructor(options: ElectronCollabDocumentsDataSourceOptions) {
     const { scope, events = {} } = options;
@@ -197,7 +203,10 @@ export class ElectronCollabDocumentsDataSource implements CollabDocsDataSource {
       teamProjectId: scope.indexConfig.teamProjectId,
       teamMemberId: scope.indexConfig.teamMemberId,
       getJwt: options.getJwt,
-      onTeamStateLoaded: emitSnapshot,
+      onTeamStateLoaded: () => {
+        this.indexLoadedOnConnection = true;
+        emitSnapshot();
+      },
       onDocumentsLoaded: emitSnapshot,
       onDocumentChanged: (document) => {
         documentConfirmations.changed(document.documentId, document);
@@ -253,6 +262,7 @@ export class ElectronCollabDocumentsDataSource implements CollabDocsDataSource {
         emitSnapshot();
       },
       onStatusChange: (status) => {
+        if (status !== 'connected') this.indexLoadedOnConnection = false;
         confirmations.connectionChanged(status === 'connected');
         documentConfirmations.connectionChanged(status === 'connected');
         titleConfirmations.connectionChanged(status === 'connected');
@@ -505,6 +515,10 @@ export class ElectronCollabDocumentsDataSource implements CollabDocsDataSource {
       // The server's snapshot flag: it stores plain-page fields.
       ...(this.provider.storesPageFields?.() ? { pageFields: true } : {}),
       ...(metadata ? { primaryProjectId: metadata.teamProjectId ?? null } : {}),
+      // The team room's reply on this connection carries the whole org's
+      // index; before it, `items` is the cache or whatever arrived piecemeal,
+      // and a missing page proves nothing.
+      ...(this.indexLoadedOnConnection ? { indexLoaded: true } : {}),
     };
   }
 

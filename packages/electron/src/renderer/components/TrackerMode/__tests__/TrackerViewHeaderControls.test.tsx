@@ -495,4 +495,19 @@ describe('TrackerViewHeaderControls', () => {
 
     screen.getByTestId('tracker-filter-builder');
   });
+
+  it('opens the builder from a host anchor, outside the controls, with no Filter button of its own', () => {
+    const anchor = document.createElement('div');
+    document.body.appendChild(anchor);
+    renderControls({ openFiltersToken: 1, filterAnchor: anchor });
+
+    const controls = screen.getByTestId('tracker-view-header-controls');
+    expect(within(controls).queryByTestId('tracker-view-filter-button')).toBeNull();
+    const builder = screen.getByTestId('tracker-filter-builder');
+    expect(controls.contains(builder)).toBe(false);
+    // A click on the anchor is inside the builder's world, not an outside click.
+    fireEvent.mouseDown(anchor);
+    screen.getByTestId('tracker-filter-builder');
+    anchor.remove();
+  });
 });

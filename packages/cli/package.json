@@ -1,6 +1,6 @@
 {
   "name": "@nimbalyst/cli",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "description": "nim — companion command-line tool for Nimbalyst trackers and agent interop",
   "license": "MIT",
   "author": "Nimbalyst Team",

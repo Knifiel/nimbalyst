@@ -18,6 +18,20 @@ describe('nim wiki', () => {
     expect([...new Set(Object.values(PAGES_VERBS))].sort()).toEqual([...PAGE_TOOL_NAMES].sort());
   });
 
+  it('turns the team verbs into team tool calls and points import at move-to-team', () => {
+    expect(call('team-create', 'Acme')).toEqual({ tool: 'team_create', args: { name: 'Acme' } });
+    expect(call('invite', '--org', 'o1', 'a@x.com', 'b@y.com', '--project', 'p1', '--project-role', 'editor')).toEqual({
+      tool: 'team_invite',
+      args: { orgId: 'o1', emails: ['a@x.com', 'b@y.com'], projectId: 'p1', projectRole: 'editor' },
+    });
+    expect(call('invite-link', '--org', 'o1', '--expires-in', '86400', '--max-uses', '5')).toEqual({
+      tool: 'team_invite_link_create',
+      args: { orgId: 'o1', expiresIn: 86400, maxUses: 5 },
+    });
+    expect(() => call('invite', 'a@x.com')).toThrow(/--org/);
+    expect(() => call('import')).toThrow(/move-to-team/);
+  });
+
   it('turns each verb into its tool call', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nim-pages-'));
     const edits = path.join(tmp, 'edits.json');

@@ -74,7 +74,7 @@ class SyncManager internal constructor(
     @Volatile private var crypto: CryptoManager? = null
     @Volatile private var indexRoomId: String? = null
 
-    private val decoder = SessionEntryDecoder(gson)
+    private val decoder = SessionEntryDecoder(gson, SessionPayloadStore(java.io.File(context.cacheDir, "SessionPayloads"), gson))
     private val indexUpdates = SessionIndexUpdates(gson)
     private val presence = DevicePresence(context, gson)
     private val settings = SettingsSyncApplier(context)

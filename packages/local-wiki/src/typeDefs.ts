@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import yaml from 'js-yaml';
+import { contentVersion } from './ids.js';
 import type { WikiIssue } from './types.js';
 
 /**
@@ -46,6 +47,22 @@ interface RawType {
   roles?: unknown;
 }
 
+/**
+ * Field names a wiki type may not use. Nimbalyst's tracker model keeps these
+ * keys for an item's own metadata (its activity log, comments, timestamps,
+ * links), so a field with one of these names saves to the file but never shows
+ * in a table or page header. Mirrors `NON_FIELD_KEYS` in @nimbalyst/tracker-core.
+ */
+export const RESERVED_FIELD_NAMES: readonly string[] = [
+  'id', 'type', 'typeTags', 'issueNumber', 'issueKey', 'localKey', 'source', 'sourceRef',
+  'archived', 'archivedAt', 'syncStatus', 'content', 'module', 'lineNumber', 'workspace',
+  'lastIndexed', 'created', 'updated', 'authorIdentity', 'lastModifiedBy', 'createdByAgent',
+  'linkedSessions', 'linkedCommitSha', 'linkedCommits', 'linkedPullRequests', 'linkedIssues',
+  'documentId', 'activity', 'comments', 'origin', 'triagedAt', 'triagedBy', 'derivedSignals',
+  'assigneeId', 'reporterId', 'customFields',
+];
+const RESERVED_FIELDS = new Set(RESERVED_FIELD_NAMES);
+
 function str(value: unknown): string | null {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
 }
@@ -74,22 +91,27 @@ function readFields(raw: unknown): WikiFieldDef[] {
  * the parent's fields, then the child's, a child field replacing a parent field
  * of the same name.
  */
-export async function loadTypeDefs(typesDir: string | null | undefined): Promise<{ types: Map<string, WikiTypeDef>; issues: WikiIssue[] }> {
+export async function loadTypeDefs(
+  typesDir: string | null | undefined,
+): Promise<{ types: Map<string, WikiTypeDef>; issues: WikiIssue[]; /** Changes whenever any type file's text does. */ signature: string }> {
   const types = new Map<string, WikiTypeDef>();
   const issues: WikiIssue[] = [];
-  if (!typesDir) return { types, issues };
+  const texts: string[] = [];
+  if (!typesDir) return { types, issues, signature: '' };
   let names: string[];
   try {
     names = await readdir(typesDir);
   } catch {
-    return { types, issues };
+    return { types, issues, signature: '' };
   }
   const raws = new Map<string, { raw: RawType; sourcePath: string }>();
   for (const name of names.sort()) {
     if (!name.endsWith('.yaml') || name.includes('.patch.')) continue;
     const sourcePath = path.join(typesDir, name);
     try {
-      const raw = yaml.load(await readFile(sourcePath, 'utf8'), { schema: yaml.CORE_SCHEMA }) as RawType;
+      const text = await readFile(sourcePath, 'utf8');
+      texts.push(`${name}\0${text}`);
+      const raw = yaml.load(text, { schema: yaml.CORE_SCHEMA }) as RawType;
       const typeId = raw && typeof raw === 'object' ? str(raw.type) : null;
       if (!typeId) continue;
       raws.set(typeId, { raw, sourcePath });
@@ -105,16 +127,26 @@ export async function loadTypeDefs(typesDir: string | null | undefined): Promise
     for (const field of readFields(raw.fields)) fields.set(field.name, field);
     const displayName = str(raw.displayName) ?? str(parent?.displayName) ?? typeId;
     const roles = (raw.roles && typeof raw.roles === 'object' ? raw.roles : parent?.roles) as Record<string, unknown> | undefined;
+    const wikiType = str(raw.storage) === 'table' || str(raw.storage) === 'pages';
+    for (const name of fields.keys()) {
+      if (wikiType && RESERVED_FIELDS.has(name)) {
+        issues.push({
+          code: 'reserved-field',
+          path: sourcePath,
+          message: `Field "${name}" of type ${typeId} uses a name Nimbalyst keeps for an item's own metadata, so its values are saved but never shown; rename the field`,
+        });
+      }
+    }
     types.set(typeId, {
       typeId,
       displayName,
       displayNamePlural: str(raw.displayNamePlural) ?? `${displayName}s`,
       storage: str(raw.storage) === 'table' ? 'table' : 'pages',
-      wikiType: str(raw.storage) === 'table' || str(raw.storage) === 'pages',
+      wikiType,
       fields: [...fields.values()],
       titleField: str(roles?.title) ?? 'title',
       sourcePath,
     });
   }
-  return { types, issues };
+  return { types, issues, signature: contentVersion(texts.join('\0')) };
 }

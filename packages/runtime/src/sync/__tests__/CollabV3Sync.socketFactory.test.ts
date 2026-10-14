@@ -138,9 +138,13 @@ describe('SyncConfig.createWebSocket', () => {
       const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify({ content: `message ${index}` })));
       return { id, sequence: index + 1, createdAt: 100 + index, source: 'user', direction: 'input', iv: Buffer.from(iv).toString('base64'), encryptedContent: Buffer.from(encrypted).toString('base64') };
     }));
-    socket.onmessage?.({ data: JSON.stringify({ type: 'syncResponse', messages: encryptedMessages, hasMore: false }) } as MessageEvent);
+    // A row from a prior personal-key epoch can never decrypt; it must not
+    // hold the readable rows or the next page hostage (#1711 regression).
+    const priorEpoch = { ...encryptedMessages[0], id: 'old0000000', sequence: 3, encryptedContent: Buffer.from('not ciphertext').toString('base64') };
+    socket.onmessage?.({ data: JSON.stringify({ type: 'syncResponse', messages: [...encryptedMessages, priorEpoch], hasMore: true, cursor: null, revisionCursor: 3 }) } as MessageEvent);
     await vi.waitFor(() => expect(messages).toHaveLength(2));
     expect(messages.map(message => [message.id, message.providerMessageId])).toEqual([[1, 'abcdef0123'], [2, 'abc9876543']]);
+    await vi.waitFor(() => expect(socket.send.mock.calls.map(([raw]) => JSON.parse(raw))).toContainEqual({ type: 'syncRequest', sinceRevision: 3 }));
     off(); provider.disconnectAll();
   });
 

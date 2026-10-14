@@ -61,6 +61,19 @@ class SessionComposeStateTest {
     }
 
     @Test
+    fun `a desktop submit clears the draft it synced to the composer`() {
+        val state = SessionComposeState(SavedStateHandle())
+        assertTrue(state.applyRemoteDraft("prompt typed on desktop", updatedAt = 500))
+        // The desktop sent it; its newer clear arrives stored as null.
+        assertTrue(state.applyRemoteDraft(null, updatedAt = 600))
+        assertEquals("", state.text)
+        // A clear older than text typed here does not erase it.
+        state.edit("typed on the phone", now = 700)
+        assertFalse(state.applyRemoteDraft(null, updatedAt = 650))
+        assertEquals("typed on the phone", state.text)
+    }
+
+    @Test
     fun `text restored after a failed send survives the empty draft the submit persisted`() {
         val handle = SavedStateHandle()
         val state = SessionComposeState(handle)

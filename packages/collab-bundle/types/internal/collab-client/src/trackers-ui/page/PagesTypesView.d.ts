@@ -25,5 +25,7 @@ export interface PagesTypesViewProps {
         onClose: () => void;
         onCreated: (typeId: string) => void;
     }) => React.ReactNode;
+    /** Trailing controls for a type's row in the table view; absent adds no column. */
+    renderTypeActions?: (typeId: string) => React.ReactNode;
 }
-export declare function PagesTypesView({ lane, title, typePlacements, view, onViewChange, onOpenType, renderNewType }: PagesTypesViewProps): React.JSX.Element;
+export declare function PagesTypesView({ lane, title, typePlacements, view, onViewChange, onOpenType, renderNewType, renderTypeActions }: PagesTypesViewProps): React.JSX.Element;

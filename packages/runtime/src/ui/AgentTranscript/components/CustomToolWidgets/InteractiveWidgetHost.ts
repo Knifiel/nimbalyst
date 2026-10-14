@@ -348,6 +348,19 @@ export interface InteractiveWidgetHost {
   setAutoCommitEnabled(enabled: boolean): void;
 
   // ============================================================
+  // Usage-limit auto-resume
+  // ============================================================
+
+  /** Whether sessions resume on their own once a Claude usage limit resets. Optional: desktop only. */
+  usageLimitAutoResumeEnabled?: boolean;
+
+  /**
+   * The usage-limit card's switch. Enabling also schedules this session's
+   * resume for `resetsAtMs`; disabling cancels every pending resume.
+   */
+  setUsageLimitAutoResume?(enabled: boolean, resetsAtMs: number | null): Promise<void>;
+
+  // ============================================================
   // Super Loop Blocked Feedback
   // ============================================================
 

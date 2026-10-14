@@ -35,6 +35,10 @@ struct ScreenshotHostView: View {
                 }
             case "pairing":
                 PairingView()
+            case "document":
+                NavigationStack {
+                    DocumentEditorView(document: demoDocument)
+                }
             default:
                 MainNavigationView()
             }
@@ -46,6 +50,25 @@ struct ScreenshotHostView: View {
     private var firstProject: Project {
         let projects = (try? appState.databaseManager?.allProjects()) ?? []
         return projects.first ?? Project(id: "demo", name: "Demo")
+    }
+
+    /// A wiki-style status page with a wide table, for the document editor screenshot.
+    private var demoDocument: SyncedDocument {
+        let content = """
+        # Status
+
+        | Track | Plan | Stage | Progress | Spec | Waiting on | Next step |
+        | --- | --- | --- | --- | --- | --- | --- |
+        | Collaboration | Teams beta launch plan | Implementing | About two thirds of the tracker sync work has landed | Shared trackers spec | Server deploy of the room migration | Verify the web console can edit tracker items |
+        | Wiki | Knowledge pages v2 | Planning | Design doc drafted, prototype pending review | Pages design | Feedback from the team on the ontology | Build the first typed page view |
+        """
+        return SyncedDocument(
+            id: "demo-status-doc",
+            projectId: firstProject.id,
+            relativePath: "wiki/Status.md",
+            title: "Status",
+            contentDecrypted: content
+        )
     }
 
     /// The session with messages for the detail screenshot (sess-nim-1).

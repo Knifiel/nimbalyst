@@ -119,6 +119,14 @@ header h1 {
   height: 100%;
   position: relative;
   z-index: -1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The editable root fills the rest of the scroller, so a click or file drop
+   in the empty space below a short document lands in the editor. */
+.nimbalyst-editor .editor > .ContentEditable__root {
+  flex: 1 0 auto;
 }
 
 /* Collaboration cursors container - positioned inside editor content

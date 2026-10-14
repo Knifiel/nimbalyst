@@ -216,6 +216,14 @@ export function buildSetPageTypeDependencies(context: SetPageTypeContext, title:
     },
     openItem: (itemId, pageId) => openItemInPlace(context, itemId, pageId, title),
     wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    // The Team list comes from this machine's registry, which holds YAML types
+    // the room may never have accepted.
+    teamTypeProblem: async (typeId) => {
+      const confirmed = await window.electronAPI.invoke('tracker-page-type:team-type-confirmed', { workspacePath, typeId });
+      return confirmed
+        ? null
+        : `The team's server does not have the "${globalRegistry.get(typeId)?.displayName ?? typeId}" type yet, so teammates could not see the typed page.`;
+    },
   };
 }
 

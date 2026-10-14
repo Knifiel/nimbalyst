@@ -59,6 +59,8 @@ export interface TrackerViewEmbedProps {
   view: SavedView;
   onOpenAsTable?: (view: SavedView) => void;
   onOpenItem?: (itemId: string, options?: CollabOpenOptions) => void;
+  /** In table mode the title text opens the item too (a type page lists pages by title). */
+  titleOpensItem?: boolean;
   /**
    * `card` is the bordered block a document embeds at a fixed height; `page`
    * drops the card chrome and fills its container, for a tab that is the view.
@@ -98,6 +100,7 @@ export function TrackerViewEmbed({
   view,
   onOpenAsTable,
   onOpenItem,
+  titleOpensItem,
   variant = 'card',
   height,
   derivedColumns,
@@ -150,6 +153,7 @@ export function TrackerViewEmbed({
       renderableViewModes={capabilities.renderableViewModes}
       onOpenAsTable={onOpenAsTable}
       onOpenItem={onOpenItem}
+      titleOpensItem={titleOpensItem}
       height={height}
       variant={variant}
       derivedColumns={derivedColumns}
@@ -177,6 +181,7 @@ function LoadedViewEmbed({
   renderableViewModes,
   onOpenAsTable,
   onOpenItem,
+  titleOpensItem,
   height,
   variant,
   derivedColumns,
@@ -196,6 +201,7 @@ function LoadedViewEmbed({
   renderableViewModes: ReadonlySet<SavedViewDefinition['viewMode']>;
   onOpenAsTable?: (view: SavedView) => void;
   onOpenItem?: (itemId: string, options?: CollabOpenOptions) => void;
+  titleOpensItem?: boolean;
   height?: number;
   variant: 'card' | 'page';
   derivedColumns?: readonly TrackerGridDerivedColumn[];
@@ -252,6 +258,7 @@ function LoadedViewEmbed({
           columnFilters={definition.columnFilters}
           resolveRelationshipLabel={resolveRelationshipLabel}
           onOpenItem={onOpenItem}
+          titleOpensItem={titleOpensItem}
           loaded={loaded}
           derivedColumns={derivedColumns}
           isRowEditable={onItemsUpdate ? isRowEditable : undefined}

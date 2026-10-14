@@ -120,7 +120,11 @@ export class GitCatFileBatch {
       this.buffer = Buffer.alloc(0);
       this.awaitingBody = null;
 
-      child.stdout.on('data', (chunk: Buffer) => this.onData(chunk));
+      // A replaced child can still flush output it wrote before it died; feeding
+      // that to the parser would answer the new child's reads with old bytes.
+      child.stdout.on('data', (chunk: Buffer) => {
+        if (this.child === child) this.onData(chunk);
+      });
       // Bind these to *this* child: a killed process emits `exit` asynchronously,
       // and by then a replacement may already be serving reads. An unbound
       // handler would tear down its successor and null out that caller's result.

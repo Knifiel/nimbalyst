@@ -33,7 +33,13 @@ vi.mock('../../../utils/logger', () => ({
   logger: { main: { info: () => {}, warn: () => {}, error: () => {} } },
 }));
 
-import { authorizeRollout, cacheRolloutSnapshot, readCachedRolloutSnapshot } from '../migrationFlag';
+import {
+  authorizeRollout,
+  cacheRolloutSnapshot,
+  readCachedRolloutSnapshot,
+  selectRolloutConfigSource,
+  TEST_ROLLOUT_PAYLOAD_ENV,
+} from '../migrationFlag';
 import { readBackendState, writeBackendState } from '../BackendSelector';
 import type { RolloutSnapshot } from '../rolloutAuthorization';
 
@@ -121,13 +127,28 @@ describe('authorizeRollout', () => {
   });
 
   it('rejects a payload this build has no configuration version for', async () => {
-    // The shipped allowlist is empty, so even a perfect live payload is inert.
-    // This is what keeps automatic migration off by construction in Phase B.
-    analytics.getFeatureFlagPayload.mockResolvedValue(cachedEnable());
+    // A later cohort's version is inert until a build accepts it, even when
+    // every other field of the live payload is perfect.
+    analytics.getFeatureFlagPayload.mockResolvedValue({ ...cachedEnable(), configVersion: 'sqlite-ramp-2' });
 
     const result = await authorizeRollout(tmp);
 
     expect(result).toMatchObject({ authorized: false, reason: 'unsupported_config_version' });
+  });
+});
+
+describe('the Playwright payload file', () => {
+  it('is ignored unless PLAYWRIGHT=1, so the path variable alone cannot authorize a migration', async () => {
+    const file = path.join(tmp, 'rollout-payloads.json');
+    fs.writeFileSync(file, JSON.stringify({ 'sqlite-rollout-alpha': cachedEnable() }));
+    analytics.getFeatureFlagPayload.mockResolvedValue(null);
+
+    const withoutPlaywright = selectRolloutConfigSource({ [TEST_ROLLOUT_PAYLOAD_ENV]: file });
+    expect(await withoutPlaywright.fetchPayload('sqlite-rollout-alpha')).toBeNull();
+
+    const underPlaywright = selectRolloutConfigSource({ PLAYWRIGHT: '1', [TEST_ROLLOUT_PAYLOAD_ENV]: file });
+    expect(await underPlaywright.fetchPayload('sqlite-rollout-alpha')).toMatchObject({ configVersion: 'sqlite-ramp-1' });
+    expect(await underPlaywright.fetchPayload('sqlite-rollout-stable')).toBeNull();
   });
 });
 

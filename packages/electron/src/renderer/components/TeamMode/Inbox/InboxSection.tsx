@@ -3,6 +3,7 @@ import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { useAtom, useStore } from 'jotai';
 
 import { InboxContextPane } from './InboxContextPane';
+import { FeedbackRequestSurface } from '../../FeedbackRequest/FeedbackRequestSurface';
 import { InboxContextSlot } from './InboxContextSlot';
 import { InboxEmptyState, InboxOfflineWithoutCache } from './InboxEmptyState';
 import { InboxFilterBar } from './InboxFilterBar';
@@ -117,6 +118,8 @@ export function InboxSection({
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const pendingSelectionRef = useRef<InboxRowSelectionRequest | null>(null);
   const [selectionRequestTick, setSelectionRequestTick] = useState(0);
+  /** A linked feedback request with no delivery for this reader, shown in the pane. */
+  const [linkedRequest, setLinkedRequest] = useState<{ orgId: string; requestId: string } | null>(null);
 
   // Messages > Search Messages. The command routes the window to the Inbox
   // first, so it may well arrive before this surface exists — hence the latched
@@ -226,12 +229,18 @@ export function InboxSection({
   // navigation is an explicit second act, so a click is safe to spend on
   // reading a row you are not sure about.
   const handleSelect = useCallback((row: InboxRowView) => {
+    // An explicit choice ends any link still waiting for its delivery; a later
+    // sync must not take the selection back.
+    pendingSelectionRef.current = null;
     setSelectedId(row.id);
+    setLinkedRequest(null);
     setActivationNotice(null);
   }, []);
 
   const handleOpen = useCallback(async (row: InboxRowView) => {
+    pendingSelectionRef.current = null;
     setSelectedId(row.id);
+    setLinkedRequest(null);
     setActivationNotice(null);
     const result = await openRow(row, {
       navigate: (target) => provider.navigate(target),
@@ -289,16 +298,28 @@ export function InboxSection({
       entry.source.orgId === pending.orgId
       && entry.source.sourceKind === pending.sourceKind
       && entry.source.sourceId === pending.sourceId);
-    if (!delivery) return;
+    if (!delivery) {
+      // Any org member may open a feedback request; only its recipients hold a
+      // delivery. Once the inbox has loaded, show the request itself, and keep
+      // the latch so a delivery that syncs later still takes the selection.
+      if (pending.sourceKind === 'feedbackRequest' && snapshot.status !== 'loading') {
+        setSelectedId(null);
+        setLinkedRequest((current) => (current?.requestId === pending.sourceId && current.orgId === pending.orgId
+          ? current
+          : { orgId: pending.orgId, requestId: pending.sourceId }));
+      }
+      return;
+    }
     pendingSelectionRef.current = null;
     setSelectedId(delivery.id);
+    setLinkedRequest(null);
     setActivationNotice(null);
     // Landing on a row the filter in force hides would show an empty pane,
     // which is the exact failure the link exists to avoid. Clearing writes the
     // preferences back — deliberately: the inbox is left in the state that
     // shows what the recipient was sent.
     if (!rows.some((row) => row.id === delivery.id)) clearFilters();
-  }, [clearFilters, restrictToOrgId, rows, selectionRequestTick, snapshot.deliveries]);
+  }, [clearFilters, restrictToOrgId, rows, selectionRequestTick, snapshot.deliveries, snapshot.status]);
 
   return (
     <section
@@ -450,6 +471,23 @@ export function InboxSection({
         </div>
 
         <InboxContextSlot width={contextPaneWidth} onWidthChange={setContextPaneWidth}>
+          {linkedRequest && !selectedRow && workspacePath ? (
+            <aside
+              className="inbox-context-pane inbox-linked-feedback-request flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto border-l border-[var(--nim-border)] p-3"
+              data-testid="inbox-linked-feedback-request"
+            >
+              {/* No delivery means no server-resolved comment capability, so
+                  the discussion is read-only. Answering needs none: the
+                  surface offers it only to a viewer the request assigns asks
+                  to, and the server attributes it to the signed-in member. */}
+              <FeedbackRequestSurface
+                workspacePath={workspacePath}
+                orgId={linkedRequest.orgId}
+                requestId={linkedRequest.requestId}
+                canComment={false}
+              />
+            </aside>
+          ) : (
           <InboxContextPane
             row={selectedRow}
             workspacePath={workspacePath}
@@ -458,6 +496,7 @@ export function InboxSection({
             onSubscriptionChange={handleSubscription}
             onOpenSource={(row) => { void handleOpen(row); }}
           />
+          )}
         </InboxContextSlot>
       </div>
 

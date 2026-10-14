@@ -31,6 +31,8 @@ import { toggleListEntry } from './trackerSidebarCollapse';
 import type { TrackerTeam } from './useTrackerTeamMembers';
 import type { OwnershipMember } from '../common/TrackerOwnershipChip';
 import { TrackerOwnershipSection } from './TrackerOwnershipSection';
+import { useTrackerTypeShareMenu } from './TrackerTypeShareMenu';
+import { TeamTypesNotSyncingNotice } from './TeamTypesNotSyncingNotice';
 import {
   ALL_TRACKERS_NAV_MODEL,
   TrackerNavTypeRow,
@@ -279,6 +281,7 @@ export const TrackerSidebar: React.FC<TrackerSidebarProps> = ({
     () => virtualElement(contextPoint.x, contextPoint.y),
     [contextPoint],
   );
+  const typeShareMenu = useTrackerTypeShareMenu(workspacePath, team !== null);
   const folderMenu = useFloatingMenu({
     placement: 'right-start',
     reference: contextReference,
@@ -437,6 +440,7 @@ export const TrackerSidebar: React.FC<TrackerSidebarProps> = ({
         />
       }
       onClick={() => onSelectType(tracker.type)}
+      onContextMenu={typeShareMenu.onContextMenuFor(tracker)}
       onDragStart={(event) => {
         setDraggedEntryId(placement.entryId);
         event.dataTransfer.effectAllowed = 'move';
@@ -607,6 +611,7 @@ export const TrackerSidebar: React.FC<TrackerSidebarProps> = ({
                 onToggleCollapsed={() => toggleSectionCollapsed(section.ownership)}
                 actions={renderCreateFolderButton(section.ownership)}
               >
+                {section.ownership === 'team' && <TeamTypesNotSyncingNotice workspacePath={workspacePath} />}
                 {renderCreateFolderRow(section.ownership)}
                 {renderNavigationTree(section.tree)}
               </TrackerOwnershipSection>
@@ -614,6 +619,7 @@ export const TrackerSidebar: React.FC<TrackerSidebarProps> = ({
         </div>
       </div>
 
+      {typeShareMenu.element}
       {contextFolder && (
         <FloatingPortal>
           <div

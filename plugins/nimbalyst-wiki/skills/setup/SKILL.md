@@ -74,7 +74,8 @@ Do this as part of setup, without handing the person a second command to run.
 Define types only when the person asks or agrees, including during discovery; do not ask again about an agreed type. If still unclear, ask what the team keeps several of and would want in a table. Suggest from what the project already discusses (module, technology, competitor, person are common); the team decides. A type for a single page is not a type.
 
 - **Reuse first.** Match on id and display name in `tracker_list_types`. If the project already has a fitting type (for example a `competitor` type), use it.
-- **Define** with `tracker_define_type` and `schema`. Keep it small: `title` plus two to four single-valued fields (select, string, boolean, user, date). Only single-valued fields show in a page header; multi-valued fields show only in tables. No `labels`, `kind` or qualifier fields.
+- **Define** with `tracker_define_type` and `schema`. Keep it small: `title` plus two to four single-valued fields (select, string, boolean, user, date). Only single-valued fields show in a page header. No `labels`, `kind` or qualifier fields. Do not name a field `activity`, `comments`, `source`, `content`, `origin`, `created`, `updated`, `type` or `id`: Nimbalyst keeps these for an item's own data, so such a field saves but never shows. Pick a more specific name (`activityLevel`, `sourceUrl`).
+- **List the table columns** in `tableView.defaultColumns`: the fields the team wants to scan in the type's table, in order. A field that is not listed there is not a column until someone adds it.
 
   ```json
   {
@@ -95,13 +96,15 @@ Define types only when the person asks or agrees, including during discovery; do
       ] },
       { "name": "inStack", "type": "boolean" }
     ],
-    "roles": { "title": "title" }
+    "roles": { "title": "title" },
+    "tableView": { "defaultColumns": ["maturity", "inStack"] }
   }
   ```
 
 - **Subtypes** set `extends: <base type>` and declare only what they add (`{ "type": "library", "extends": "technology", "displayName": "Library", "displayNamePlural": "Libraries" }`). A subtype's pages show in its base type's table and nest inside it in the tree.
 - **Existing types:** never pass `overwrite` without the person's approval, and then keep every existing field and option. Never pass `confirmDestructive` on your own.
 - **Place each new type** where the person wants it with `moveSharedItem` (`kind: type`, `itemId` = the type id, `newParentFolderId` = the parent page, or none for the top of the section). A subtype is not placed; it shows inside its base. Write two or three sentences on an empty type page saying what belongs in it, and link it from the relevant overview. Do not create sample items just to fill its table.
+- **Check one type table** after creating types: open it and confirm the columns the team wanted are there. Checking the type definitions alone does not show what the table shows.
 
 ## 6. Relations (when useful)
 
@@ -130,5 +133,6 @@ When the `connect` skill chose the local wiki (or the person asked for one), set
 - **Create it first** if there is none: `initLocalWiki`, after asking where it should live as the `connect` skill describes (default `nimbalyst-local/wiki`, kept out of git; or a checked-in folder such as `docs/wiki`). It creates the Home page.
 - **No project or `pages_status`.** Find the guide and Home with `listPages`.
 - **Links** in Home and every page are relative paths carrying the target's id, as the update skill's "On a local wiki" says, never console links.
-- **Types** are files, not a tool call: there is no `tracker_define_type` here. Write `.nimbalyst/trackers/<type>.yaml` with the same fields as the JSON above, in YAML, plus `storage: pages` (one markdown page per item, with a body) or `storage: table` (one CSV of rows, no bodies; for long uniform lists). Leave out `sharing`. Check `tracker_list_types` first and never overwrite an existing type file without the person's approval. Place a table type under a page with `moveSharedItem` (`kind: type`).
+- **Types** are files, not a tool call: there is no `tracker_define_type` here. Write `.nimbalyst/trackers/<type>.yaml` with the same fields as the JSON above, in YAML, plus `storage: pages` (one markdown page per item, with a body and child pages). Use `storage: table` (one CSV of rows: fields only, no body, no children) only when the person asks for a table; a list that later needs notes has to be converted. To convert a table type, call `convertTypeStorage` (`storage: pages`); it keeps item ids and field values, so never move the CSV or edit `storage:` by hand. Leave out `sharing`. If `tracker_list_types` reports `problems` for a type, fix the type file. Check `tracker_list_types` first and never overwrite an existing type file without the person's approval. Place a table type under a page with `moveSharedItem` (`kind: type`).
 - **Relations** are a team-wiki feature; skip step 6 on a local wiki.
+- **When you finish**, offer to open the wiki in the browser with `openWikiInBrowser`.

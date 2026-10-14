@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+# `git merge` without --no-commit never runs pre-commit; it runs this hook
+# instead. Same gate, same script, so a merge is measured by the index it is
+# about to commit. See .githooks/pre-commit.
+if ! command -v node >/dev/null 2>&1; then
+  echo "[pre-merge-commit] WARNING: node is not on PATH; skipping the commit-safety gate (pre-push still enforces it)."
+  exit 0
+fi
+
+exec node "$(dirname "$0")/../scripts/check-commit-safety.mjs"

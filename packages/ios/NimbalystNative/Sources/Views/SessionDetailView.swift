@@ -742,6 +742,7 @@ public struct SessionDetailView: View {
         withAnimation {
             loadError = error
         }
+        DiagnosticsLog.shared.record(area: "sessionDetail", summary: error.title, detail: error.description)
         AnalyticsManager.shared.capture(
             "mobile_session_load_error",
             properties: error.analyticsProperties(localMessageCount: messages.count)

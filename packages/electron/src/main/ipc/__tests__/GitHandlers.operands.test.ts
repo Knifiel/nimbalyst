@@ -22,7 +22,7 @@ vi.mock('../../utils/ipcRegistry', () => ({
   safeHandle: (channel: string, handler: (...args: unknown[]) => Promise<unknown>) => boundary.handlers.set(channel, handler),
 }));
 vi.mock('fs', async (importOriginal) => ({ ...await importOriginal<typeof import('fs')>(), existsSync: vi.fn(() => true) }));
-vi.mock('simple-git', () => ({ default: boundary.git }));
+vi.mock('simple-git', () => ({ simpleGit: boundary.git }));
 vi.mock('../../services/gitEnv', () => ({ simpleGitWithHookEnv: boundary.git, getGitSubprocessEnv: vi.fn() }));
 vi.mock('../../services/GitOperationLock', () => ({ gitOperationLock: { withLock: boundary.lock } }));
 vi.mock('../../services/GitOperationLogService', () => ({

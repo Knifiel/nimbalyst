@@ -14,7 +14,7 @@ Two categories — **agent providers** (Claude Agent, OpenAI Codex; full MCP, fi
 | --- | --- | --- |
 | `claude` | `src/ai/server/providers/ClaudeProvider.ts` | Anthropic SDK; standard models; streaming with tool use; model list in `src/ai/modelConstants.ts`. |
 | `claude-code` | `src/ai/server/providers/ClaudeCodeProvider.ts` | Dynamically loads `@anthropic-ai/claude-agent-sdk` from user's installation. Built-in variants resolve to pinned SDK ids via `resolveClaudeCodeModelVariant`; `claude-code:custom/<name>` ids (from Claude settings `modelPicker`) pass through verbatim — see [Custom Claude models](/docs/AI_PROVIDER_TYPES.md#custom-claude-models). See [/docs/INTERNAL_MCP_SERVERS.md](/docs/INTERNAL_MCP_SERVERS.md). |
-| `openai` | OpenAI API | GPT-4, GPT-3.5. |
+| `openai` | OpenAI API | Chat provider; models fetched from the API. |
 | `openai-codex` | `src/ai/server/providers/OpenAICodexProvider.ts` | Codex app-server transport by default; thread-based streaming; session resume via persisted provider session IDs. The old `@openai/codex-sdk` transport is legacy-only. See [Codex Binary Path](#codex-binary-path-resolution). |
 | `lmstudio` | LM Studio HTTP | Local model support. |
 
@@ -43,6 +43,6 @@ In Electron packaged apps, the Codex binary cannot be executed from within the a
 - **Model Configuration**: dynamic model fetching from provider APIs; no hardcoded models; LM Studio auto-detection; `claude-code` adds custom models from Claude settings `modelPicker`
 - **Custom Tool Widgets**: see [/docs/CUSTOM_TOOL_WIDGETS.md](/docs/CUSTOM_TOOL_WIDGETS.md) for replacing the generic tool call display
 
-## Linear Integration
+## Package boundary
 
-The Linear MCP integration uses the "NIM" project for issue tracking.
+Runtime never imports `electron` or reaches into `packages/electron` by relative path; `scripts/check-runtime-host-boundary.mjs` enforces it. Import deep paths (`@nimbalyst/runtime/ui/icons/MaterialSymbol`) rather than the package barrel, which pulls in the whole Lexical tree.

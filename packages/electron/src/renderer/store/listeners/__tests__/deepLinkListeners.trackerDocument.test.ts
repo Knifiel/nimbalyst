@@ -37,10 +37,20 @@ describe('tracker deep-link routing', () => {
   let cleanup: (() => void) | undefined;
   let handlers: Record<string, (data: any) => void>;
   let pendingTrackerPayload: Record<string, unknown> | null;
+  let pendingDocPayload: Record<string, unknown> | null;
+
+  /** Main queues the link and signals the window; the renderer consumes it. */
+  async function deliverSharedDocument(payload: Record<string, unknown>) {
+    pendingDocPayload = payload;
+    handlers['deep-link:shared-document-available']({ workspacePath: payload.workspacePath });
+    await vi.waitFor(() => expect(pendingDocPayload).toBeNull());
+    await Promise.resolve();
+  }
 
   beforeEach(() => {
     handlers = {};
     pendingTrackerPayload = null;
+    pendingDocPayload = null;
     store.set(activeWorkspacePathAtom, '/workspace/source');
     store.set(windowModeAtom, 'files');
     store.set(extensionPanelStateAtomFamily('/workspace/target'), {
@@ -66,6 +76,11 @@ describe('tracker deep-link routing', () => {
           if (channel === 'deep-link:consume-pending-tracker') {
             return pendingTrackerPayload;
           }
+          if (channel === 'deep-link:consume-pending-shared-doc') {
+            const pending = pendingDocPayload;
+            pendingDocPayload = null;
+            return pending;
+          }
           return null;
         }),
         on: vi.fn((event: string, handler: (data: any) => void) => {
@@ -90,10 +105,10 @@ describe('tracker deep-link routing', () => {
     resetCommentPanelRequests();
   });
 
-  it('binds a shared-document link to the workspace scope selected by the desktop host', () => {
+  it('binds a shared-document link to the workspace scope selected by the desktop host', async () => {
     cleanup = initDeepLinkListeners();
 
-    handlers['deep-link:open-shared-document']({
+    await deliverSharedDocument({
       documentId: 'doc-target',
       orgId: 'org-target',
       workspacePath: '/workspace/target',
@@ -110,10 +125,10 @@ describe('tracker deep-link routing', () => {
     });
   });
 
-  it('carries a comment notification thread target to the document comments pane', () => {
+  it('carries a comment notification thread target to the document comments pane', async () => {
     cleanup = initDeepLinkListeners();
 
-    handlers['deep-link:open-shared-document']({
+    await deliverSharedDocument({
       documentId: 'doc-target',
       orgId: 'org-target',
       workspacePath: '/workspace/target',
@@ -289,5 +304,177 @@ describe('team-invitation deep-link handoff', () => {
     store.set(openSettingsCommandAtom, null);
     options?.action?.onClick();
     expect(resolvedSettingsDestination()).toEqual({ scope: 'account', category: 'account' });
+  });
+});
+
+/**
+ * A link main cannot route used to be a live event to a loaded project window,
+ * so a cold start or a Project-Manager-only app dropped it. Main now queues the
+ * notice and nudges; whichever window drains it shows it.
+ */
+describe('deep-link notices', () => {
+  let cleanup: (() => void) | undefined;
+  let handlers: Record<string, (data: any) => void>;
+  let pendingNotices: unknown[];
+
+  beforeEach(() => {
+    handlers = {};
+    pendingNotices = [];
+    vi.spyOn(errorNotificationService, 'showWarning').mockReturnValue('');
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: {
+        invoke: vi.fn(async (channel: string) => {
+          if (channel === 'deep-link:consume-notices') {
+            const drained = pendingNotices;
+            pendingNotices = [];
+            return drained;
+          }
+          return null;
+        }),
+        on: vi.fn((event: string, handler: (data: any) => void) => {
+          handlers[event] = handler;
+          return () => delete handlers[event];
+        }),
+        openInBrowser: vi.fn(async () => undefined),
+        featureUsage: { record: vi.fn(async () => undefined) },
+      },
+    });
+  });
+
+  afterEach(() => {
+    cleanup?.();
+    cleanup = undefined;
+    vi.restoreAllMocks();
+  });
+
+  it('shows a notice queued before the window mounted', async () => {
+    pendingNotices = [{ kind: 'shared-document', reason: 'no-workspace', orgId: 'org-1', documentId: 'doc-1' }];
+
+    cleanup = initDeepLinkListeners();
+
+    await vi.waitFor(() => expect(errorNotificationService.showWarning).toHaveBeenCalledTimes(1));
+    expect(errorNotificationService.showWarning).toHaveBeenCalledWith(
+      'No matching project',
+      expect.stringContaining('document'),
+      expect.anything(),
+    );
+  });
+
+  it('drains on a nudge and offers the console for a feedback request it cannot open', async () => {
+    cleanup = initDeepLinkListeners();
+    await Promise.resolve();
+
+    pendingNotices = [{ kind: 'feedback-request', reason: 'no-workspace', orgId: 'org-1', requestId: 'req-1' }];
+    handlers['deep-link:notice-available']?.(undefined);
+
+    await vi.waitFor(() => expect(errorNotificationService.showWarning).toHaveBeenCalledTimes(1));
+    const options = vi.mocked(errorNotificationService.showWarning).mock.calls[0]?.[2];
+    expect(options?.action?.label).toBe('Open in browser');
+    options?.action?.onClick();
+    expect(window.electronAPI.openInBrowser).toHaveBeenCalledWith(
+      expect.stringMatching(/\/org\/org-1\/feedback\/req-1$/),
+    );
+  });
+
+  it('asks a signed-out user to sign in', async () => {
+    pendingNotices = [{ kind: 'feedback-request', reason: 'not-authenticated', orgId: 'org-1', requestId: 'req-1' }];
+
+    cleanup = initDeepLinkListeners();
+
+    await vi.waitFor(() => expect(errorNotificationService.showWarning).toHaveBeenCalledWith(
+      'Sign in required',
+      expect.stringContaining('feedback request'),
+      expect.anything(),
+    ));
+  });
+});
+
+/**
+ * A live link used to be queued in main AND carried on the event, and only the
+ * queue was ever drained: switching projects away and back reopened a link the
+ * user had already left, and a slow drain could land over a newer link. The
+ * link is now read only through main's consuming queue.
+ */
+describe('shared-document links are applied once', () => {
+  let cleanup: (() => void) | undefined;
+  let handlers: Record<string, (data: any) => void>;
+  /** Stands in for main's destructive per-workspace queue. */
+  let queue: Map<string, Record<string, unknown>>;
+  let heldDocConsume: Array<() => void>;
+  let holdDocConsumes: boolean;
+
+  beforeEach(() => {
+    handlers = {};
+    queue = new Map();
+    heldDocConsume = [];
+    holdDocConsumes = false;
+    store.set(activeWorkspacePathAtom, '/workspace/target');
+    store.set(pendingCollabDocumentAtom, null);
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: {
+        invoke: vi.fn(async (channel: string, workspacePath?: string) => {
+          if (channel !== 'deep-link:consume-pending-shared-doc') return null;
+          const take = () => {
+            const pending = workspacePath ? queue.get(workspacePath) ?? null : null;
+            if (workspacePath) queue.delete(workspacePath);
+            return pending ? { ...pending, workspacePath } : null;
+          };
+          if (!holdDocConsumes) return take();
+          // Main answers in order; the renderer may still apply out of order.
+          const value = take();
+          return new Promise((resolve) => heldDocConsume.push(() => resolve(value)));
+        }),
+        on: vi.fn((event: string, handler: (data: any) => void) => {
+          handlers[event] = handler;
+          return () => delete handlers[event];
+        }),
+        featureUsage: { record: vi.fn(async () => undefined) },
+      },
+    });
+  });
+
+  afterEach(() => {
+    cleanup?.();
+    cleanup = undefined;
+    store.set(activeWorkspacePathAtom, null);
+    store.set(pendingCollabDocumentAtom, null);
+  });
+
+  it('does not reopen a link after the user switched projects away and back', async () => {
+    cleanup = initDeepLinkListeners();
+    await Promise.resolve();
+
+    queue.set('/workspace/target', { documentId: 'doc-1', orgId: 'org-1' });
+    handlers['deep-link:shared-document-available']({ workspacePath: '/workspace/target' });
+    await vi.waitFor(() => expect(store.get(pendingCollabDocumentAtom)?.documentId).toBe('doc-1'));
+
+    // The user moves on, then switches away and back.
+    store.set(pendingCollabDocumentAtom, null);
+    store.set(activeWorkspacePathAtom, '/workspace/other');
+    store.set(activeWorkspacePathAtom, '/workspace/target');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(store.get(pendingCollabDocumentAtom)).toBeNull();
+  });
+
+  it('does not let an older drain land over a newer link', async () => {
+    holdDocConsumes = true;
+    queue.set('/workspace/target', { documentId: 'doc-old', orgId: 'org-1' });
+    cleanup = initDeepLinkListeners();
+    await vi.waitFor(() => expect(heldDocConsume).toHaveLength(1));
+
+    queue.set('/workspace/target', { documentId: 'doc-new', orgId: 'org-1' });
+    handlers['deep-link:shared-document-available']({ workspacePath: '/workspace/target' });
+    await vi.waitFor(() => expect(heldDocConsume).toHaveLength(2));
+
+    // The newer answer is applied first; the older drain resolves after it.
+    heldDocConsume[1]();
+    await vi.waitFor(() => expect(store.get(pendingCollabDocumentAtom)?.documentId).toBe('doc-new'));
+    heldDocConsume[0]();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(store.get(pendingCollabDocumentAtom)?.documentId).toBe('doc-new');
   });
 });

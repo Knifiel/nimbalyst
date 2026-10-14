@@ -60,6 +60,7 @@ import {
   initExternalEditorSettings,
 } from './store/atoms/appSettings';
 import { initVoiceModeListeners } from './store/listeners/voiceModeListeners';
+import { initDeepLinkNoticeListeners } from './store/listeners/deepLinkNoticeListeners';
 import {
   autoCommitEnabledAtom,
   initAutoCommitSetting,
@@ -327,6 +328,13 @@ onAnalyticsConsentChange((enabled) => {
 // Settings live in one window but the renderer client is per-window, so main
 // broadcasts the change to every window rather than only the one that toggled.
 initAnalyticsListeners();
+
+// With no project open the Project Manager is the only window, so it shows deep
+// links main could not route. Project windows start the same listener through
+// `initDeepLinkListeners`.
+if (new URLSearchParams(window.location.search).get('mode') === 'workspace-manager') {
+  initDeepLinkNoticeListeners();
+}
 
 // syncs the session ID from posthog-js to the electron-side analytics service
 posthog.onSessionId(async (sessionId: string, windowId, changeReason) => {

@@ -42,6 +42,12 @@ export declare class TrackerSchemaOutbox {
     } | undefined;
     /** A new socket means nothing sent on the old one will be acked. */
     reset(): void;
+    /** Forget every unanswered mutation and return them, for a caller that has to answer for the room. */
+    drain(): Array<{
+        clientMutationId: string;
+        type: string;
+        model: string | null;
+    }>;
     private isInFlight;
     private pushOnce;
 }

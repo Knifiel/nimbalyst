@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
     updateActivity: vi.fn(),
     endSession: vi.fn(),
     isSessionActive: vi.fn(() => false),
+    // No follow-up adopted the turn's query: the not-executing publish proceeds.
+    getSessionState: vi.fn(() => undefined),
   },
 }));
 

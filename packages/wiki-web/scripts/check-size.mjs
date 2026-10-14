@@ -19,8 +19,11 @@ import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
 // 2026-10-08, first build: eager 789,223 B gzip (2,805,300 B raw); total 2,918,092 B gzip (9,539,550 B raw).
-const EAGER_GZIP_BUDGET_BYTES = 810_000;
-const TOTAL_GZIP_BUDGET_BYTES = 3_000_000;
+// 2026-10-13, extension editors built in (drawing, mind map, spreadsheet, calc sheet, data model, mockup):
+// eager 844,669 B gzip (the editor registry, inlined manifests, the editor page, canvas cards, the New menu);
+// total 10,760,556 B gzip, almost all lazy: each editor's bundle, and Monaco with its language workers for calc sheets.
+const EAGER_GZIP_BUDGET_BYTES = 900_000;
+const TOTAL_GZIP_BUDGET_BYTES = 11_500_000;
 
 const dist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../dist');
 

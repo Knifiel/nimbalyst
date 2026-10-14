@@ -81,7 +81,10 @@ class SessionComposeState(
      * IME composition. Returns true when the text changed.
      */
     fun applyRemoteDraft(draft: String?, updatedAt: Long?): Boolean {
-        val remote = draft ?: return false
+        // A cleared draft is stored as null (SessionEntryDecoder). With a stamp
+        // it is a real clear -- the desktop submitted the prompt -- and must
+        // empty the composer; unstamped, the row just never had a draft.
+        val remote = draft ?: if (updatedAt == null) return false else ""
         if (!shouldApplyRemoteDraft(text, remote, updatedAt, lastSubmitAt, lastLocalEditAt)) return false
         setText(remote)
         return true

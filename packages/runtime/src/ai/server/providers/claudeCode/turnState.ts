@@ -21,6 +21,7 @@
  */
 
 import type { ParsedContextUsage } from '../../utils/contextUsage';
+import type { BlockingUsageLimit } from './usageLimit';
 
 /** Token counts as the SDK reports them (snake_case wire shape). */
 export interface TurnUsage {
@@ -115,6 +116,8 @@ export interface TurnState {
    * end of the turn. NIM-1470.
    */
   sawTaskNotificationThisTurn: boolean;
+  /** A `rate_limit_event` blocked this turn; the terminal error carries its reset. */
+  blockingUsageLimit: BlockingUsageLimit | null;
 
   /** Latest usage seen; overwritten by the cumulative `result.usage`. */
   usageData: TurnUsage | undefined;
@@ -159,6 +162,7 @@ export function createTurnState(init: {
     completeEmitted: false,
     sawAssistantOutputThisTurn: false,
     sawTaskNotificationThisTurn: false,
+    blockingUsageLimit: null,
 
     usageData: undefined,
     lastAssistantUsage: undefined,

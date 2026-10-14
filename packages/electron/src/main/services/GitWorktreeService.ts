@@ -12,7 +12,8 @@
  * - This design ensures consistent diff output across all platforms
  */
 
-import simpleGit, { SimpleGit } from 'simple-git';
+import type { SimpleGit } from 'simple-git';
+import { createGit } from './gitClient';
 import { simpleGitWithHookEnv } from './gitEnv';
 import { validateGitCwd, validateGitOperand } from './gitOperandValidation';
 import * as path from 'path';
@@ -20,7 +21,6 @@ import * as fs from 'fs';
 import { ulid } from 'ulid';
 import log from 'electron-log/main';
 import { getUntrackedFilesInDirectories } from '../utils/gitUtils';
-import { GIT_INHERITED_ENV_UNSAFE } from './gitInheritedEnvUnsafe';
 import { sanitizeGitRepositoryEnv } from './gitRepositoryEnv';
 import { gitOperationLock } from './GitOperationLock';
 import { getGitOperationLogService, recordGitActivity } from './GitOperationLogService';
@@ -61,9 +61,7 @@ const logger = log.scope('GitWorktreeService');
  * of `baseDir`'s. Commit, merge and rebase get the same scrub from gitEnv.ts.
  */
 function gitFor(baseDir: string): SimpleGit {
-  // .env() makes simple-git scan the supplied environment, so the user's own
-  // variables (GIT_EDITOR, GIT_ASKPASS, ...) need the unsafe opt-ins.
-  return simpleGit(baseDir, { unsafe: GIT_INHERITED_ENV_UNSAFE }).env(sanitizeGitRepositoryEnv(process.env));
+  return createGit(baseDir, {}, sanitizeGitRepositoryEnv(process.env));
 }
 
 /**
@@ -2899,19 +2897,16 @@ ${newLines.map(line => '+' + line).join('\n')}`;
 
     // logger.info('Getting changed files', { worktreePath });
 
-    // The unsafe flags are required because the .env() below makes simple-git
-    // scan the supplied (trusted, process-owned) environment for vars like
-    // GIT_EDITOR and otherwise refuse to spawn git at all.
-    const git: SimpleGit = simpleGit(worktreePath, { unsafe: GIT_INHERITED_ENV_UNSAFE });
+    // GIT_OPTIONAL_LOCKS=0 is the environment equivalent of the
+    // `--no-optional-locks` flag simple-git gives no way to pass: it stops
+    // this read-only status from refreshing (and so locking) `.git/index`,
+    // where it would contend with concurrent git writers (NIM-2285).
+    const git: SimpleGit = createGit(worktreePath, {}, { ...sanitizeGitRepositoryEnv(process.env), GIT_OPTIONAL_LOCKS: '0' });
 
     try {
       // Get only uncommitted changes from git status
       // This shows files that need to be staged/committed, not the full branch diff.
-      // GIT_OPTIONAL_LOCKS=0 is the environment equivalent of the
-      // `--no-optional-locks` flag simple-git gives no way to pass: it stops
-      // this read-only status from refreshing (and so locking) `.git/index`,
-      // where it would contend with concurrent git writers (NIM-2285).
-      const gitStatus = await git.env({ ...sanitizeGitRepositoryEnv(process.env), GIT_OPTIONAL_LOCKS: '0' }).status();
+      const gitStatus = await git.status();
 
       const changedFiles: Array<{ path: string; status: 'added' | 'modified' | 'deleted'; staged: boolean }> = [];
 

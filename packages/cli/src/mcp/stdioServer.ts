@@ -37,6 +37,7 @@ export async function handleMessage(
   message: unknown,
   tools: ToolMap,
   serverInfo: ServerInfo,
+  takeNotice?: () => string | null,
 ): Promise<object | null> {
   if (!message || typeof message !== 'object' || Array.isArray(message)) {
     return rpcError(null, -32600, 'Invalid request');
@@ -66,7 +67,9 @@ export async function handleMessage(
       if (!tool) return rpcError(id, -32602, `Unknown tool: ${String(name)}`);
       const args = request.params?.arguments;
       try {
-        return reply(await tool.call(args && typeof args === 'object' ? args : {}));
+        const result = await tool.call(args && typeof args === 'object' ? args : {});
+        const notice = result.isError ? null : takeNotice?.();
+        return reply(notice ? { ...result, content: [...result.content, { type: 'text', text: notice }] } : result);
       } catch (err) {
         // Tool failures are results the agent reads, not protocol errors.
         if (!(err instanceof TeamScopeRefusal)) {
@@ -83,6 +86,8 @@ export async function handleMessage(
 export interface StdioServerOptions {
   tools: ToolMap;
   serverInfo: ServerInfo;
+  /** A one-time notice (see updateCheck.ts) appended to a successful tool result. */
+  takeNotice?: () => string | null;
   input?: Readable;
   output?: Writable;
 }
@@ -109,7 +114,7 @@ export function runStdioServer(options: StdioServerOptions): Promise<void> {
           send(rpcError(null, -32700, 'Parse error'));
           return;
         }
-        const response = await handleMessage(message, options.tools, options.serverInfo);
+        const response = await handleMessage(message, options.tools, options.serverInfo, options.takeNotice);
         if (response) send(response);
       });
     });

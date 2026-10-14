@@ -17,6 +17,13 @@ This project is a small, connected workspace you can explore without setting any
 - See how a markdown document becomes a tracker item in the [tutorial walkthrough plan](planning/plan-tutorial-walkthrough.md).
 - Review a realistic issue in the [example bug](nimbalyst://{{TRACKER_ISSUE_KEY:EXAMPLE_BUG}}).
 - Go to tracker mode (the third icon from the top on the left nav) and explore integrated trackers
+- Start a wiki for this project: ask the agent to set up a wiki from these files, then open Wiki mode to read and edit the pages it writes.
+
+## Your wiki
+
+Working with agents produces a lot of material fast. The Wiki is where your agents distill that work into pages for you: what was decided, what is still open, and how the pieces connect. You read it, edit it, and set direction from it.
+
+The Local section of Wiki mode needs no account. Its pages are plain files in this project (`nimbalyst-local/wiki` by default), and every page keeps a history you can compare and restore. Pages can link to each other, and a page can be a mockup, diagram, or spreadsheet as well as a document. Use "Copy to Wiki..." on any file to bring it in. Team pages are part of Nimbalyst Teams.
 
 ## A live embed
 
@@ -38,12 +45,13 @@ On Windows and Linux, use Ctrl wherever this table says Cmd.
 | Switch to Files mode | `Cmd+E` |
 | Switch to Agent mode | `Cmd+K` |
 | Switch to Tracker mode | `Cmd+T` |
+| Switch to Wiki mode | `Cmd+D` |
 | Toggle AI chat | `Cmd+Shift+A` |
 | Search project content | `Cmd+Shift+F` |
 | Save the current file | `Cmd+S` |
 
 ## Ready for your own project?
 
-Use this workspace as a reference, then bring the same mix of notes, data, designs, and tracked work into a project of your own.
+Use this workspace as a reference, then bring the same mix of notes, data, designs, tracked work, and a wiki into a project of your own.
 
 [Open the project manager](nimbalyst://action/open-project-manager)

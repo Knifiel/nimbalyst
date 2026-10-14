@@ -717,6 +717,14 @@ export class BrowserSessionService extends EventEmitter {
     // Belt and braces -- a frameless, non-focusable window has no close button
     // and no Cmd+W, so it must never be able to swallow the user's clicks.
     win.setIgnoreMouseEvents(true);
+    // A shown, non-focusable window at the normal level stops AppKit's Cmd+`
+    // cycle dead: forward cycling never leaves the current window while this
+    // host exists. Windows above the normal level are not in that cycle.
+    // `excludedFromShownWindowsMenu` does not help. Harmless otherwise, since
+    // the window is invisible and click-through.
+    if (process.platform === 'darwin') {
+      win.setAlwaysOnTop(true, 'floating');
+    }
 
     win.once('closed', () => {
       if (this.headlessHostWindow === win) this.headlessHostWindow = null;

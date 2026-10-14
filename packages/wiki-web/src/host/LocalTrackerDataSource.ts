@@ -27,19 +27,66 @@ export class LocalTrackerDataSource implements TrackerDataSource {
   private readonly listeners = new Set<(change: TrackerDataChange) => void>();
   private readonly sync: TrackerSyncState;
   private types = new Map<string, WikiTypeInfo>();
+  private readonly typeListeners = new Set<() => void>();
+  private typesInFlight: Promise<void> | null = null;
+  private typesQueued = false;
   private items: TrackerItem[] = [];
   private feedUnsubscribe: (() => void) | null = null;
   private refreshInFlight: Promise<void> | null = null;
   private refreshQueued = false;
   private disposed = false;
 
-  constructor(readonly workspace: string, types: readonly WikiTypeInfo[]) {
+  /**
+   * `applyTypes` puts a new set of type definitions into the tracker schema the
+   * UI reads (see host/schema.ts); it runs before views redraw with them.
+   */
+  constructor(
+    readonly workspace: string,
+    types: readonly WikiTypeInfo[],
+    private readonly applyTypes: (previous: readonly WikiTypeInfo[], next: readonly WikiTypeInfo[]) => Promise<void> = async () => {},
+  ) {
     this.sync = { workspacePath: workspace, projectId: workspace, status: 'connected', access: null };
     this.setTypes(types);
   }
 
   setTypes(types: readonly WikiTypeInfo[]): void {
     this.types = new Map(types.map((type) => [type.typeId, type]));
+  }
+
+  /** Called after the type definitions change (a type added, edited or converted). */
+  subscribeTypes(listener: () => void): () => void {
+    this.typeListeners.add(listener);
+    return () => this.typeListeners.delete(listener);
+  }
+
+  /**
+   * Rereads the type definitions from the server, then the items they describe.
+   * One read at a time; a change during a read schedules one more, as `refresh` does.
+   */
+  reloadTypes(): Promise<void> {
+    if (this.typesInFlight) {
+      this.typesQueued = true;
+      return this.typesInFlight;
+    }
+    this.typesInFlight = (async () => {
+      try {
+        do {
+          this.typesQueued = false;
+          const next = await wikiApi.types();
+          if (this.disposed) return;
+          await this.applyTypes([...this.types.values()], next);
+          this.setTypes(next);
+          for (const listener of [...this.typeListeners]) listener();
+          // Inside the loop: a types change that lands while the items are read is caught too.
+          await this.refresh();
+        } while (this.typesQueued && !this.disposed);
+      } catch (error) {
+        console.error('[wiki-web] Failed to reload types:', error);
+      } finally {
+        this.typesInFlight = null;
+      }
+    })();
+    return this.typesInFlight;
   }
 
   typeInfo(typeId: string): WikiTypeInfo | undefined {
@@ -69,7 +116,9 @@ export class LocalTrackerDataSource implements TrackerDataSource {
     this.listeners.add(cb);
     if (!this.feedUnsubscribe && !this.disposed) {
       this.feedUnsubscribe = wikiChanges.subscribe((event) => {
-        if (event.type !== 'down') void this.refresh();
+        // `ready` also follows a server restart, which may have come with type edits.
+        if (event.type === 'types' || event.type === 'ready') void this.reloadTypes();
+        else if (event.type !== 'down') void this.refresh();
       });
     }
     return () => {
@@ -158,6 +207,7 @@ export class LocalTrackerDataSource implements TrackerDataSource {
   dispose(): void {
     this.disposed = true;
     this.listeners.clear();
+    this.typeListeners.clear();
     this.feedUnsubscribe?.();
     this.feedUnsubscribe = null;
   }

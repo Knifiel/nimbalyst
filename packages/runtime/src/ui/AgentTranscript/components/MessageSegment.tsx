@@ -178,7 +178,7 @@ export const MessageSegment = React.memo(function MessageSegment({
 
     // Check if this is a rate limit event embedded in text content
     if (!isUser && isRateLimitContent(message.text ?? '')) {
-      return <RateLimitWidget content={message.text ?? ''} />;
+      return <RateLimitWidget content={message.text ?? ''} sessionId={sessionId} isLastMessage={isLastMessage} />;
     }
 
     // Upstream Claude API service errors (api_error 5xx, overloaded_error)
@@ -402,7 +402,7 @@ export const MessageSegment = React.memo(function MessageSegment({
 
     // Check if this is a rate limit event
     if (isRateLimitContent(errorMessage)) {
-      return <RateLimitWidget content={errorMessage} />;
+      return <RateLimitWidget content={errorMessage} sessionId={sessionId} isLastMessage={isLastMessage} />;
     }
 
     // Upstream API service error (api_error 5xx, overloaded_error) -

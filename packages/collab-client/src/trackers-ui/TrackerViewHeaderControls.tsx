@@ -1,5 +1,6 @@
 import type { JSX } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { autoUpdate, flip, FloatingPortal, offset, shift, useFloating } from '@floating-ui/react';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import type {
   TrackerColumnDef,
@@ -68,6 +69,12 @@ export interface TrackerViewHeaderControlsProps {
   filters: TrackerFilterSet | null;
   onFiltersChange: (filters: TrackerFilterSet) => void;
   openFiltersToken?: number;
+  /**
+   * When set, the host opens filters from its own control (bumping
+   * `openFiltersToken`): the Filter button is not drawn and the builder opens
+   * under this element instead.
+   */
+  filterAnchor?: HTMLElement | null;
   statusScope: TrackerStatusScope;
   onStatusScopeChange: (scope: TrackerStatusScope) => void;
   viewMode: TrackerViewMode;
@@ -187,6 +194,11 @@ function filterValueLabel(
 
 type FilterMenuMode = 'fields' | 'field' | 'advanced';
 
+/** A builder opened under a host anchor escapes the toolbar's overflow through a portal. */
+function AnchoredBuilder({ anchored, children }: { anchored: boolean; children: JSX.Element }): JSX.Element {
+  return anchored ? <FloatingPortal>{children}</FloatingPortal> : children;
+}
+
 export function TrackerViewHeaderControls({
   itemCount,
   unscopedItemCount,
@@ -198,6 +210,7 @@ export function TrackerViewHeaderControls({
   filters,
   onFiltersChange,
   openFiltersToken = 0,
+  filterAnchor = null,
   statusScope,
   onStatusScopeChange,
   viewMode,
@@ -220,6 +233,14 @@ export function TrackerViewHeaderControls({
   const filterRootRef = useRef<HTMLDivElement>(null);
   const submenuRef = useRef<HTMLDivElement>(null);
   const displayOptionsButtonRef = useRef<HTMLButtonElement>(null);
+  const builderRef = useRef<HTMLDivElement | null>(null);
+  const { refs: anchorRefs, floatingStyles: anchoredStyles } = useFloating({
+    elements: { reference: filterAnchor },
+    placement: 'bottom-start',
+    open: Boolean(filterAnchor) && showFilters,
+    whileElementsMounted: autoUpdate,
+    middleware: [offset(4), flip({ padding: 8 }), shift({ padding: 8 })],
+  });
 
   const activeFilterCount = useMemo(
     () => (filters?.clauses ?? []).filter(isClauseComplete).length,
@@ -263,14 +284,16 @@ export function TrackerViewHeaderControls({
       const target = event.target as Node;
       if (
         !filterRootRef.current?.contains(target) &&
-        !submenuRef.current?.contains(target)
+        !submenuRef.current?.contains(target) &&
+        !builderRef.current?.contains(target) &&
+        !filterAnchor?.contains(target)
       ) {
         setShowFilters(false);
       }
     };
     document.addEventListener('mousedown', closeOnOutsideClick);
     return () => document.removeEventListener('mousedown', closeOnOutsideClick);
-  }, [showFilters]);
+  }, [showFilters, filterAnchor]);
 
   const openField = (field: TrackerFilterField, anchorRect?: DOMRect): void => {
     setSelectedFieldId(field.id);
@@ -361,7 +384,7 @@ export function TrackerViewHeaderControls({
       />
 
       <div className="relative" ref={filterRootRef}>
-        <button
+        {!filterAnchor && <button
           type="button"
           className={`inline-flex h-7 items-center gap-1 rounded border px-2 text-[11px] font-medium transition-colors ${
             showFilters || activeFilterCount > 0
@@ -387,11 +410,17 @@ export function TrackerViewHeaderControls({
               {activeFilterCount}
             </span>
           )}
-        </button>
+        </button>}
 
         {showFilters && (
+          <AnchoredBuilder anchored={Boolean(filterAnchor)}>
           <div
-            className={`absolute right-0 top-full z-50 mt-1 max-w-[calc(100vw-24px)] overflow-hidden rounded-xl border border-nim bg-nim-secondary shadow-xl ${
+            ref={(node) => {
+              builderRef.current = node;
+              if (filterAnchor) anchorRefs.setFloating(node);
+            }}
+            style={filterAnchor ? anchoredStyles : undefined}
+            className={`${filterAnchor ? 'z-50' : 'absolute right-0 top-full z-50 mt-1'} max-w-[calc(100vw-24px)] overflow-hidden rounded-xl border border-nim bg-nim-secondary shadow-xl ${
               menuMode === 'advanced' ? 'w-[620px]' : 'w-[360px]'
             }`}
             role="dialog"
@@ -604,6 +633,7 @@ export function TrackerViewHeaderControls({
               />
             )}
           </div>
+          </AnchoredBuilder>
         )}
 
         {showFilters && menuMode === 'field' && selectedField && (
@@ -615,7 +645,7 @@ export function TrackerViewHeaderControls({
             )}`}
             field={selectedField}
             anchorRect={selectedFieldRect}
-            placement="left"
+            placement={filterAnchor ? 'right' : 'left'}
             selectedValues={
               new Set(
                 clausesForField(filters, selectedField.id).flatMap((clause) =>

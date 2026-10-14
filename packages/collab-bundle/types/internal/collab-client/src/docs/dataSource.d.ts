@@ -149,6 +149,12 @@ export interface CollabDocsSnapshot extends CollabDataSnapshot<SharedDocument, S
     primaryProjectId?: string | null;
     /** True when this store keeps a plain page's own fields; absent hides them. */
     pageFields?: boolean;
+    /**
+     * True once `items` is the store's full index (the team room answered), so a
+     * page missing from it is missing, not still loading. Absent while only a
+     * partial or empty local view is known.
+     */
+    indexLoaded?: boolean;
 }
 export type CollabDocsDataChange = Exclude<CollabDataChange<SharedDocument, SharedFolder>, {
     type: 'snapshot';

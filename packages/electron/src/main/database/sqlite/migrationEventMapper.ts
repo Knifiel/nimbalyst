@@ -21,6 +21,7 @@ import { AnalyticsService } from '../../services/analytics/AnalyticsService';
 import { logger } from '../../utils/logger';
 import type { DryRunResult } from './MigrationDryRunner';
 import { countBucket, sizeBucket, type MigrationOutcome } from './migrationOutcome';
+import type { RolloutDecision } from './rolloutAuthorization';
 
 /**
  * Operation ids already reported. An install performs a handful of migration
@@ -66,6 +67,32 @@ export function emitMigrationOutcome(outcome: MigrationOutcome): void {
     AnalyticsService.getInstance().sendEvent(name, properties);
   } catch (err) {
     logger.main.warn('[Migration] outcome event failed to send', err);
+  }
+}
+
+/**
+ * Report one install's exposure decision for a rollout configuration version.
+ *
+ * Returns whether the event was handed to the client for delivery. `false`
+ * leaves `autoMigrate`'s per-`configVersion` dedupe marker unwritten, so an
+ * install whose client was not up yet, or whose user had analytics off,
+ * reports on a later launch instead of reading as absent from the cohort.
+ */
+export function emitRolloutDecision(decision: RolloutDecision): boolean {
+  const analytics = AnalyticsService.getInstance();
+  if (!analytics.canEvaluateRemoteConfig()) return false;
+  try {
+    analytics.sendEvent('migration_rollout_decision', {
+      configVersion: decision.configVersion,
+      evaluated_channel: decision.evaluatedChannel,
+      source_bytes_bucket: decision.sourceBytesBucket,
+      decision: decision.decision,
+      skip_reason: decision.skipReason,
+    });
+    return true;
+  } catch (err) {
+    logger.main.warn('[Migration] rollout decision event failed to send', err);
+    return false;
   }
 }
 

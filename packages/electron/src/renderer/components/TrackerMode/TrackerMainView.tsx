@@ -41,7 +41,6 @@ import {
   buildHeaderFilterFields,
   createTrackerFilterFields,
   getTrackerHeaderFilterValue,
-  TrackerActiveFilterPills,
   TagBoard,
   TrackerDependencyCycleBanner,
   TrackerFilterOmnibox,
@@ -54,7 +53,6 @@ import {
   type TrackerViewLayoutUpdate,
 } from '@nimbalyst/collab-client/trackers-ui';
 import type { TrackerViewMode } from './trackerViewModes';
-import { ImportFromSourceDialog } from './ImportFromSourceDialog';
 import { TrackerDocumentView } from './TrackerDocumentView';
 import {
   trackerModeLayoutAtom,
@@ -101,6 +99,8 @@ import {
 } from './trackerSavedViews';
 import { orderTrackerItemsByLeverage, READINESS_LEVERAGE_SORT } from './trackerReadyQueue';
 import { useTrackerUnread } from '../../hooks/useTrackerUnread';
+import { SOURCE_FILTER_FIELD, sourceFilterField, splitSourceClause, withSourceClause } from './trackerSourceFilterClause';
+import { TrackerNewMenu } from './TrackerNewMenu';
 import { useGitRepoProbe } from '../../hooks/useGitRepoProbe';
 import {
   createNewWorktreeSessionActionAtom,
@@ -119,21 +119,6 @@ import { gitStatusAtom } from '../../store/atoms/gitOperations';
 import type { TeamMemberOption } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/TrackerFieldEditor';
 
 export type ViewMode = TrackerViewMode;
-
-/** Human label for a source key without probing the importer (avoids backend start). */
-function sourceKeyLabel(key: string): string {
-  if (key === 'native') return 'Native';
-  // Map known provider ids; otherwise title-case the id.
-  const known: Record<string, string> = {
-    'github-issues': 'GitHub',
-    linear: 'Linear',
-  };
-  if (known[key]) return known[key];
-  return key
-    .split(/[-_]/)
-    .map((p) => (p ? p[0].toUpperCase() + p.slice(1) : p))
-    .join(' ');
-}
 
 interface TrackerMainViewProps {
   filterType: TrackerItemType | 'all';
@@ -376,13 +361,6 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
     });
   }, [setModeLayout, modeLayout.typeColumnFilters, columnConfigKey]);
 
-  const removeFieldFilter = useCallback((clauseIndex: number) => {
-    handleColumnFiltersChange({
-      combinator: columnFilters?.combinator ?? 'and',
-      clauses: (columnFilters?.clauses ?? []).filter((_, index) => index !== clauseIndex),
-    });
-  }, [columnFilters, handleColumnFiltersChange]);
-
   const schemaType = columnConfigKey === 'all' ? '' : columnConfigKey;
   const availableColumns = useMemo(
     () => resolveColumnsForType(schemaType),
@@ -597,13 +575,10 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
   }, [allTags, tagFilter]);
 
   // Source provenance: 'native' or the importer provider id (from origin).
-  const sourceOptions = useMemo(() => {
-    const keys = new Set<string>();
-    for (const r of baseFilteredItems) keys.add(recordSourceKey(r));
-    return Array.from(keys).sort((a, b) => (a === 'native' ? -1 : b === 'native' ? 1 : a.localeCompare(b)));
-  }, [baseFilteredItems]);
+  const sourceField = useMemo(() => sourceFilterField(baseFilteredItems.map(recordSourceKey)), [baseFilteredItems]);
+  const sourceOptions = useMemo(() => (sourceField.options ?? []).map((option) => option.value), [sourceField]);
 
-  // Only worth showing the Source filter once imported items coexist with native ones.
+  // Only worth offering the Source filter once imported items coexist with native ones.
   const showSourceFilter = sourceOptions.some((k) => k !== 'native');
 
   const filteredItems = useMemo(() => {
@@ -700,9 +675,18 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
     void setFavorite({ itemId, isFavorite: !favoriteItemIds.has(itemId) });
   }, [favoriteItemIds, setFavorite]);
 
-  const toggleSource = useCallback((key: string) => {
-    setSourceFilter((cur) => (cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key]));
-  }, []);
+  // The search box shows the source filter as one more pill beside the column filters.
+  const omniboxFields = useMemo(
+    () => (showSourceFilter || sourceFilter.length > 0 ? [...headerFilterFields, sourceField] : headerFilterFields),
+    [headerFilterFields, showSourceFilter, sourceField, sourceFilter.length],
+  );
+  const omniboxFilters = useMemo(() => withSourceClause(columnFilters, sourceFilter), [columnFilters, sourceFilter]);
+  const handleOmniboxFiltersChange = useCallback((filters: TrackerFilterSet) => {
+    const split = splitSourceClause(filters, sourceOptions);
+    setSourceFilter(split.sourceFilter);
+    handleColumnFiltersChange(split.columnFilters);
+  }, [handleColumnFiltersChange, setSourceFilter, sourceOptions]);
+  const [filterAnchor, setFilterAnchor] = useState<HTMLDivElement | null>(null);
 
   const hasExternalTableFilters = activeFilters.length > 0
     || tagFilter.length > 0
@@ -766,10 +750,6 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
     if (cycleIds.size === 0) return [];
     return [...allActiveItems, ...allArchivedItems].filter(item => cycleIds.has(item.id));
   }, [allActiveItems, allArchivedItems, readinessByItemId]);
-
-  const removeTagFilter = useCallback((tag: string) => {
-    setTagFilter((current) => current.filter((candidate) => candidate !== tag));
-  }, []);
 
   // Pre-warm body Y.Docs for visible team-synced items so detail-open
   // hits a warm WebSocket + Y.Doc state (phase 4a of the tracker sync
@@ -1010,74 +990,6 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
     }
   }, [workspacePath, quickAddType, setModeLayout]);
 
-  // Import state
-  const [importMenuOpen, setImportMenuOpen] = useState(false);
-  const [importStatus, setImportStatus] = useState<string | null>(null);
-  const importMenuRef = useRef<HTMLDivElement>(null);
-
-  // External-source importers (GitHub, ...) discovered from installed extensions.
-  const [externalImporters, setExternalImporters] = useState<
-    Array<{ id: string; displayName: string; icon: string; importsAs?: string[] }>
-  >([]);
-  const [sourceDialog, setSourceDialog] = useState<
-    { providerId: string; providerLabel: string; importsAs?: string[] } | null
-  >(null);
-
-  // Close import menu on outside click
-  useEffect(() => {
-    if (!importMenuOpen) return;
-    const handleClick = (e: MouseEvent) => {
-      if (importMenuRef.current && !importMenuRef.current.contains(e.target as Node)) {
-        setImportMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [importMenuOpen]);
-
-  // Load external importers when the import menu opens.
-  useEffect(() => {
-    if (!importMenuOpen || !workspacePath) return;
-    let cancelled = false;
-    window.electronAPI
-      .invoke('tracker:importer:list', workspacePath)
-      .then((list: unknown) => {
-        if (!cancelled && Array.isArray(list)) {
-          setExternalImporters(list as typeof externalImporters);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [importMenuOpen, workspacePath]);
-
-  const handleBulkImport = useCallback(async (directory: string) => {
-    setImportMenuOpen(false);
-    setImportStatus('Importing...');
-    try {
-      const result = await window.electronAPI.documentService.bulkImportTrackerItems({
-        directory,
-        skipDuplicates: true,
-        recursive: true,
-      });
-      if (result.success) {
-        const parts: string[] = [];
-        if (result.imported) parts.push(`${result.imported} imported`);
-        if (result.skipped) parts.push(`${result.skipped} skipped`);
-        if (result.errors?.length) parts.push(`${result.errors.length} errors`);
-        setImportStatus(parts.join(', ') || 'No items found');
-      } else {
-        setImportStatus(`Failed: ${result.error}`);
-      }
-    } catch (error) {
-      setImportStatus('Import failed');
-      console.error('[TrackerMainView] Bulk import failed:', error);
-    }
-    // Clear status after 4 seconds
-    setTimeout(() => setImportStatus(null), 4000);
-  }, []);
-
   // Build a composite title from the active filters + type selection
   const title = useMemo(() => {
     const activeTracker = filterType !== 'all'
@@ -1217,7 +1129,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
           activeSavedViewName={activeSavedView?.name}
           savedViewDirty={savedViewDirty}
           savedViewEditable={savedViewEditable}
-          showSaveViewAction={showSaveViewAction}
+          showSaveViewAction={showSaveViewAction && (tagFilter.length > 0 || hasActiveFilters(columnFilters))}
           onSaveView={onSaveView}
           onRenameSavedView={onRenameSavedView}
           onUpdateSavedView={onUpdateSavedView}
@@ -1225,96 +1137,43 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
         />
 
         {/* Search + filter omnibox -- the same control the document-view list
-            pane uses. Pills stand down here: the toolbar renders its own
-            horizontal pill row (and tag chips) beside the box. */}
-        <TrackerFilterOmnibox
-          className="flex-1 max-w-[420px]"
-          searchQuery={searchQuery}
-          onSearchQueryChange={setSearchQuery}
-          fields={headerFilterFields}
-          filters={columnFilters}
-          onFiltersChange={handleColumnFiltersChange}
-          tagOptions={availableTagOptions}
-          tagFilter={tagFilter}
-          onTagFilterChange={setTagFilter}
-          showPills={false}
-        />
-
-        <TrackerActiveFilterPills
-          fields={headerFilterFields}
-          filters={columnFilters}
-          onManage={() => setOpenFiltersToken(token => token + 1)}
-          onRemove={removeFieldFilter}
-        />
-
-        {tagFilter.length > 0 && (
-          <div className="flex flex-wrap gap-1 shrink-0" data-testid="tracker-tag-chips">
-            {tagFilter.map((tag) => (
+            pane uses. Every filter (fields, #tags, source) is a pill inside the
+            box, its x clears them all, and its filter icon opens the column
+            filter builder under the box. */}
+        <div ref={setFilterAnchor} className="tracker-toolbar-search min-w-[200px] flex-1 max-w-[560px]">
+          <TrackerFilterOmnibox
+            className="w-full"
+            searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
+            fields={omniboxFields}
+            filters={omniboxFilters}
+            onFiltersChange={handleOmniboxFiltersChange}
+            tagOptions={availableTagOptions}
+            tagFilter={tagFilter}
+            onTagFilterChange={setTagFilter}
+            inlinePills
+            onPillClick={(_index, clause) => {
+              // Source is not a column, so the builder cannot edit it; it goes back into the text.
+              if (clause.field === SOURCE_FILTER_FIELD) return false;
+              setOpenFiltersToken(token => token + 1);
+              return true;
+            }}
+            trailing={
               <button
-                key={tag}
                 type="button"
-                className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] border cursor-pointer bg-blue-400/[0.12] border-blue-400/30 text-blue-400 hover:bg-blue-400/[0.18]"
-                onClick={() => removeTagFilter(tag)}
-                title={`Remove #${tag} filter`}
-                data-testid={`tracker-tag-chip-${tag}`}
+                className="tracker-toolbar-filter-button inline-flex shrink-0 items-center rounded p-0.5 text-nim-faint hover:bg-nim-tertiary hover:text-nim"
+                onClick={() => setOpenFiltersToken(token => token + 1)}
+                title="Filter by field"
+                aria-label="Filter by field"
+                data-testid="tracker-view-filter-button"
               >
-                #{tag}
-                <MaterialSymbol icon="close" size={12} />
+                <MaterialSymbol icon="filter_list" size={14} />
               </button>
-            ))}
-          </div>
-        )}
-
-        {/* Source provenance filter (appears once imported items exist).
-            A segmented control -- visually distinct from the removable, pill-
-            shaped column-filter chips so it doesn't read as "a filter I forgot
-            to close". */}
-        {showSourceFilter && (
-          <div
-            className="flex h-7 shrink-0 items-center overflow-hidden rounded border border-nim bg-nim-secondary"
-            role="group"
-            aria-label="Filter by source"
-            data-testid="tracker-source-filter"
-          >
-            {sourceOptions.map((key, index) => {
-              const active = sourceFilter.includes(key);
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => toggleSource(key)}
-                  className={`h-full px-2 text-[11px] font-medium transition-colors ${
-                    index > 0 ? 'border-l border-nim' : ''
-                  } ${
-                    active
-                      ? 'bg-[var(--nim-primary)]/15 text-nim'
-                      : 'text-nim-muted hover:bg-nim-tertiary hover:text-nim'
-                  }`}
-                  aria-pressed={active}
-                  title={`Filter by ${sourceKeyLabel(key)}`}
-                  data-testid={`tracker-source-filter-${key}`}
-                >
-                  {sourceKeyLabel(key)}
-                </button>
-              );
-            })}
-          </div>
-        )}
+            }
+          />
+        </div>
 
         <div className="flex-1" />
-
-        {hasExternalTableFilters && (
-          <button
-            type="button"
-            className="inline-flex h-7 items-center gap-1 rounded border border-nim bg-nim-secondary px-2 text-[11px] font-medium text-nim-muted transition-colors hover:bg-nim-tertiary hover:text-nim"
-            onClick={clearTableFilters}
-            title="Clear all filters"
-            data-testid="tracker-clear-filters"
-          >
-            <MaterialSymbol icon="filter_alt_off" size={14} />
-            Clear
-          </button>
-        )}
 
         <TrackerViewHeaderControls
           itemCount={displayedItemCount}
@@ -1327,6 +1186,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
           filters={columnFilters}
           onFiltersChange={handleColumnFiltersChange}
           openFiltersToken={openFiltersToken}
+          filterAnchor={filterAnchor}
           statusScope={statusScope}
           onStatusScopeChange={scope => setModeLayout({ statusScope: scope })}
           viewMode={viewSettings.viewMode}
@@ -1335,85 +1195,12 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
           onLayoutChange={handleViewLayoutChange}
         />
 
-        <div className="relative" ref={importMenuRef}>
-          <button
-            className="inline-flex h-7 items-center gap-1 rounded border border-nim px-2 text-[11px] font-medium text-nim-muted transition-colors hover:bg-nim-tertiary hover:text-nim"
-            onClick={() => setImportMenuOpen(!importMenuOpen)}
-            title="Import from files"
-          >
-            <MaterialSymbol icon="upload_file" size={14} />
-            Import
-          </button>
-          {importMenuOpen && (
-            <div className="absolute right-0 top-full mt-1 w-[220px] bg-nim border border-nim rounded-md shadow-lg z-50 py-1">
-              <button
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-nim-muted hover:bg-nim-tertiary hover:text-nim text-left"
-                onClick={() => handleBulkImport('nimbalyst-local/plans')}
-              >
-                <MaterialSymbol icon="folder_open" size={14} />
-                Import from nimbalyst-local/plans
-              </button>
-              <button
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-nim-muted hover:bg-nim-tertiary hover:text-nim text-left"
-                onClick={() => handleBulkImport('plans')}
-              >
-                <MaterialSymbol icon="folder_open" size={14} />
-                Import from plans/
-              </button>
-              <button
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-nim-muted hover:bg-nim-tertiary hover:text-nim text-left"
-                onClick={() => handleBulkImport('design')}
-              >
-                <MaterialSymbol icon="folder_open" size={14} />
-                Import from design/
-              </button>
-              {externalImporters.length > 0 && (
-                <div className="my-1 border-t border-nim" />
-              )}
-              {externalImporters.map((imp) => (
-                <button
-                  key={imp.id}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-nim-muted hover:bg-nim-tertiary hover:text-nim text-left"
-                  onClick={() => {
-                    setImportMenuOpen(false);
-                    setSourceDialog({
-                      providerId: imp.id,
-                      providerLabel: imp.displayName,
-                      importsAs: imp.importsAs,
-                    });
-                  }}
-                  data-testid={`tracker-import-source-${imp.id}`}
-                >
-                  <MaterialSymbol icon={imp.icon || 'cloud_download'} size={14} />
-                  Import from {imp.displayName}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Import status toast */}
-        {importStatus && (
-          <span className="text-[11px] text-nim-muted bg-nim-secondary px-2 py-0.5 rounded">
-            {importStatus}
-          </span>
-        )}
-
-        {/* Hide New button for non-creatable types (e.g. automations) */}
-        {(() => {
-          const targetType = filterType !== 'all' ? filterType : 'task';
-          const model = trackerTypes.find(t => t.type === targetType);
-          return model?.creatable !== false;
-        })() && (
-          <button
-            className="inline-flex h-7 items-center gap-1 rounded bg-[var(--nim-primary)] px-2.5 text-[11px] font-medium text-white transition-opacity hover:opacity-90"
-            onClick={() => handleNewItem(filterType !== 'all' ? filterType : 'task')}
-            data-testid="tracker-toolbar-new-button"
-          >
-            <MaterialSymbol icon="add" size={14} />
-            New
-          </button>
-        )}
+        <TrackerNewMenu
+          workspacePath={workspacePath}
+          // Non-creatable types (e.g. automations) keep the import menu but not New.
+          canCreate={trackerTypes.find(t => t.type === (filterType !== 'all' ? filterType : 'task'))?.creatable !== false}
+          onNewItem={() => handleNewItem(filterType !== 'all' ? filterType : 'task')}
+        />
       </div>
     </>
   );
@@ -1625,22 +1412,6 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
         }}
       />
 
-      {/* External-source import picker */}
-      {sourceDialog && workspacePath && (
-        <ImportFromSourceDialog
-          providerId={sourceDialog.providerId}
-          providerLabel={sourceDialog.providerLabel}
-          importsAs={sourceDialog.importsAs}
-          workspacePath={workspacePath}
-          onClose={() => setSourceDialog(null)}
-          onImported={(count) => {
-            if (count > 0) {
-              setImportStatus(`Imported ${count} item${count === 1 ? '' : 's'}`);
-              setTimeout(() => setImportStatus(null), 4000);
-            }
-          }}
-        />
-      )}
       {workspacePath && pendingWorktreeLaunch && (
         <WorktreeBaseBranchPicker
           isOpen

@@ -118,6 +118,23 @@ describe('SyncedSessionStore', () => {
     }
   });
 
+  it('publishes nothing, and queues nothing, for a session the filter excludes (NIM-7479)', async () => {
+    mockSyncProvider.isConnected = vi.fn().mockReturnValue(false);
+    mockSyncProvider.sendSessionMessages = vi.fn();
+    const handler = createMessageSyncHandler(mockSyncProvider, {
+      outbox: { coalesceMs: 1 },
+      shouldSync: async (sessionId) => sessionId === 'enabled',
+    });
+    const message = { sessionId: 'not-enabled', source: 'claude-code', direction: 'output' as const, content: 'private' };
+    await expect(handler.onMessageCreated(message, 1)).resolves.toMatchObject({ published: false, retryable: false });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(mockSyncProvider.connect).not.toHaveBeenCalled();
+    expect(mockSyncProvider.pushChange).not.toHaveBeenCalled();
+    expect(mockSyncProvider.sendSessionMessages).not.toHaveBeenCalled();
+    await handler.onMessageCreated({ ...message, sessionId: 'enabled' }, 2);
+    expect(mockSyncProvider.pushChange).toHaveBeenCalledWith('enabled', expect.objectContaining({ type: 'message_added' }));
+  });
+
   it('delivers messages refused at the session connection cap, then publishes their timestamp', async () => {
     const events: string[] = [];
     const capRefusal = Object.assign(new Error('at the session connection cap'), { code: 'SESSION_CONNECTION_CAP' });

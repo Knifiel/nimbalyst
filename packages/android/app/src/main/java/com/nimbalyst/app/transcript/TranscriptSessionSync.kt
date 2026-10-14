@@ -66,7 +66,7 @@ class TranscriptSessionSync {
 
     private var latest: TranscriptSnapshot? = null
     private var loadInFlight: TranscriptCommand.Load? = null
-    private var sentIds: List<String> = emptyList()
+    private var sentMessages: List<MessageEntity> = emptyList()
     private var sentMetadata: TranscriptMetadata? = null
     private var generation = 0
     private var replaceOnNextLoad = false
@@ -137,7 +137,7 @@ class TranscriptSessionSync {
         }
 
         confirmedSessionId = requestedId
-        sentIds = command.snapshot.messages.map { it.id }
+        sentMessages = command.snapshot.messages
         sentMetadata = command.snapshot.metadata
         // Emissions that arrived while the load was in flight go out as deltas.
         return TranscriptLoadResult(activated = true, next = plan())
@@ -159,7 +159,7 @@ class TranscriptSessionSync {
         generation++
         loadInFlight = null
         confirmedSessionId = null
-        sentIds = emptyList()
+        sentMessages = emptyList()
         sentMetadata = null
     }
 
@@ -174,20 +174,20 @@ class TranscriptSessionSync {
             return listOf(startLoad(snapshot, replace = replaceOnNextLoad))
         }
 
-        val ids = snapshot.messages.map { it.id }
+        val ids = snapshot.messages
         if (!extendsSent(ids)) {
             // A row vanished or was reordered; deltas cannot express that.
             return listOf(startLoad(snapshot, replace = true))
         }
 
         val commands = mutableListOf<TranscriptCommand>()
-        if (ids.size > sentIds.size) {
+        if (ids.size > sentMessages.size) {
             commands += TranscriptCommand.Append(
                 sessionId = snapshot.sessionId,
-                messages = snapshot.messages.subList(sentIds.size, ids.size).toList(),
+                messages = snapshot.messages.subList(sentMessages.size, ids.size).toList(),
                 generation = generation
             )
-            sentIds = ids
+            sentMessages = ids
         }
         if (snapshot.metadata != sentMetadata) {
             commands += TranscriptCommand.UpdateMetadata(snapshot.sessionId, snapshot.metadata, generation)
@@ -203,10 +203,10 @@ class TranscriptSessionSync {
         return TranscriptCommand.Load(snapshot, replace, generation).also { loadInFlight = it }
     }
 
-    private fun extendsSent(ids: List<String>): Boolean {
-        if (ids.size < sentIds.size) return false
-        for (i in sentIds.indices) {
-            if (ids[i] != sentIds[i]) return false
+    private fun extendsSent(ids: List<MessageEntity>): Boolean {
+        if (ids.size < sentMessages.size) return false
+        for (i in sentMessages.indices) {
+            if (ids[i] != sentMessages[i]) return false
         }
         return true
     }

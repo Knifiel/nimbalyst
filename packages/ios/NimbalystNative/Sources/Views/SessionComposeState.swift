@@ -13,7 +13,10 @@ public final class SessionComposeState: ObservableObject {
 
     /// Call only while the field is unfocused; mutating focused text disrupts IME input.
     func applyRemoteDraft(_ draft: String?, updatedAt: Int?) {
-        guard let draft, draft != text else { return }
+        // A cleared draft is stored as nil (IndexEntryMerge.mergeDraft). With a
+        // stamp it is a real clear -- the desktop submitted the prompt -- and
+        // must empty the composer; unstamped, the row just never had a draft.
+        guard let draft = draft ?? (updatedAt == nil ? nil : ""), draft != text else { return }
         // A shorter self-echo cannot erase characters typed after it was sent.
         if !draft.isEmpty && text.hasPrefix(draft) && text.count > draft.count { return }
         // Remounting may observe an uninitialized remote draft. It is not a newer edit.

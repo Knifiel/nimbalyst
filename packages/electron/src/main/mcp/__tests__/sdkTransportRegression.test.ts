@@ -26,6 +26,19 @@ function request(body?: unknown, contentType = 'application/json', method = 'POS
     'mcp-session-id': 'fixture-session', 'mcp-protocol-version': '2025-03-26',
   }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 }
+/** A request whose body arrives only once `gate` resolves. */
+function gatedRequest(body: unknown, gate: Promise<void>) {
+  const bytes = new TextEncoder().encode(JSON.stringify(body));
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      await gate;
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+  const headers = request().headers;
+  return new Request('http://localhost/mcp', { method: 'POST', headers, body: stream, duplex: 'half' } as RequestInit);
+}
 async function httpFixture(options = {}) {
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: () => 'fixture-session', ...options });
   const server = new Server({ name: 'fixture', version: '1' }, { capabilities: { tools: {} } });
@@ -195,8 +208,10 @@ describe('SDK transport boundaries', () => {
     const { transport } = await httpFixture({ onsessioninitialized: initialized });
     const dispatch = vi.fn();
     transport.onmessage = dispatch;
-    const req = request(initialize);
-    if (seam === 'body') vi.spyOn(req, 'json').mockImplementation(async () => { await gate; return initialize; });
+    // Hold the body stream itself open: since 1.31 the SDK reads the stream
+    // with a size limit instead of calling req.json(), so a json() mock no
+    // longer delays the read and the close lands after the request finished.
+    const req = seam === 'body' ? gatedRequest(initialize, gate) : request(initialize);
     const pending = transport.handleRequest(req);
     await turn();
     if (seam === 'session callback') expect(initialized).toHaveBeenCalledTimes(1);

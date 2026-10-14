@@ -32,6 +32,7 @@ Edit this page to fit your team. It overrides the base guide Nimbalyst ships.
 - When a statement came from a person, cite them: the citation keeps their words and links to the session or comment they came from.
 - Cite web pages and documents as you write; they are listed under Sources at the bottom of the page.
 - Facts that change (pricing, maturity, limits) carry a date and a source link.
+- Tables must read on a phone: about four columns of short values, a few words per cell. Put sentence-length values under a heading for the row instead of in a cell, and never repeat text across columns.
 - Mark what is decided, what was observed and what is a guess. Never present a guess as a decision.
 - Update a page rather than appending a second page about the same thing. When a decision changes, rewrite the sentence and say what it replaced and when.
 

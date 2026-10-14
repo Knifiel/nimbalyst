@@ -24,6 +24,21 @@ class TranscriptSessionSyncTest {
     }
 
     @Test
+    fun `same identity repaired while load is in flight forces replacement`() {
+        val initial = snap("a")
+        val repaired = initial.copy(messages = initial.messages.map { it.copy(contentDecrypted = "full reply", projectionJson = "{\"version\":1,\"revision\":2}") })
+        val sync = TranscriptSessionSync()
+        sync.onSnapshot(initial)
+        val load = sync.onBridgeReady().single() as TranscriptCommand.Load
+        assertTrue(sync.onSnapshot(repaired).isEmpty())
+        val replacement = sync.onLoadResult(load, "s1").next.single() as TranscriptCommand.Load
+        assertTrue(replacement.replace)
+        assertEquals(repaired, replacement.snapshot)
+        assertTrue(sync.onLoadResult(replacement, "s1").next.isEmpty())
+        assertTrue(sync.onSnapshot(repaired).isEmpty())
+    }
+
+    @Test
     fun `room emissions after the first load send only the new messages`() {
         val sync = loaded(snap("a", "b"))
 

@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import type { LocalTrackerItem } from '@nimbalyst/local-wiki';
+import { trackerItemToRecord } from '@nimbalyst/tracker-core';
+import { RESERVED_FIELD_NAMES, type LocalTrackerItem } from '@nimbalyst/local-wiki';
 import type { WikiTypeInfo } from '../../api/client';
 import { toStoredUpdates, toTrackerItem } from '../trackerItems';
 
@@ -52,5 +53,15 @@ describe('tracker adapter', () => {
       competitors: ['c1', 'c2'],
     });
     expect(toStoredUpdates({ owner: null, competitors: [] }, partner)).toEqual({ owner: null, competitors: null });
+  });
+
+  it('shows every field a wiki type may define, and reserves exactly the names the record model drops', () => {
+    // NIM-7484: a field named `activity` saved to the file but rendered blank.
+    const names = [...RESERVED_FIELD_NAMES, 'threat', 'activityLevel', 'status', 'owner', 'summary'];
+    const fields = Object.fromEntries(names.map((name) => [name, `${name}-value`]));
+    const item = toTrackerItem({ ...row, fields: { ...fields, name: 'Acme' } }, { ...partner, fields: [] }, new Map(), '/wiki');
+    const record = trackerItemToRecord(item);
+    const shown = names.filter((name) => record.fields[name] === `${name}-value`);
+    expect(names.filter((name) => !shown.includes(name))).toEqual([...RESERVED_FIELD_NAMES]);
   });
 });

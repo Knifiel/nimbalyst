@@ -46,6 +46,18 @@ test('object captures are detected without treating event parameter types as ana
   assert.deepEqual(collectSourceEventNames(src).sort(), ['clicked_button', 'daily_active', 'session_reparented', 'session_started']);
 });
 
+test('event mappers are scanned for descriptor names, other files are not', () => {
+  const src = `
+    case 'completed': return { name: 'migration_completed', properties };
+    const tab = { name: 'not_an_event' };
+  `;
+  assert.deepEqual(collectSourceEventNames(src, 'main/database/sqlite/migrationEventMapper.ts').sort(), [
+    'migration_completed',
+    'not_an_event',
+  ]);
+  assert.deepEqual(collectSourceEventNames(src, 'renderer/Tab.tsx'), []);
+});
+
 /** Source scan plus one synthetic name, so only that name can be the new error. */
 const foundPlus = (name) => {
   const found = new Map(sourceEvents);

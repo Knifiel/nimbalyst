@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { asPersonalJwt, asPersonalMemberId } from '../../auth/jwtScopes';
 
 import { createCollabV3Sync } from '../CollabV3Sync';
+import { clearStableCiphertextCache } from '../stableCiphertext';
 import { createProjectConfigSync } from '../../../../electron/src/main/services/sync/projectConfigSync';
 
 /**
@@ -189,6 +190,8 @@ describe('CollabV3 index publication gate', () => {
       });
       restoreEncrypt = () => { spy.mockRestore(); };
       let current = true;
+      // Unchanged fields reuse ciphertext; miss so every encryption stage is a real await.
+      clearStableCiphertextCache();
       const publishing = provider.pushChange('session-1', {type: 'metadata_updated', metadata: {parentSessionId: 'A', createdBySessionId: 'A'}}, {isCurrent: () => current});
       await vi.waitFor(() => expect(calls).toBeGreaterThanOrEqual(heldCall));
       indexSocket.receive({type: 'indexBroadcast', session: {...row, parentSessionId: 'B', createdBySessionId: 'B'}});

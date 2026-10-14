@@ -17,6 +17,10 @@ import type { SimpleGitOptions } from 'simple-git';
  * those variables. The environment is the user's own trusted machine config —
  * identical to what `git` sees in their terminal — so enabling these flags
  * restores terminal-equivalent behavior rather than weakening a real boundary.
+ *
+ * createGit (gitClient.ts) applies these whenever it passes an explicit
+ * environment; simple-git 4's separate `allowEnvironment` guard is handled
+ * there too.
  */
 export const GIT_INHERITED_ENV_UNSAFE: SimpleGitOptions['unsafe'] = {
   allowUnsafeAlias: true,
@@ -25,6 +29,7 @@ export const GIT_INHERITED_ENV_UNSAFE: SimpleGitOptions['unsafe'] = {
   allowUnsafeConfigEnvCount: true,
   allowUnsafeCredentialHelper: true,
   allowUnsafeEditor: true,
+  allowUnsafeExec: true,
   allowUnsafeMergeDriver: true,
   allowUnsafePager: true,
   allowUnsafeProtocolOverride: true,

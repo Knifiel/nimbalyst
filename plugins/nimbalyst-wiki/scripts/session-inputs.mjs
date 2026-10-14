@@ -3,7 +3,7 @@
 
 // packages/extensions/knowledge/src/sessionInputs/server.ts
 import { execFileSync } from "node:child_process";
-import { readFileSync as readFileSync2 } from "node:fs";
+import { readFileSync as readFileSync2, realpathSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import path2 from "node:path";
@@ -635,10 +635,19 @@ function main() {
     });
   });
 }
-if (process.argv[1] && path2.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+function isEntry(argv1, moduleUrl) {
+  if (!argv1) return false;
+  try {
+    return realpathSync(path2.resolve(argv1)) === realpathSync(fileURLToPath(moduleUrl));
+  } catch {
+    return false;
+  }
+}
+if (isEntry(process.argv[1], import.meta.url)) main();
 export {
   TOOL_DEFINITION,
   TOOL_NAME,
   callListSessionInputs,
-  handleMessage
+  handleMessage,
+  isEntry
 };

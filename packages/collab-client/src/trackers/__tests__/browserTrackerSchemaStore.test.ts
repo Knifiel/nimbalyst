@@ -205,6 +205,14 @@ describe('defining a new team type from the browser', () => {
       const [vendor] = await store.schemaSync.listUnsynced();
       store.schemaSync.onSettled?.({ type: 'vendor', model: vendor.model, accepted: false, error: { code: 'createOnlyUnsupported', message: 'This team\'s server must be updated before new types can be created here.' } });
       await expect(oldServer).rejects.toThrow('server must be updated');
+
+      // A temporary refusal is answered too: nothing re-sends it until a
+      // reconnect, so leaving it pending is a dialog that never finishes.
+      const locked = store.defineTeamType({ ...customer, type: 'partner' });
+      const [partner] = await store.schemaSync.listUnsynced();
+      store.schemaSync.onSettled?.({ type: 'partner', model: partner.model, accepted: false, error: { code: 'rotationLocked', message: 'frozen' } });
+      await expect(locked).rejects.toThrow(/not accepting changes to this project.*rotationLocked/);
+      expect(await store.schemaSync.listUnsynced()).toEqual([]);
     } finally {
       store.dispose();
     }

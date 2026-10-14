@@ -6,7 +6,7 @@
   "author": "Nimbalyst",
   "main": "dist/index.js",
   "apiVersion": "1.0.0",
-  "defaultEnabled": false,
+  "defaultEnabled": true,
   "marketplace": {
     "categories": [
       "ai-tools"

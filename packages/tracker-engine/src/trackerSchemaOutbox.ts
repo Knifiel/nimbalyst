@@ -68,6 +68,13 @@ export class TrackerSchemaOutbox {
     this.inFlight.clear();
   }
 
+  /** Forget every unanswered mutation and return them, for a caller that has to answer for the room. */
+  drain(): Array<{ clientMutationId: string; type: string; model: string | null }> {
+    const drained = [...this.inFlight].map(([clientMutationId, sent]) => ({ clientMutationId, ...sent }));
+    this.inFlight.clear();
+    return drained;
+  }
+
   private isInFlight(type: string, model: string | null): boolean {
     for (const sent of this.inFlight.values()) {
       if (sent.type === type && sent.model === model) return true;

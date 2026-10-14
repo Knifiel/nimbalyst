@@ -10,14 +10,13 @@
  * console keeps it in the URL, the desktop in the tab. Rows come from the
  * host's pages and the tracker records under its `TrackersUIProvider`.
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { PageSearchRequest, PageSearchResponse } from '@nimbalyst/collab-protocol';
 import { globalRegistry, type TrackerDataModel } from '@nimbalyst/tracker-schema';
 import type { TrackerFilterSet } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerFilters';
 import { getRecordTitle } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
-import { TrackerFilterOmnibox, dispatchTrackerFocusSearch } from '../TrackerFilterOmnibox';
-import { TrackerActiveFilterPills } from '../TrackerActiveFilterPills';
+import { TrackerFilterOmnibox } from '../TrackerFilterOmnibox';
 import { useTrackerDataSelector } from '../useTrackerData';
 import { PAGES_BODY_LIMIT, usePagesBodyHits } from './usePagesBodyHits';
 import {
@@ -117,7 +116,14 @@ export function PagesSearchView({
   headerActions,
 }: PagesSearchViewProps): React.JSX.Element {
   const state = useMemo(() => parsePagesSearch(new URLSearchParams(search)), [search]);
-  const update = (change: Partial<PagesSearchState>, replace = true) => onSearchChange(pagesSearchQuery({ ...state, ...change }), { replace });
+  // The omnibox commits a filter as two calls in one tick (filters, then the
+  // leftover text), so each update builds on the last one, not on this render.
+  const latest = useRef(state);
+  latest.current = state;
+  const update = (change: Partial<PagesSearchState>, replace = true) => {
+    latest.current = { ...latest.current, ...change };
+    onSearchChange(pagesSearchQuery(latest.current), { replace });
+  };
   const records = useTrackerDataSelector((store) => store.records);
   const loaded = useTrackerDataSelector((store) => store.loaded);
   const registryRevision = useRegistryRevision();
@@ -162,9 +168,6 @@ export function PagesSearchView({
   const hiddenByFilters = Boolean(body?.hits) && bodyHitsHiddenByFilters(body!.hits!, PAGES_BODY_LIMIT, new Set(filtered.map((match) => `${match.row.kind}:${match.row.id}`)));
 
   const setFilters = (filters: TrackerFilterSet) => update({ filters });
-  const removeFilter = (index: number) => update({
-    filters: { combinator: state.filters?.combinator ?? 'and', clauses: (state.filters?.clauses ?? []).filter((_, position) => position !== index) },
-  });
   const toggleSort = (column: SortColumn) => setSort((current) => (current.column === column
     ? { column, descending: !current.descending }
     : { column, descending: column === 'updated' }));
@@ -182,31 +185,27 @@ export function PagesSearchView({
 
   return (
     <div className="pages-search-view shared-docs-list-view flex h-full min-h-0 flex-col bg-nim select-text" data-testid="pages-search-view" data-lane={lane}>
-      <div className="pages-search-header flex shrink-0 items-center gap-3 border-b border-nim px-4 py-2.5">
-        <div className="pages-search-title flex min-w-0 shrink-0 items-center gap-2">
-          <MaterialSymbol icon="manage_search" size={18} className="text-nim-muted" />
-          <div className="flex min-w-0 flex-col">
-            <span className="truncate text-[13px] font-medium text-nim">{title ?? sectionName}</span>
-            <span className="truncate text-[11px] text-nim-faint">{title ? `${sectionName} search` : 'Search'}</span>
-          </div>
+      <div className="pages-search-header flex shrink-0 flex-col gap-3 border-b border-nim px-4 pb-3 pt-4">
+        <div className="pages-search-title flex min-w-0 items-center gap-2">
+          <MaterialSymbol icon="manage_search" size={20} className="shrink-0 text-nim-muted" />
+          <h1 className="m-0 truncate text-[17px] font-semibold text-nim">Search</h1>
+          <span className="truncate text-[13px] text-nim-faint">{title ?? sectionName}</span>
+          {headerActions && <div className="ml-auto flex shrink-0 items-center gap-2">{headerActions}</div>}
         </div>
         <TrackerFilterOmnibox
-          className="pages-search-omnibox mx-auto min-w-[180px] max-w-[520px] flex-1"
+          className="pages-search-omnibox w-full"
+          size="large"
           placeholder="Search pages, or type a field name to filter"
           searchQuery={state.query}
           onSearchQueryChange={(query) => update({ query })}
           fields={fields}
           filters={state.filters}
           onFiltersChange={setFilters}
-          showPills={false}
+          inlinePills
         />
-        {headerActions}
       </div>
-      {(Boolean(state.filters?.clauses.length) || note) && (
-        <div className="pages-search-filters flex shrink-0 items-center gap-2 border-b border-nim px-4 py-2">
-          <TrackerActiveFilterPills fields={fields} filters={state.filters} onManage={dispatchTrackerFocusSearch} onRemove={removeFilter} />
-          {note && <span className="pages-search-note ml-auto text-[11.5px] text-nim-faint">{note}</span>}
-        </div>
+      {note && (
+        <div className="pages-search-note flex shrink-0 items-center border-b border-nim px-4 py-2 text-[11.5px] text-nim-faint">{note}</div>
       )}
       <div className="pages-search-table min-h-0 flex-1 overflow-y-auto">
         {shown.length === 0 ? (

@@ -1,3 +1,7 @@
+import { SessionPayloadChannel, SessionPayloadPublicationError } from './sessionPayloadChannel';
+import { decodeSessionPayload } from './sessionPayloadCodec';
+import { SessionPayloadInbox } from './sessionPayloadInbox';
+import { encryptSessionMessage as encryptMessage } from './encryptSessionMessage';
 import { applyReplicatedSessionRows, createIndexChangeSubscriptions, createHierarchySnapshotDispatch, dispatchIndexChange, reconcileFetchedIndex } from './indexChangeDispatch';
 import { createPendingIndexPublications } from './pendingIndexPublications';
 import { createSessionQueueReconciler, mergeSessionIndexMetadata, type CachedSessionIndex } from './sessionIndexMetadata';
@@ -22,7 +26,7 @@ import { isRetainedSession, sessionActivityAt, SESSION_TRANSCRIPT_TTL_MS } from 
 
 import type { AgentMessage } from '../ai/server/types';
 import type { PersonalJwt, PersonalMemberId } from '../auth/jwtScopes';
-import { shouldSyncMessageForSessionRoom, truncateContentForSync } from './syncContentTruncator';
+import { shouldSyncMessageForSessionRoom } from './syncContentTruncator';
 import { appendSyncClientParams, redactSyncUrl } from './syncClientInfo';
 import { decodeNodeAccessTokenClaims, isNodeAccessToken } from './nodeCredentialToken';
 import {
@@ -34,6 +38,8 @@ import {
   uint8ArrayToBase64,
 } from './collabV3Crypto';
 import { buildSyncedSessionIndexFields } from './sessionIndexEntryFields';
+import { encryptStable } from './stableCiphertext';
+import { createLiveContextPublisher } from './liveSessionContext';
 import { resolveIndexSortTimestamp } from './sessionSortTimestamp';
 import {
   createIndexPublicationGate,
@@ -163,13 +169,10 @@ const MOBILE_PUSH_ACK_TIMEOUT_MS = 10_000;
  * Encrypt queued prompts for wire transmission.
  * Each prompt's text is encrypted individually.
  */
-async function encryptQueuedPrompts(
-  prompts: PlaintextQueuedPrompt[],
-  key: CryptoKey
-): Promise<EncryptedQueuedPrompt[]> {
+async function encryptQueuedPrompts(prompts: PlaintextQueuedPrompt[], key: CryptoKey, sessionId: string): Promise<EncryptedQueuedPrompt[]> {
   return Promise.all(
     prompts.map(async (prompt) => {
-      const { encrypted, iv } = await encrypt(prompt.prompt, key);
+      const { encrypted, iv } = await encryptStable(`queued:${sessionId}:${prompt.id}`, prompt.prompt, key);
       return {
         id: prompt.id,
         encryptedPrompt: encrypted,
@@ -211,11 +214,9 @@ async function decryptQueuedPrompts(
 /**
  * Encrypt a session title for wire transmission.
  */
-async function encryptTitle(
-  title: string,
-  key: CryptoKey
-): Promise<{ encryptedTitle: string; titleIv: string }> {
-  const { encrypted, iv } = await encrypt(title, key);
+/** With a scope (index: session id; session room: `session:` + id), an unchanged title keeps its ciphertext. */
+async function encryptTitle(title: string, key: CryptoKey, sessionId?: string): Promise<{ encryptedTitle: string; titleIv: string }> {
+  const { encrypted, iv } = sessionId ? await encryptStable(`title:${sessionId}`, title, key) : await encrypt(title, key);
   return {
     encryptedTitle: encrypted,
     titleIv: iv,
@@ -342,11 +343,8 @@ function indexPatchSignatureForEntry(entry: CachedSessionIndex): string {
 /**
  * Encrypt client metadata for wire transmission.
  */
-async function encryptClientMetadata(
-  metadata: ClientMetadata,
-  key: CryptoKey
-): Promise<{ encryptedClientMetadata: string; clientMetadataIv: string }> {
-  const { encrypted, iv } = await encrypt(JSON.stringify(metadata), key);
+async function encryptClientMetadata(metadata: ClientMetadata, key: CryptoKey, sessionId: string): Promise<{ encryptedClientMetadata: string; clientMetadataIv: string }> {
+  const { encrypted, iv } = await encryptStable(`clientMeta:${sessionId}`, JSON.stringify(metadata), key);
   return { encryptedClientMetadata: encrypted, clientMetadataIv: iv };
 }
 
@@ -658,6 +656,7 @@ async function decryptProjectPath(
 
 interface SessionConnection {
   ws: WebSocket;
+  payloadChannel: SessionPayloadChannel;
   status: SyncStatus;
   statusListeners: Set<(status: SyncStatus) => void>;
   changeListeners: Set<(change: SessionChange) => void>;
@@ -845,6 +844,11 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
   }
 
   const indexPublishQueue = createKeyedSerialQueue();
+  const liveContext = createLiveContextPublisher({
+    serialize: indexPublishQueue.run, getCached: (id) => sessionIndexCache.get(id), setCached: (id, entry) => { sessionIndexCache.set(id, entry); },
+    encryptionKey: () => config.encryptionKey, send: (frame) => !!indexWs && indexConnected && indexWs.readyState === WS_OPEN && (indexWs.send(frame), true),
+    fallback: async (id, currentContext) => (await provider.pushChange(id, { type: 'metadata_updated', metadata: { currentContext } })) ?? { published: true },
+  });
   /**
    * Guards the window between reading the cache and sending. The bulk
    * reconciliation path encrypts hundreds of entries outside the per-session
@@ -1187,7 +1191,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     if (!config.encryptionKey) {
       throw new Error('[CollabV3] Cannot send queued prompts: no encryption key available');
     }
-    indexEntry.encryptedQueuedPrompts = await encryptQueuedPrompts(queuedPrompts, config.encryptionKey);
+    indexEntry.encryptedQueuedPrompts = await encryptQueuedPrompts(queuedPrompts, config.encryptionKey, indexEntry.sessionId);
   }
 
   async function sendIndexUpdate(baseEntry: CachedSessionIndex, options?: PushChangeOptions): Promise<PushChangeOutcome> {
@@ -1233,7 +1237,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     };
 
     if (baseEntry.title) {
-      const { encryptedTitle, titleIv } = await encryptTitle(baseEntry.title, config.encryptionKey);
+      const { encryptedTitle, titleIv } = await encryptTitle(baseEntry.title, config.encryptionKey, baseEntry.sessionId);
       indexEntry.encryptedTitle = encryptedTitle;
       indexEntry.titleIv = titleIv;
     }
@@ -1244,9 +1248,9 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       baseEntry.queuedPromptCount,
     );
 
-    const clientMeta = buildClientMetadataFromCacheEntry(baseEntry);
+    const clientMeta = buildClientMetadataFromCacheEntry(liveContext.overlay(baseEntry));
     if (clientMeta) {
-      const { encryptedClientMetadata, clientMetadataIv } = await encryptClientMetadata(clientMeta, config.encryptionKey);
+      const { encryptedClientMetadata, clientMetadataIv } = await encryptClientMetadata(clientMeta, config.encryptionKey, baseEntry.sessionId);
       indexEntry.encryptedClientMetadata = encryptedClientMetadata;
       indexEntry.clientMetadataIv = clientMetadataIv;
     }
@@ -1310,9 +1314,9 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       lastReadAt: publishedEntry.lastReadAt,
     };
 
-    const clientMeta = shouldSend ? buildClientMetadataFromCacheEntry(publishedEntry) : undefined;
+    const clientMeta = shouldSend ? buildClientMetadataFromCacheEntry(liveContext.overlay(publishedEntry)) : undefined;
     if (clientMeta) {
-      const { encryptedClientMetadata, clientMetadataIv } = await encryptClientMetadata(clientMeta, config.encryptionKey);
+      const { encryptedClientMetadata, clientMetadataIv } = await encryptClientMetadata(clientMeta, config.encryptionKey, baseEntry.sessionId);
       patch.encryptedClientMetadata = encryptedClientMetadata;
       patch.clientMetadataIv = clientMetadataIv;
     }
@@ -1897,73 +1901,15 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     session.statusListeners.forEach((cb) => cb(session.status));
   }
 
-  async function encryptMessage(
-    message: AgentMessage,
-    key: CryptoKey
-  ): Promise<EncryptedMessage> {
-    // Trim large tool_result payloads before encryption so the SessionRoom
-    // doesn't store full Bash/Read/Grep output for every step. Local raw log
-    // keeps the unmodified content -- this only changes what crosses the wire.
-    const { content: truncatedContent } = truncateContentForSync(
-      message.content,
-      message.source,
-    );
-
-    // Include hidden flag in encrypted content so it syncs to mobile
-    const content = JSON.stringify({
-      content: truncatedContent,
-      metadata: message.metadata,
-      hidden: message.hidden ?? false,
-    });
-
-    const { encrypted, iv } = await encrypt(content, key);
-
-    // Use provider-assigned message ID if available (e.g., SDK uuid)
-    // This is the most reliable deduplication method as the provider guarantees uniqueness
-    // Fall back to hash-based ID for older messages or non-SDK providers
-    let syncId: string;
-    if (message.providerMessageId) {
-      syncId = message.providerMessageId;
-    } else {
-      // Generate a STABLE sync ID from message content + timestamp
-      // This prevents duplicate messages when the same message is synced multiple times
-      // We hash: sessionId + timestamp + first 100 chars of content + direction
-      const timestamp = message.createdAt instanceof Date
-        ? message.createdAt.getTime()
-        : typeof message.createdAt === 'number'
-          ? message.createdAt
-          : Date.now();
-      const contentPreview = message.content.substring(0, 100);
-      const hashInput = `${message.sessionId}:${timestamp}:${message.direction}:${contentPreview}`;
-
-      // Use SubtleCrypto to generate a stable hash
-      const encoder = new TextEncoder();
-      const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(hashInput));
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      syncId = hashArray.slice(0, 16).map(b => b.toString(16).padStart(2, '0')).join('');
-    }
-
-    return {
-      id: syncId,
-      sequence: 0, // Server assigns sequence
-      createdAt: message.createdAt instanceof Date
-        ? message.createdAt.getTime()
-        : typeof message.createdAt === 'number'
-          ? message.createdAt
-          : Date.now(),
-      source: message.source as EncryptedMessage['source'],
-      direction: message.direction as EncryptedMessage['direction'],
-      encryptedContent: encrypted,
-      iv,
-      metadata: {},
-    };
-  }
+  const payloadInbox = new SessionPayloadInbox();
 
   async function decryptMessage(
     encrypted: EncryptedMessage,
     key: CryptoKey
   ): Promise<AgentMessage> {
-    const decrypted = await decrypt(encrypted.encryptedContent, encrypted.iv, key);
+    const parts = payloadInbox.parts(encrypted.payload?.transferId);
+    payloadInbox.remove(encrypted.payload?.transferId);
+    const decrypted = await decodeSessionPayload(encrypted, key, parts);
     const parsed = JSON.parse(decrypted);
 
     return {
@@ -1993,7 +1939,11 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         typeof data === 'string' ? data : new TextDecoder().decode(data)
       );
 
+      session.payloadChannel.receive(message);
       switch (message.type) {
+        case 'messagePayloadPart':
+          payloadInbox.add(message.part);
+          break;
         case 'syncResponse':
           handleSyncResponse(sessionId, message);
           break;
@@ -2043,7 +1993,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
     // Update last sequence
     if (response.messages.length > 0) {
-      session.lastSequence = response.messages[response.messages.length - 1].sequence;
+      session.lastSequence = Math.max(session.lastSequence, ...response.messages.map(message => message.sequence));
     }
 
     // Cache metadata from sync response (includes queuedPrompts if present)
@@ -2054,15 +2004,13 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
     // Decrypt and emit messages as remote changes
     if (session.encryptionKey && response.messages.length > 0) {
-      // Collapse per-message decrypt failures into one summary. A burst here
-      // means the server holds messages written under a PRIOR personal-key
-      // seed epoch (keychain reset / reinstall / an unpaired device): the seed
-      // is a local random 32 bytes (CredentialService) and the key is
-      // PBKDF2(seed, 'nimbalyst:'+personalUserId) -- a different seed/user can't
-      // authenticate them (AES-GCM OperationError). Unrecoverable without the
-      // old seed. Record sessionId + createdAt range so the affected session and
-      // epoch boundary are identifiable instead of 45 anonymous error lines.
+      // An inline row that fails to decrypt was written under a prior
+      // personal-key seed epoch (keychain reset / reinstall / an unpaired
+      // device) and can never be read: skip it, as before #1711. Only a
+      // chunked row can be incomplete and heal on reconnect, so only that
+      // holds the page. Report a bounded summary without transcript plaintext.
       let decryptFailures = 0;
+      let incompletePayloads = 0;
       let oldestFailedAt: number | null = null;
       let newestFailedAt: number | null = null;
       let firstFailedId = '';
@@ -2077,6 +2025,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         } catch {
           if (decryptFailures === 0) firstFailedId = encrypted.id;
           decryptFailures++;
+          if (encrypted.payload) incompletePayloads++;
           const at = new Date(encrypted.createdAt).getTime();
           if (!Number.isNaN(at)) {
             if (oldestFailedAt === null || at < oldestFailedAt) oldestFailedAt = at;
@@ -2086,10 +2035,14 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       }
       if (decryptFailures > 0) {
         console.warn(
-          `[CollabV3] ${decryptFailures}/${response.messages.length} messages undecryptable for session ${sessionId} ` +
-          `(prior personal-key seed epoch; unrecoverable). firstId=${firstFailedId} ` +
+          `[CollabV3] ${decryptFailures}/${response.messages.length} messages could not be authenticated or reassembled for session ${sessionId} ` +
+          `(${incompletePayloads} chunked). firstId=${firstFailedId} ` +
           `createdAt=${oldestFailedAt ? new Date(oldestFailedAt).toISOString() : '?'}..${newestFailedAt ? new Date(newestFailedAt).toISOString() : '?'}`,
         );
+      }
+      if (incompletePayloads > 0) {
+        updateStatus(sessionId, { syncing: false, error: 'Transcript content could not be reassembled. Reconnect to retry.' });
+        return; // Never page past an incomplete logical message.
       }
     }
 
@@ -2100,10 +2053,10 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     });
 
     // Request more if needed
-    if (response.hasMore && response.cursor) {
+    if (response.hasMore && (response.revisionCursor !== undefined || response.cursor)) {
       const nextRequest: ClientMessage = {
         type: 'syncRequest',
-        sinceSeq: parseInt(response.cursor, 10),
+        ...(response.revisionCursor !== undefined ? { sinceRevision: response.revisionCursor } : { sinceSeq: parseInt(response.cursor!, 10) }),
       };
       session.ws.send(JSON.stringify(nextRequest));
     }
@@ -2254,7 +2207,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     console.log('[CollabV3] connectToIndex() roomId:', indexRoomId, 'orgId:', config.orgId, 'personalMemberId:', getPersonalMemberId());
     const url = getWebSocketUrl(indexRoomId);
     // Pass JWT via query parameter (WebSocket doesn't support custom headers in browsers)
-    const wsUrl = appendSyncClientParams(`${url}?token=${encodeURIComponent(jwt)}`);
+    const wsUrl = appendSyncClientParams(`${url}?token=${encodeURIComponent(jwt)}&sessionPayloadVersion=1`);
 
     indexWs = openWebSocket(wsUrl);
 
@@ -2917,7 +2870,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       // console.log('[CollabV3] syncSessionMessages() - CREATING TEMP WebSocket for session', sessionId);
       const { jwt } = await ensureFreshJwt();
       // Pass JWT via query parameter (WebSocket doesn't support custom headers in browsers)
-      const ws = openWebSocket(appendSyncClientParams(`${getWebSocketUrl(getRoomId(sessionId))}?token=${encodeURIComponent(jwt)}`));
+      const ws = openWebSocket(appendSyncClientParams(`${getWebSocketUrl(getRoomId(sessionId))}?token=${encodeURIComponent(jwt)}&sessionPayloadVersion=1`));
       transientSockets.add(ws);
       return { ws, release: () => transientSockets.delete(ws) };
     },
@@ -3115,7 +3068,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
       // Encrypt title - encryption is required
       if (session.title) {
-        const { encryptedTitle, titleIv } = await encryptTitle(session.title, config.encryptionKey);
+        const { encryptedTitle, titleIv } = await encryptTitle(session.title, config.encryptionKey, session.id);
         entry.encryptedTitle = encryptedTitle;
         entry.titleIv = titleIv;
       }
@@ -3148,7 +3101,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
             }
           : undefined;
       if (clientMeta) {
-        const { encryptedClientMetadata, clientMetadataIv } = await encryptClientMetadata(clientMeta, config.encryptionKey);
+        const { encryptedClientMetadata, clientMetadataIv } = await encryptClientMetadata(clientMeta, config.encryptionKey, session.id);
         entry.encryptedClientMetadata = encryptedClientMetadata;
         entry.clientMetadataIv = clientMetadataIv;
       }
@@ -3308,11 +3261,21 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
           //   source: encrypted.source,
           //   direction: encrypted.direction,
           // });
-          clientMessage = { type: 'appendMessage', message: encrypted };
+          if (generation !== indexConnectionGeneration || sessions.get(sessionId) !== session || withholdPersonalSyncWrite('transcript publication')) {
+            return { published: false, reason: 'transcript write superseded or withheld', retryable: true };
+          }
+          await session.payloadChannel.publish(encrypted);
+          session.lastActivity = Date.now();
+          return { published: true };
         } catch (err) {
-          console.error('[CollabV3] Failed to encrypt message:', err);
-          // Deterministic: the same row would fail the same way.
-          return { published: false, reason: 'encryption failed', retryable: false };
+          console.error('[CollabV3] Message publication failed:', err);
+          // Socket loss and ack timeouts retry; a server refusal or a local
+          // encode/encrypt failure would fail the same way again.
+          const retryable = err instanceof SessionPayloadPublicationError && err.retryable;
+          if (!(err instanceof SessionPayloadPublicationError && err.skippable)) {
+            updateStatus(sessionId, { syncing: false, error: err instanceof Error ? err.message : 'Message publication failed' });
+          }
+          return { published: false, reason: err instanceof Error ? err.message : 'message publication failed', retryable };
         }
         break;
       }
@@ -3322,7 +3285,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
         // Encrypt title
         if (change.metadata.title && config.encryptionKey) {
-          const { encryptedTitle, titleIv } = await encryptTitle(change.metadata.title, config.encryptionKey);
+          const { encryptedTitle, titleIv } = await encryptTitle(change.metadata.title, config.encryptionKey, `session:${sessionId}`);
           metadata.encryptedTitle = encryptedTitle;
           metadata.titleIv = titleIv;
         }
@@ -3342,7 +3305,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
             if (!config.encryptionKey) {
               throw new Error('[CollabV3] Cannot send queued prompts: no encryption key available');
             }
-            metadata.encryptedQueuedPrompts = await encryptQueuedPrompts(change.metadata.queuedPrompts, config.encryptionKey);
+            metadata.encryptedQueuedPrompts = await encryptQueuedPrompts(change.metadata.queuedPrompts, config.encryptionKey, `session:${sessionId}`);
           } else {
             metadata.encryptedQueuedPrompts = [];
           }
@@ -3371,12 +3334,12 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
           if (clientMeta.draftInput !== undefined) {
             // console.log('[CollabV3] Encrypting clientMeta with draftInput, sending to index');
           }
-          const encrypted = await encryptClientMetadata(clientMeta, config.encryptionKey);
+          const encrypted = await encryptClientMetadata(clientMeta, config.encryptionKey, `session:${sessionId}`);
           metadata.encryptedClientMetadata = encrypted.encryptedClientMetadata;
           metadata.clientMetadataIv = encrypted.clientMetadataIv;
         }
-        // Only send to session room if connected; index-only updates skip this
-        if (sessionConnected) {
+        // Session room only when connected and a stored field changed: the per-message updatedAt push is index-only.
+        if (sessionConnected && Object.values(metadata).some(value => value !== undefined)) {
           clientMessage = { type: 'updateMetadata', metadata };
         }
         break;
@@ -3419,17 +3382,6 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         console.error('[CollabV3] Failed to send message:', err);
         sessionRoomOutcome = { published: false, reason: 'session room send failed', retryable: true };
       }
-    } else if (change.type === 'message_added') {
-      // The only branch where a message row silently goes nowhere: either the
-      // session room is not connected or the personal-sync write gate is
-      // holding writes back. Both clear on reconnect, so this is retryable.
-      sessionRoomOutcome = {
-        published: false,
-        reason: sessionConnected
-          ? 'personal-sync writes are withheld'
-          : 'session room is not connected',
-        retryable: true,
-      };
     }
 
     // Handle index updates based on change type
@@ -3581,6 +3533,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
   }
 
   const provider: SyncProvider = {
+    publishLiveContext: liveContext.publish,
     async connect(sessionId: string): Promise<void> {
       const pending = sessionConnectionsInFlight.get(sessionId);
       if (pending) return pending;
@@ -3649,13 +3602,14 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       }
       const url = getWebSocketUrl(roomId);
       // Pass JWT via query parameter (WebSocket doesn't support custom headers in browsers)
-      const wsUrl = appendSyncClientParams(`${url}?token=${encodeURIComponent(jwt)}`);
+      const wsUrl = appendSyncClientParams(`${url}?token=${encodeURIComponent(jwt)}&sessionPayloadVersion=1`);
 
       return new Promise<void>((resolve, reject) => {
         const ws = openWebSocket(wsUrl);
 
         const session: SessionConnection = {
           ws,
+          payloadChannel: new SessionPayloadChannel(ws),
           status: createInitialStatus(),
           statusListeners: sessionStatusListeners.get(sessionId) ?? new Set(),
           changeListeners: sessionChangeListeners.get(sessionId) ?? new Set(),
@@ -3680,13 +3634,14 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
           updateStatus(sessionId, { connected: true, syncing: true });
 
           // Request initial sync
-          const syncRequest: ClientMessage = { type: 'syncRequest' };
+          const syncRequest: ClientMessage = { type: 'syncRequest', sinceRevision: 0 };
           ws.send(JSON.stringify(syncRequest));
 
           resolve();
         };
 
         ws.onclose = (event: CloseEvent) => {
+          session.payloadChannel.dispose();
           clearTimeout(timeout);
           reject(new Error('Session connection closed before opening'));
           if (sessions.get(sessionId) !== session) return;
@@ -3735,12 +3690,14 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       const session = sessions.get(sessionId);
       if (!session) return;
 
+      session.payloadChannel.dispose();
       session.ws.close();
       sessions.delete(sessionId);
     },
 
     disconnectAll(): void {
       sessionWritesClosed = true;
+      payloadInbox.clear();
       sessionWriteGeneration++;
       for (const ws of [...transientSockets]) ws.close();
       transientSockets.clear();
@@ -3853,12 +3810,12 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         : publish();
     },
 
-    async sendSessionMessages(sessionId: string, messages: AgentMessage[]): Promise<PushChangeOutcome> {
+    async sendSessionMessages(sessionId: string, messages: AgentMessage[], replay?: { activityAt: number }): Promise<PushChangeOutcome> {
       if (sessionWritesClosed) return { published: false, reason: 'sync was shut down', retryable: false };
       const sendable = messages.filter(m => shouldSyncMessageForSessionRoom(m.source, m.metadata, m.content, m.hidden));
       if (sendable.length === 0) return { published: false, reason: 'filtered from session-room sync', retryable: false };
       try {
-        return await syncSessionMessages(sessionId, sendable);
+        return await syncSessionMessages(sessionId, sendable, replay);
       } catch (error) {
         return { published: false, reason: error instanceof Error ? error.message : String(error), retryable: true };
       }
@@ -3948,7 +3905,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
       if (hasPublishableConfig(projectConfig)) {
         const configJson = JSON.stringify(projectConfig);
-        const { encrypted: encryptedConfig, iv: configIv } = await encrypt(configJson, config.encryptionKey);
+        const { encrypted: encryptedConfig, iv: configIv } = await encryptStable(`projectConfig:${projectId}`, configJson, config.encryptionKey);
         message.encryptedConfig = encryptedConfig;
         message.configIv = configIv;
       }

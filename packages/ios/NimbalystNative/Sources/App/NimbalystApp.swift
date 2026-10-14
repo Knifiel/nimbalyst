@@ -332,7 +332,9 @@ public struct MainNavigationView: View {
             // Beneath the auth banner: a sync failure is the narrower problem,
             // and re-signing in is the action that fixes both when both show.
             if let syncManager = appState.syncManager {
-                SyncErrorBannerHost(syncManager: syncManager)
+                SyncErrorBannerHost(syncManager: syncManager) {
+                    DiagnosticsReport.copyToClipboard(appState: appState)
+                }
             }
             WorkspaceNavigationView(navigation: navigation)
         }

@@ -15,6 +15,7 @@ tables:
 
 - `formatVersion` is required. A reader that sees a higher version than it knows refuses to open the wiki instead of guessing.
 - `tables` is optional and holds the position of each table type among its siblings (see Order). Unknown keys are preserved.
+- `wikiId` is optional: a ULID naming this wiki, written the first time a tool needs one (moving the wiki to a team project keys its copies on it, so a re-run resumes instead of duplicating). It travels with the folder; a writer never changes it. A copy of the folder made to start a separate wiki should drop it.
 
 Names starting with `.` and `node_modules` are not part of the tree at any level; the one exception is an editor page's sidecar (`.<file>.wiki.yaml`, see Editor pages), which is read with its file. `.trash/` at the root holds deleted items, and `.nimbalyst-wiki.lock` is the write lock (see Writes and concurrency). Temporary files written during an atomic write are dot-prefixed and so are ignored.
 
@@ -33,6 +34,10 @@ Competitors/
 - A folder with no matching `.md` beside it is a page with an empty body. Its children are the folder's contents.
 - When such a folder contains `README.md` or `index.md` (case-insensitive, `README.md` preferred), that file is the folder page's body, not a child. This is how an imported folder of docs keeps its landing page. When `Name.md` exists beside `Name/`, a `README.md` inside is an ordinary child page.
 - Files that are neither pages nor table `.csv` files (images, attachments) are carried along by moves but are not pages.
+
+### Attachments
+
+A file added to a page (dropped or pasted into it) is stored in `.assets/` inside the page's child folder, under its own name: `Competitors.md` keeps its attachments in `Competitors/.assets/`, and links them as `![chart](Competitors/.assets/chart.png)` or `[deck](Competitors/.assets/deck.pdf)`. The folder is hidden, so it is not a page, and it moves, trashes and restores with the page. A file whose name is taken by different content gets the first free ` (2)`, ` (3)`, ... suffix; the same content reuses the existing file. When a page is renamed, links in its own body into its old child folder are rewritten to the new one.
 
 ### Frontmatter
 
@@ -142,12 +147,18 @@ fields:
     type: string
   - name: tier
     type: select
+  - name: owner
+    type: string
+tableView:
+  defaultColumns: [tier, owner]
 ```
 
 - `storage: pages`: one markdown page per item, with a body and children.
 - `storage: table`: one CSV for the whole type. No bodies, no children.
 - **A type is a wiki type only when it declares `storage:`.** Its items live in the wiki. A type without the key (bugs, tasks, any app-database type) keeps its items in the app; the wiki still reads its definition so a page can link to such items, but tools must not create its items as files. Placing a type in the wiki writes `storage: pages` (or `table`) into its YAML. A typed page whose type lacks the key is still read, with `pages` storage.
 - The app's other type keys (`icon`, `color`, `modes`, `idPrefix`) are optional on a wiki type. The app fills them in when they are missing, and a type may set them.
+- `tableView.defaultColumns` lists the fields shown as columns in the type's table, in order. A field that is not listed and has no role (such as `roles.title`) is not a column until someone adds it. Set it on every wiki type; `nim wiki serve` shows a type's own fields when it has no `tableView`, but other readers may not.
+- **Reserved field names.** Nimbalyst's tracker model keeps these keys for an item's own metadata, so a field with one of these names saves to the file but never shows in a table or page header: `id`, `type`, `typeTags`, `issueNumber`, `issueKey`, `localKey`, `source`, `sourceRef`, `archived`, `archivedAt`, `syncStatus`, `content`, `module`, `lineNumber`, `workspace`, `lastIndexed`, `created`, `updated`, `authorIdentity`, `lastModifiedBy`, `createdByAgent`, `linkedSessions`, `linkedCommitSha`, `linkedCommits`, `linkedPullRequests`, `linkedIssues`, `documentId`, `activity`, `comments`, `origin`, `triagedAt`, `triagedBy`, `derivedSignals`, `assigneeId`, `reporterId`, `customFields`. Readers report a wiki type that defines one (`reserved-field`) and keep reading its values; rename the field (for example `activity` to `activityLevel`).
 - `*.patch.yaml` files and backups are not type definitions. `extends` is resolved one level deep: the parent's fields, then the child's.
 
 ## Table types
@@ -166,7 +177,7 @@ A table type's items live in one CSV, named after the type's plural display name
   - everything else: the text as is.
 - The item title is the column named by the type's `roles.title` (default `title`).
 - A row with an empty or duplicate id is given a new ULID on the next scan by a writer.
-- Converting a table type to pages writes one page per row in the CSV's folder, reads each back, then moves the CSV to trash and changes `storage: table` to `storage: pages` in the type file.
+- Converting a table type to pages writes one page per row in the CSV's folder, keeping each row's id and every cell as a field, reads each page back, moves each row's activity lines beside its page, changes the `storage: table` line to `storage: pages` in the type file (a trailing comment is kept), then moves the CSV to trash as a `table` entry. A writer refuses before writing anything when the type file has no plain `storage: table` line to change, or when a column is named `id`, `title` (unless it is the title column), `type` or `order`. `nim wiki convert-type <type> --to pages` and the local MCP tool `convertTypeStorage` do this.
 
 ## Activity
 

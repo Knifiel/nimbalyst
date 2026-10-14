@@ -6,7 +6,7 @@ import {
 } from './useTrackerFloatingMenu';
 
 export interface TrackerFilterOmniboxMenuProps {
-  reference: HTMLInputElement;
+  reference: HTMLElement;
   suggestions: TokenSuggestion[];
   highlightIndex: number | null;
   onHighlight: (index: number) => void;

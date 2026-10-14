@@ -70,8 +70,8 @@ function sameProject(a: ProjectPin, b: ProjectPin): boolean {
 }
 
 export function teamsCtx(args: ParsedArgs, server: string, startDir: string): PagesCtx {
-  // bind / create-project / pin use --org and --project as their own operands, not as a target.
-  const ownsProjectFlags = args.verb === 'bind' || args.verb === 'create-project' || args.verb === 'pin';
+  // bind / create-project / pin and the team verbs use --org and --project as their own operands, not as a target.
+  const ownsProjectFlags = ['bind', 'create-project', 'pin', 'team-create', 'invite', 'invite-link'].includes(args.verb ?? '');
   if (ownsProjectFlags) {
     const { root, origin } = locateCheckout(startDir);
     const explicitRepo = flagStr(args, 'repo');

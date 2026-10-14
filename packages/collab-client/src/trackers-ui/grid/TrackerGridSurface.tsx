@@ -86,6 +86,8 @@ export interface TrackerGridSurfaceProps extends GridViewSettings {
   selectedItemId?: string | null;
   /** Opens a row into the host's detail. See `handleCellFocus` for the gesture. */
   onOpenItem?: (itemId: string) => void;
+  /** The title text opens the row as well as the key; a type page lists pages by title. */
+  titleOpensItem?: boolean;
   /**
    * Right-click on a row, and the click on its overflow button.
    *
@@ -168,6 +170,7 @@ export function TrackerGridSurface({
   onItemsUpdate,
   selectedItemId,
   onOpenItem,
+  titleOpensItem,
   onRowContextMenu,
   loaded,
   derivedColumns,
@@ -242,7 +245,7 @@ export function TrackerGridSurface({
         // The favorite star is a personal-lane affordance; a host that has one
         // renders it through its own grid. Not reconstructed here.
         rowActions: false,
-        keyLink: onOpenItem ? { onOpenDetail: onOpenItem } : undefined,
+        keyLink: onOpenItem ? { onOpenDetail: onOpenItem, titleOpens: titleOpensItem } : undefined,
         resolveRelationshipLabel,
       }), derivedColumns ?? []),
       ...(onRowContextMenu ? [buildGridActionsColumn()] : []),
@@ -257,6 +260,7 @@ export function TrackerGridSurface({
       filteredColumnIds,
       onColumnFiltersChange,
       onOpenItem,
+      titleOpensItem,
       resolveRelationshipLabel,
       derivedColumns,
       onRowContextMenu,

@@ -60,4 +60,28 @@ describe('VisualDisplayWidget', () => {
     });
     expect(invalidSizeWarning).toBeUndefined();
   });
+
+  it('renders inline synced bytes instead of the unreachable desktop path (no readFile, as on iOS)', async () => {
+    const { findByAltText } = render(
+      <VisualDisplayWidget
+        message={{
+          toolCall: {
+            toolName: 'mcp__nimbalyst__display_to_user',
+            arguments: {
+              items: [{
+                description: 'Profile screen',
+                image: { path: '/Users/me/shot.png', data: 'QUJD', mimeType: 'image/jpeg' },
+              }],
+            },
+          },
+        } as any}
+        isExpanded={true}
+        onToggle={() => {}}
+        sessionId="session-1"
+      />
+    );
+
+    const img = await findByAltText('Profile screen');
+    expect(img.getAttribute('src')).toBe('data:image/jpeg;base64,QUJD');
+  });
 });

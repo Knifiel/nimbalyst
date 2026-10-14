@@ -16,13 +16,19 @@ import {
   createCollabDocsScopeLifecycle,
   useCollabPagesState,
   type CollabDocsSession,
+  type CollabSidebarCreateMenu,
 } from '@nimbalyst/collab-bundle/docs-ui';
-import { TrackersUIProvider } from '@nimbalyst/collab-bundle/trackers-ui';
+import { createTrackerReferenceResolver, TrackersUIProvider } from '@nimbalyst/collab-bundle/trackers-ui';
+import { PageEditorServicesContext, type PageEditorServices } from './pageEditorServices';
 import { setWorkspaceFileLinkOpener } from '@nimbalyst/collab-bundle/editor';
+import { wikiApi } from '../api/client';
 import { LocalCollabHost, routePath } from '../host/LocalCollabHost';
 import type { LocalTrackerDataSource } from '../host/LocalTrackerDataSource';
 import { DraftStore, DraftStoreContext, prepareToLeave, resolveLeave, type LeaveChoice, type LeaveDecision } from './drafts';
 import { PageView, SearchView, TypedPageView, TypesView, TypeTableView, type PageModule, type ViewRoute } from './views';
+import { WikiCreateMenu } from './WikiCreateMenu';
+import { setWikiCanvasContext } from '../editors/canvas/WikiCanvasCard';
+import { renderWikiFileEmbed } from '../editors/WikiFileEmbed';
 
 type Route = ViewRoute;
 
@@ -113,11 +119,13 @@ function useRoute(drafts: DraftStore): [Route, (route: Route, options?: { newTab
 
 export interface AppProps {
   root: string;
+  /** The project the wiki belongs to; canvas cards name files relative to it. */
+  projectRoot: string | null;
   trackers: LocalTrackerDataSource;
   module: PageModule;
 }
 
-export function App({ root, trackers, module }: AppProps) {
+export function App({ root, projectRoot, trackers, module }: AppProps) {
   const drafts = useMemo(() => new DraftStore(), []);
   const [route, navigate, leaving, chooseLeave] = useRoute(drafts);
   const [notice, setNotice] = useState<string | null>(null);
@@ -133,8 +141,36 @@ export function App({ root, trackers, module }: AppProps) {
     return () => lifecycle.dispose();
   }, [host]);
 
+  // References in page bodies resolve against the wiki's own typed pages and rows; a click opens the item here.
+  const trackerReferences = useMemo(
+    () => createTrackerReferenceResolver(trackers, { onOpenItem: (id) => navigate({ kind: 'item', id }) }),
+    [trackers, navigate],
+  );
+  useEffect(() => () => trackerReferences.dispose(), [trackerReferences]);
+  const editorServices = useMemo<PageEditorServices>(
+    () => ({
+      pageLinks: (pageId) => host.pageLinkSource(pageId),
+      fileEmbed: (pageId, embed) => {
+        const target = host.resolveLink(pageId, embed.src);
+        return renderWikiFileEmbed(embed, target.kind === 'outside' ? null : host.source().page(target.id) ?? null, drafts);
+      },
+      trackerReferences,
+    }),
+    [host, trackerReferences, drafts],
+  );
+
+  useEffect(() => setWikiCanvasContext({
+    wikiRoot: root,
+    projectRoot,
+    pages: () => host.source().allPages(),
+    subscribe: (listener) => host.source().subscribe((change) => {
+      if (change.type === 'snapshot') listener();
+    }),
+  }), [host, root, projectRoot]);
+
   return (
     <DraftStoreContext.Provider value={drafts}>
+    <PageEditorServicesContext.Provider value={editorServices}>
     <TrackersUIProvider dataSource={trackers} identity={null}>
       {session ? (
         <CollabDocsUIProvider session={session}>
@@ -144,6 +180,7 @@ export function App({ root, trackers, module }: AppProps) {
         <div className="flex h-full items-center justify-center text-sm text-nim-muted">{notice ?? 'Opening the wiki…'}</div>
       )}
     </TrackersUIProvider>
+    </PageEditorServicesContext.Provider>
     </DraftStoreContext.Provider>
   );
 }
@@ -181,6 +218,7 @@ function Shell({
 }) {
   const typeResolver = module.useBrowserTypeResolver('team');
   const { documents } = useCollabPagesState();
+  const [createMenu, setCreateMenu] = useState<CollabSidebarCreateMenu | null>(null);
 
   // Home is the first top-level page, as `nim wiki init` writes one.
   const home = useMemo(
@@ -197,7 +235,10 @@ function Shell({
     if (!openPageId) return undefined;
     setWorkspaceFileLinkOpener((href) => {
       const target = host.resolveLink(openPageId, href);
-      if (target.kind === 'outside') onNotice(`${target.path} is not a page in this wiki, so it cannot open here. Open it in your editor or in Nimbalyst.`);
+      // An attachment or other file beside the page opens from the server, as the browser shows it.
+      if (target.kind === 'outside' && !/\.md$/i.test(target.path) && !/^[a-z][a-z0-9+.-]*:/i.test(href)) {
+        window.open(wikiApi.pageFileUrl(openPageId, href.replace(/[?#].*$/, '')), '_blank', 'noopener');
+      } else if (target.kind === 'outside') onNotice(`${target.path} is not a page in this wiki, so it cannot open here. Open it in your editor or in Nimbalyst.`);
       else navigate(target);
     });
     return () => setWorkspaceFileLinkOpener(null);
@@ -206,6 +247,7 @@ function Shell({
   return (
     <div className="wiki-web-app flex h-full min-h-0">
       <aside className="wiki-web-sidebar flex w-[280px] shrink-0 flex-col border-r border-nim bg-nim-secondary">
+        <WikiCreateMenu menu={createMenu} />
         <div className="min-h-0 flex-1">
           {/* As the desktop's Wiki section: a compact section label and the Home / Search / Types rows above the tree. */}
           <CollabSidebar
@@ -222,6 +264,7 @@ function Shell({
               />
             )}
             typeResolver={typeResolver}
+            registerCreateMenu={setCreateMenu}
             onArchiveItem={async (itemId) => {
               await trackers.command({ type: 'archive-item', itemId, archive: true });
             }}

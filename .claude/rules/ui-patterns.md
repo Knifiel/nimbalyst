@@ -1,19 +1,18 @@
 ---
-globs:
-  - packages/electron/src/renderer/**/*.tsx
-  - packages/electron/src/renderer/**/*.css
-  - packages/runtime/src/editor/ui/**/*.tsx
-  - packages/runtime/src/editor/**/*.css
-  - packages/runtime/src/ui/**/*.tsx
-  - packages/runtime/src/ui/**/*.css
+paths:
+  - "packages/electron/src/renderer/**/*.tsx"
+  - "packages/electron/src/renderer/**/*.css"
+  - "packages/runtime/src/editor/**/*.tsx"
+  - "packages/runtime/src/editor/**/*.css"
+  - "packages/runtime/src/ui/**"
   - "**/tailwind.config.*"
   - "**/postcss.config.*"
-imports:
-  - docs/UI_PATTERNS.md
 ---
 
-When working with UI components, follow the patterns documented in the imported UI_PATTERNS.md file. Key points:
-- Use `@container` queries, not `@media` queries for responsive layouts
-- Use only the canonical `--nim-*` CSS variable names
-- Use ternary operators for mutually exclusive Tailwind class states
-- Content areas must opt-in to text selection with `select-text`
+Read [docs/UI_PATTERNS.md](../../docs/UI_PATTERNS.md) before changing UI. Key points:
+
+- `@container` queries, not `@media`, for responsive layouts
+- Only the canonical `--nim-*` CSS variable names
+- Ternaries for mutually exclusive Tailwind class states
+- Content areas opt in to selection with `select-text`
+- Every meaningful component root gets a stable kebab-case class ([REACT_DOM_MARKERS.md](../../docs/REACT_DOM_MARKERS.md))

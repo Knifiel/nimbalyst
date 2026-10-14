@@ -8,6 +8,11 @@ import type { CollabEditorMountOptions } from './types';
 
 /** The renderer is global, but document authority and preview ownership are not. */
 export const BrowserDocumentEmbedContext = React.createContext<CollabEditorMountOptions['renderDecisionArtifact']>(undefined);
+/** The mount's `renderFileEmbed`: embeds of files the document links to by path. */
+export const BrowserFileEmbedContext = React.createContext<CollabEditorMountOptions['renderFileEmbed']>(undefined);
+
+/** A link with a scheme is a document or a web page, never a file beside this one. */
+const isFilePath = (src: string) => !/^[a-z][a-z0-9+.-]*:/i.test(src);
 
 function sharedArtifact(src: string): string | null {
   try {
@@ -70,6 +75,7 @@ function BrowserPlacedViewNote({ src, label }: { src: string; label: string }): 
 
 function BrowserDocumentEmbed({ src, label, nodeKey, attrs }: EmbedFrameProps): React.JSX.Element {
   const render = React.useContext(BrowserDocumentEmbedContext);
+  const renderFile = React.useContext(BrowserFileEmbedContext);
   const onAttrsChange = usePlacedViewAttrs(nodeKey);
   const target = parsePlacedViewUrl(src);
   if (target) {
@@ -78,7 +84,7 @@ function BrowserDocumentEmbed({ src, label, nodeKey, attrs }: EmbedFrameProps): 
     return target.kind === 'type' ? <PlacedViewResizeFrame attrs={attrs} onAttrsChange={onAttrsChange}>{view}</PlacedViewResizeFrame> : <>{view}</>;
   }
   const artifact = sharedArtifact(src);
-  const preview = artifact ? render?.(nodeKey, artifact) : null;
+  const preview = artifact ? render?.(nodeKey, artifact) : isFilePath(src) ? renderFile?.({ src, label, attrs }) ?? null : null;
   return <div className="collab-bundle-document-embed" contentEditable={false}>
     {preview ?? <div className="collab-bundle-document-embed-unavailable">{label || 'Shared document'}: preview unavailable in this view.</div>}
   </div>;

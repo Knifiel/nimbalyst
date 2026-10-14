@@ -161,6 +161,8 @@ describe('GitCatFileBatch', () => {
     expect(batch.isRunning).toBe(false);
     const replacementRead = batch.read(sha, 'a.txt');
     expect(() => child.stdin.emit('error', brokenPipe)).not.toThrow();
+    // Output the dead child had already written must not answer the replacement's read.
+    child.stdout.emit('data', Buffer.from('0000000000000000000000000000000000000000 blob 6\n4a5800\n'));
     expect(await replacementRead).toBe('alpha\n');
   });
 });

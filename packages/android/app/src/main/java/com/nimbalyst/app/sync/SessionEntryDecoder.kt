@@ -26,7 +26,7 @@ internal data class ProcessedSessionEntry(
  * forward). The blob is also stored on the row, which is what survives a
  * restart; the cache only covers a row write that has not landed yet.
  */
-internal class SessionEntryDecoder(private val gson: Gson) {
+internal class SessionEntryDecoder(private val gson: Gson, private val payloads: SessionPayloadStore? = null) {
     private val lastPushedDraftAt = ConcurrentHashMap<String, Long>()
     private val remoteClientMetadata = ConcurrentHashMap<String, JsonObject>()
 
@@ -200,8 +200,16 @@ internal class SessionEntryDecoder(private val gson: Gson) {
         return true
     }
 
+    fun releasePayload(entry: ServerMessageEntry, sessionId: String) { payloads?.release(entry, sessionId) }
+
+    fun acceptPayloadPart(part: SessionPayloadPart, sessionId: String) {
+        checkNotNull(payloads) { "Transcript part storage unavailable" }.accept(part, sessionId)
+    }
+
     fun decodeMessage(entry: ServerMessageEntry, sessionId: String, crypto: CryptoManager): MessageEntity? {
-        val contentDecrypted = crypto.decryptOrNull(entry.encryptedContent, entry.iv) ?: return null
+        val contentDecrypted = if (entry.payload != null) {
+            checkNotNull(payloads) { "Transcript part storage unavailable" }.decrypt(entry, sessionId, crypto::decrypt)
+        } else crypto.decryptOrNull(entry.encryptedContent, entry.iv) ?: return null
         return MessageEntity(
             id = entry.id,
             sessionId = sessionId,
@@ -212,6 +220,7 @@ internal class SessionEntryDecoder(private val gson: Gson) {
             iv = entry.iv,
             contentDecrypted = contentDecrypted,
             metadataJson = entry.metadata?.toString(),
+            projectionJson = gson.toJson(SyncProjectionStamp(entry.projectionVersion ?: 0, entry.revision ?: 0)),
             createdAt = entry.createdAt
         )
     }

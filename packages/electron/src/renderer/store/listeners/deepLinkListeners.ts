@@ -1,6 +1,7 @@
 import type { SharedDocumentAnchor } from '../../../shared/documentDeepLinks';
 import { focusSharedDocumentAnchor } from './sharedDocumentAnchor';
 import { initConsoleLinkListeners } from './consoleLinkListeners';
+import { initDeepLinkNoticeListeners } from './deepLinkNoticeListeners';
 /**
  * Centralized IPC listeners for deep-link navigation events.
  *
@@ -129,6 +130,30 @@ function applyTrackerPayload(data: TrackerPayload): void {
       selectedItemId: data.trackerId,
     });
   }
+}
+
+/**
+ * Shared-document and folder links are read only through main's consuming
+ * queue: the live event is a bare signal naming the workspace. Each consume is
+ * numbered when issued, and main answers in issue order, so a result older than
+ * one already applied is a link the user has been taken past and is dropped.
+ */
+const sharedLinkSequence = {
+  document: { issued: 0, applied: 0 },
+  folder: { issued: 0, applied: 0 },
+};
+
+async function consumeSharedLink(kind: 'document' | 'folder', workspacePath: string): Promise<void> {
+  const sequence = sharedLinkSequence[kind];
+  const issued = ++sequence.issued;
+  const pending = await window.electronAPI.invoke(
+    kind === 'document' ? 'deep-link:consume-pending-shared-doc' : 'deep-link:consume-pending-shared-folder',
+    workspacePath,
+  ) as SharedDocPayload | SharedFolderPayload | null;
+  if (!pending || issued < sequence.applied) return;
+  sequence.applied = issued;
+  if (kind === 'document') applySharedDocPayload(pending as SharedDocPayload);
+  else applySharedFolderPayload(pending as SharedFolderPayload);
 }
 
 /**
@@ -283,14 +308,12 @@ async function drainPendingFor(workspacePath: string | null): Promise<void> {
   if (!workspacePath) return;
   const feedbackGeneration = orgFeedbackApplyGeneration;
   try {
-    const [docPending, folderPending, trackerPending, feedbackPending] = await Promise.all([
-      window.electronAPI.invoke('deep-link:consume-pending-shared-doc', workspacePath) as Promise<SharedDocPayload | null>,
-      window.electronAPI.invoke('deep-link:consume-pending-shared-folder', workspacePath) as Promise<SharedFolderPayload | null>,
+    const [, , trackerPending, feedbackPending] = await Promise.all([
+      consumeSharedLink('document', workspacePath),
+      consumeSharedLink('folder', workspacePath),
       window.electronAPI.invoke('deep-link:consume-pending-tracker', workspacePath) as Promise<TrackerPayload | null>,
       window.electronAPI.invoke('deep-link:consume-pending-org-feedback-request', workspacePath) as Promise<OrgFeedbackRequestPayload | null>,
     ]);
-    if (docPending) applySharedDocPayload(docPending);
-    if (folderPending) applySharedFolderPayload(folderPending);
     if (trackerPending) applyTrackerPayload(trackerPending);
     // A live event that landed while this drain was in flight carries the newer
     // request; letting the drained one through would move the Inbox selection
@@ -313,41 +336,26 @@ export function initDeepLinkListeners(): () => void {
   // instead of the browser, clicked or arriving as `nimbalyst://console/...`.
   cleanups.push(initConsoleLinkListeners());
 
-  // Live: shared document link routed to this window.
+  // Shared-document, folder and feedback-request links main could not route,
+  // queued so a window that is still mounting shows them too.
+  cleanups.push(initDeepLinkNoticeListeners());
+
+  // Live: a shared document or folder link was routed to this window. The
+  // event names the workspace only; the link is read through the queue.
   cleanups.push(
-    window.electronAPI.on('deep-link:open-shared-document', (data: SharedDocPayload) => {
-      applySharedDocPayload(data);
+    window.electronAPI.on('deep-link:shared-document-available', (data: { workspacePath: string }) => {
+      if (!data?.workspacePath) return;
+      void consumeSharedLink('document', data.workspacePath).catch((err) => {
+        console.error('[DeepLink] Failed to consume shared document link:', err);
+      });
     })
   );
-
-  // Live: shared folder link routed to this window.
   cleanups.push(
-    window.electronAPI.on('deep-link:open-shared-folder', (data: SharedFolderPayload) => {
-      applySharedFolderPayload(data);
-    })
-  );
-
-  // Live: no known workspace matches the folder link's orgId, or not signed in.
-  cleanups.push(
-    window.electronAPI.on('deep-link:shared-folder-not-available', (data: {
-      folderId: string;
-      orgId: string;
-      reason?: 'not-authenticated' | 'no-workspace';
-    }) => {
-      if (data?.reason === 'not-authenticated') {
-        errorNotificationService.showWarning(
-          'Sign in required',
-          'Sign in to your Nimbalyst team account to open this shared folder.',
-          { duration: 6000 }
-        );
-      } else {
-        errorNotificationService.showWarning(
-          'No matching workspace',
-          'You do not have a workspace open for the team that owns this folder.',
-          { duration: 6000 }
-        );
-      }
-      console.warn('[DeepLink] No workspace available for shared folder:', data);
+    window.electronAPI.on('deep-link:shared-folder-available', (data: { workspacePath: string }) => {
+      if (!data?.workspacePath) return;
+      void consumeSharedLink('folder', data.workspacePath).catch((err) => {
+        console.error('[DeepLink] Failed to consume shared folder link:', err);
+      });
     })
   );
 
@@ -372,30 +380,6 @@ export function initDeepLinkListeners(): () => void {
       ).catch((err) => {
         console.error('[DeepLink] Failed to clear pending org feedback request:', err);
       });
-    })
-  );
-
-  // Live: no known workspace matches the link's orgId, or the user isn't signed in.
-  cleanups.push(
-    window.electronAPI.on('deep-link:shared-document-not-available', (data: {
-      documentId: string;
-      orgId: string;
-      reason?: 'not-authenticated' | 'no-workspace';
-    }) => {
-      if (data?.reason === 'not-authenticated') {
-        errorNotificationService.showWarning(
-          'Sign in required',
-          'Sign in to your Nimbalyst team account to open this shared document.',
-          { duration: 6000 }
-        );
-      } else {
-        errorNotificationService.showWarning(
-          'No matching workspace',
-          'You do not have a workspace open for the team that owns this document.',
-          { duration: 6000 }
-        );
-      }
-      console.warn('[DeepLink] No workspace available for shared doc:', data);
     })
   );
 

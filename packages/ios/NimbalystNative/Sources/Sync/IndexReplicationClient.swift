@@ -21,13 +21,6 @@ public struct IndexCoverage: Equatable, Sendable {
     public var hasError: Bool = false
     public var skippedRowCount: Int = 0
 
-    public var skippedRowsNotice: String? {
-        guard skippedRowCount > 0 else { return nil }
-        let subject = skippedRowCount == 1 ? "session was" : "sessions were"
-        let verb = skippedRowCount == 1 ? "is" : "are"
-        return "\(skippedRowCount) synced \(subject) written with a different sync key and \(verb) not shown here. Re-pair this phone from your computer."
-    }
-
     public enum Compatibility: Sendable, Equatable {
         case unknown
         /// Versioned replication negotiated.

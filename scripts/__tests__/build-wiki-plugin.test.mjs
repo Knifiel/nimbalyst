@@ -8,7 +8,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { applyBranch, buildGeneratedFiles, checkGenerated, checkToolNames, writeGenerated } from '../build-wiki-plugin.mjs';
+import { applyBranch, buildGeneratedFiles, checkGenerated, checkManifestVersions, checkToolNames, writeGenerated } from '../build-wiki-plugin.mjs';
+import { unbumpedChanges } from '../stage-wiki-repo.mjs';
 
 const NUDGE = fileURLToPath(new URL('../../plugins/nimbalyst-wiki/scripts/keeper-nudge.mjs', import.meta.url));
 const REMOTE_SKILLS = fileURLToPath(new URL('../../plugins/nimbalyst-wiki/skills', import.meta.url));
@@ -250,4 +251,40 @@ test('nudge keeps its markers in a private per-user state dir, not the shared te
   const home = path.join(root, 'home');
   assert.equal(runNudge(root, { session_id: 'h1', transcript_path: commit }, { NIMBALYST_WIKI_NUDGE_STATE_DIR: '', XDG_STATE_HOME: '', HOME: home }).decision, 'block');
   assert.ok(existsSync(path.join(home, '.claude', 'state', 'nimbalyst-wiki', 'h1.nudged')));
+});
+
+function fixturePlugin(dir, version, script = 'v1') {
+  for (const manifest of ['.claude-plugin', '.codex-plugin']) {
+    mkdirSync(path.join(dir, manifest), { recursive: true });
+    writeFileSync(path.join(dir, manifest, 'plugin.json'), JSON.stringify({ version }));
+  }
+  mkdirSync(path.join(dir, 'scripts'), { recursive: true });
+  writeFileSync(path.join(dir, 'scripts', 'server.mjs'), script);
+  writeFileSync(path.join(dir, 'README.md'), `readme ${script}`);
+}
+
+test('the Claude Code and Codex manifests must carry the same version', (t) => {
+  const root = tempRoot(t);
+  fixturePlugin(root, '0.5.0');
+  assert.deepEqual(checkManifestVersions(root), []);
+  writeFileSync(path.join(root, '.codex-plugin', 'plugin.json'), JSON.stringify({ version: '0.4.0' }));
+  assert.match(checkManifestVersions(root)[0], /\.claude-plugin\/plugin\.json is 0\.5\.0, \.codex-plugin\/plugin\.json is 0\.4\.0/);
+});
+
+test('staging refuses a changed plugin under the version already staged', (t) => {
+  const root = tempRoot(t);
+  const plugin = path.join(root, 'plugin');
+  const staged = path.join(root, 'staged');
+  fixturePlugin(staged, '0.5.0', 'v1');
+
+  fixturePlugin(plugin, '0.5.0', 'v1');
+  assert.deepEqual(unbumpedChanges(plugin, staged), [], 'unchanged plugin restages');
+  writeFileSync(path.join(plugin, 'README.md'), 'only the readme changed');
+  assert.deepEqual(unbumpedChanges(plugin, staged), [], 'a README change needs no bump');
+
+  fixturePlugin(plugin, '0.5.0', 'v2');
+  assert.deepEqual(unbumpedChanges(plugin, staged), ['scripts/server.mjs']);
+  fixturePlugin(plugin, '0.6.0', 'v2');
+  assert.deepEqual(unbumpedChanges(plugin, staged), [], 'a bumped version may change anything');
+  assert.deepEqual(unbumpedChanges(plugin, path.join(root, 'empty')), [], 'a first staging has nothing to compare');
 });

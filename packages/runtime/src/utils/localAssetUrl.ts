@@ -8,9 +8,10 @@
  * must route local-file image rendering through it.
  *
  * Runtime cannot import from the Electron package, so the Electron renderer
- * registers `nimAssetUrl` here at startup. Non-Electron consumers (mobile)
- * fall back to `file://`, which works because mobile uses Capacitor's file
- * provider rather than Chromium's strict file:// origin policy.
+ * registers `nimAssetUrl` here at startup. Non-Electron consumers fall back to
+ * `file://`. The iOS transcript WKWebView cannot read desktop paths at all, so
+ * anything it must show (e.g. display_to_user images) has to arrive as inline
+ * bytes on the sync path instead.
  */
 
 let registeredConverter: (absolutePath: string) => string = (absolutePath) =>

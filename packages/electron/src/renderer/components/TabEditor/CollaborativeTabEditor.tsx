@@ -47,7 +47,8 @@ import { LexicalDiffHeaderAdapter } from '../UnifiedDiffHeader';
 import { PageInfoPanel } from '../PageInfo/PageInfoPanel';
 import { useDocumentDecisionsConfig } from './useDocumentDecisionsConfig';
 import { DecisionOutline } from '@nimbalyst/runtime/editor/plugins/DecisionPlugin/DecisionOutline';
-import { DocumentSyncProvider, CollabHistoryClient, LocalDocumentReplica } from '@nimbalyst/runtime/sync';
+import { DocumentSyncProvider, CollabHistoryClient, LocalDocumentReplica, type DocumentSyncStatus } from '@nimbalyst/runtime/sync';
+import { CollabHydrationWatch, type CollabHydrationFailure } from './collabHydrationWatch';
 import { CollabLexicalProvider } from '@nimbalyst/runtime/collab-lexical';
 import { createRevisionAdapterFromCollabContent } from '@nimbalyst/runtime/sync';
 import { historyDialogFileAtom } from '../../store/atoms/historyDialog';
@@ -200,8 +201,35 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 // status atom directly so its text stays live without re-rendering the editor.
 // ---------------------------------------------------------------------------
 
-const CollabHydrationOverlay: React.FC<{ filePath: string }> = ({ filePath }) => {
+const CollabHydrationOverlay: React.FC<{
+  filePath: string;
+  /** The page cannot load (refused, unreachable, or failed to open): say so, with Retry. */
+  failure: CollabHydrationFailure | null;
+  onRetry: () => void;
+}> = ({ filePath, failure, onRetry }) => {
   const status = useAtomValue(collabProductStatusAtom(filePath));
+  if (failure) {
+    return (
+      <div
+        className="collab-hydration-overlay collab-hydration-failed absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 text-nim-muted"
+        style={{ background: 'var(--nim-bg)' }}
+        role="alert"
+        data-testid="collab-hydration-failed"
+      >
+        <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>
+          {failure.kind === 'no-access' ? 'lock' : 'cloud_off'}
+        </span>
+        <span className="text-sm text-nim select-text">{failure.message}</span>
+        <button
+          type="button"
+          className="px-3 py-1 rounded border border-nim bg-transparent text-nim text-sm cursor-pointer hover:bg-nim-hover"
+          onClick={onRetry}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
   return (
     <div
       className="collab-hydration-overlay absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 text-nim-muted"
@@ -455,6 +483,11 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
   // 'connected'/'replaying'). Drives the hydration-gate overlay. One-time flip.
   const [hasHydrated, setHasHydrated] = useState(false);
   const hasHydratedRef = useRef(false);
+  // Until hydration: whether the room cannot connect, as opposed to being slow.
+  const [hydrationFailure, setHydrationFailure] = useState<CollabHydrationFailure | null>(null);
+  const hydrationWatchRef = useRef(new CollabHydrationWatch());
+  // Bumped by Retry when there is no provider to reconnect (opening it failed).
+  const [openAttempt, setOpenAttempt] = useState(0);
   useEffect(() => {
     hasHydratedRef.current = hasHydrated;
   }, [hasHydrated]);
@@ -487,6 +520,13 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
     // console.log('[CollaborativeTabEditor] Acquiring replica, initialContent:', !!activeConfig.initialContent);
     setProviderEpoch(0);
     setHasHydrated(false);
+    setHydrationFailure(null);
+    const hydrationWatch = new CollabHydrationWatch();
+    hydrationWatchRef.current = hydrationWatch;
+    const observeHydration = (status: DocumentSyncStatus, provider: DocumentSyncProvider | null) => {
+      const failure = hydrationWatch.observe(status, provider?.getLastAuthRejectionStatus() ?? null);
+      if (failure) setHydrationFailure(failure);
+    };
     resetCollabDocumentState(filePath);
     const tabOpenedAt = performance.now();
     const healthTracker = new CollaborationHealthAttemptTracker(
@@ -591,6 +631,7 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
         },
         onStatusChange: (status) => {
           observeHealth(status);
+          observeHydration(status, syncProvider);
           publishCollabTransportState(filePath, status);
           setCollabOutboxState(
             filePath,
@@ -681,6 +722,7 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
       },
       onTransportStateChange: (status) => {
         observeHealth(status);
+        observeHydration(status, syncProviderRef.current);
         // console.log('[CollaborativeTabEditor] Transport status change:', status);
         publishCollabTransportState(filePath, status);
         if (status === 'connected' || status === 'replaying') {
@@ -857,6 +899,10 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
       if (!cancelled) {
         setProviderEpoch(0);
         setCollabReplicaState(filePath, 'unavailable');
+        setHydrationFailure({
+          kind: 'open-failed',
+          message: `This page could not be opened: ${error instanceof Error ? error.message : String(error)}`,
+        });
       }
     });
 
@@ -880,7 +926,15 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
       resetCollabDocumentState(filePath);
       store.set(collabAwarenessAtom(filePath), new Map());
     };
-  }, [activeConfig, ensureBootstrapRevision, filePath, getDocReadWatermark, offlineReplicaEnabled, recordFirstLocalEdit, recordOfflineMetric]);
+  }, [activeConfig, ensureBootstrapRevision, filePath, getDocReadWatermark, offlineReplicaEnabled, recordFirstLocalEdit, recordOfflineMetric, openAttempt]);
+
+  const retryHydration = useCallback(() => {
+    hydrationWatchRef.current.reset();
+    setHydrationFailure(null);
+    const provider = syncProviderRef.current;
+    if (provider) provider.reconnectNow();
+    else setOpenAttempt((attempt) => attempt + 1);
+  }, []);
 
   // Build the provider factory for CollaborationPlugin
   // This function is called by CollaborationPlugin with a doc ID and yjsDocMap.
@@ -1482,8 +1536,8 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
         {/* NIM-949: gate editing until the room hydrates, so a server-only doc
             never presents a blank editable surface during a connection/auth blip. */}
-        {providerEpoch > 0 && !hasHydrated && (
-          <CollabHydrationOverlay filePath={filePath} />
+        {(providerEpoch > 0 || hydrationFailure) && !hasHydrated && (
+          <CollabHydrationOverlay filePath={filePath} failure={hydrationFailure} onRetry={retryHydration} />
         )}
         {providerEpoch === 0 ? (
           <div className="flex items-center justify-center h-full text-nim-muted">

@@ -449,6 +449,14 @@ export declare class TrackerSyncEngine {
     private handleBatchAck;
     private handleSchemaDelta;
     private handleSchemaAck;
+    private notifySchemaSettled;
+    /**
+     * Answer, as refused, schema mutations the room will never ack. The codes
+     * are temporary, so a desktop row is not retired and goes out again on the
+     * next connect; a browser creation waiting on its answer hears now instead
+     * of never.
+     */
+    private refuseInFlightSchemaMutations;
     private handleSavedViewDelta;
     private handleSavedViewAck;
     /**

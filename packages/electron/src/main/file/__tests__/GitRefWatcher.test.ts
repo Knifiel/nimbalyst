@@ -27,7 +27,7 @@ const {
 }));
 
 vi.mock('simple-git', () => ({
-  default: () => {
+  simpleGit: () => {
     const git = { status: mockStatus, log: mockLog, env: () => git };
     return git;
   },

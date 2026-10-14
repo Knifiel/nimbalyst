@@ -8,7 +8,8 @@ import { flagBool, flagInt, flagStr, parseArgs } from '../cli/parse.js';
 import { CliError, ExitCode, usageError } from '../cli/exitCodes.js';
 import { openLocalWiki } from '../localWiki/open.js';
 import { installHint, resolveWikiWebAssets } from './assets.js';
-import { startWikiServer, type WikiServer } from './server.js';
+import type { WikiServer } from './server.js';
+import { defaultSessionStore, startRememberedWikiServer } from './session.js';
 
 export interface WikiServeContext {
   version: string;
@@ -20,7 +21,7 @@ export interface WikiServeContext {
   err?: (text: string) => void;
 }
 
-function openBrowser(url: string): void {
+export function openBrowser(url: string): void {
   const [command, args] =
     process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', url]] : ['xdg-open', [url]];
   try {
@@ -62,13 +63,11 @@ export async function runWikiServe(argv: ParsedArgs | string[], ctx: WikiServeCo
 
   let server: WikiServer;
   try {
-    server = await startWikiServer({
-      wiki: opened.wiki,
-      assetsDir: resolution.assets.dir,
-      port,
-      version: ctx.version,
-      projectRoot: opened.projectRoot,
-    });
+    // Same port and token as the last run, so tabs left open across a restart keep working.
+    server = await startRememberedWikiServer(
+      { wiki: opened.wiki, assetsDir: resolution.assets.dir, port, version: ctx.version, projectRoot: opened.projectRoot },
+      defaultSessionStore(opened.wiki.root),
+    );
   } catch (e) {
     opened.wiki.close();
     if ((e as NodeJS.ErrnoException).code === 'EADDRINUSE') throw new CliError(ExitCode.CONNECTION, `Port ${port} is in use; pick another with --port or omit it`);
