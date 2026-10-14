@@ -58,8 +58,10 @@ NIMBALYST_RENDERER_HOST=127.0.0.1 VITE_PORT="$PORT" node ./scripts/renderer-dev-
 RENDERER_PID=$!
 trap 'kill $RENDERER_PID 2>/dev/null || true' EXIT
 
+RENDERER_READY=0
 for _ in $(seq 1 240); do
   if curl -s -m 2 -o /dev/null "$RENDERER_URL/"; then
+    RENDERER_READY=1
     break
   fi
   if ! kill -0 "$RENDERER_PID" 2>/dev/null; then
@@ -69,7 +71,7 @@ for _ in $(seq 1 240); do
   fi
   sleep 0.5
 done
-if ! curl -s -m 2 -o /dev/null "$RENDERER_URL/"; then
+if [ "$RENDERER_READY" = "0" ]; then
   echo "[e2e-host] The renderer server did not answer within 120s." >&2
   exit 1
 fi
