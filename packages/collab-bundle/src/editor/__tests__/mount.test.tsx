@@ -69,11 +69,11 @@ describe('in-memory collaborative editor harness', () => {
       withHeadlessLexicalBridge(yDocument, { nodes: HeadlessBodyNodes }, ({ editor }) => {
         editor.update(() => $getRoot().append($createEmbeddedFileNode({
           src: `nimbalyst://doc/preview-${scope}?orgId=org-${scope}`,
-          label: `Preview ${scope}`, attrs: { embedType: '.mockup.html' },
+          label: `Preview ${scope}`, attrs: { embedType: '.mockup.html', width: '640', height: '480' },
         })), { discrete: true });
       });
       const element = document.createElement('div'); document.body.append(element);
-      const render = vi.fn((_key: string, artifact: string) => <div data-testid="live-subject-preview">{scope}: {artifact}</div>);
+      const render = vi.fn((_key: string, artifact: string, _embed?: unknown) => <div data-testid="live-subject-preview">{scope}: {artifact}</div>);
       const handle = mountCollabEditor({ element, source: { kind: 'in-memory', document: yDocument }, user: { memberId: asTeamMemberId(scope), name: scope }, renderDecisionArtifact: render });
       mountedHandles.push(handle);
       return { element, handle, render, scope };
@@ -83,6 +83,8 @@ describe('in-memory collaborative editor harness', () => {
       await waitFor(() => expect(element.querySelector('[data-testid="live-subject-preview"]')?.textContent).toBe(`${scope}: collab://org:org-${scope}:doc:preview-${scope}`));
       expect(element.querySelector('[data-testid="embed-frame-placeholder"]')).toBeNull();
     }
+    // The host sizes the preview from the link title, as the desktop embed does.
+    expect(mounts[0]!.render.mock.calls[0]?.[2]).toEqual({ label: 'Preview one', attrs: { embedType: '.mockup.html', width: '640', height: '480' } });
     await act(async () => mounts[0]!.handle.destroy());
     await act(async () => mounts[1]!.handle.setReadOnly(true));
     await settle();
@@ -188,6 +190,22 @@ describe('in-memory collaborative editor harness', () => {
     fireEvent.click(option);
     fireEvent.click(element.querySelector('[data-testid="decision-answer"]')!);
     await waitFor(() => expect(yDocument.getMap('decisions').get('browser-q\x1fteam-reader')).toMatchObject({ answer: { type: 'singleSelect', selectedId: 'yes' } }));
+  });
+
+  it('answers a decision on a page with no room, like a local file, instead of waiting for answer status', async () => {
+    const yDocument = new Y.Doc();
+    MarkdownCollabContentAdapter.seedFromFile(yDocument, '```decision\nask: Retry on weekends?\ntype: singleSelect\noptions:\n  - id: always\n    label: Always\n  - id: never\n    label: Never\n```');
+    const element = document.createElement('div'); document.body.append(element);
+    const handle = mountCollabEditor({ element, source: { kind: 'in-memory', document: yDocument }, user: { memberId: asTeamMemberId('local'), name: 'You' } });
+    mountedHandles.push(handle);
+    await settle();
+    await waitFor(() => expect(element.querySelector('button[data-testid="decision-option-row"]')).not.toBeNull());
+    expect(element.textContent).not.toContain('Loading answer status');
+    fireEvent.click([...element.querySelectorAll('button')].find((button) => button.textContent?.includes('Always'))!);
+    fireEvent.click(element.querySelector('[data-testid="decision-answer"]')!);
+    await waitFor(() => expect(handle.getMarkdown()).toMatch(/\nresolved: always\n/));
+    expect(handle.getMarkdown()).toMatch(/\nid: dcn-[0-9a-f]{6}\n/);
+    expect(yDocument.getMap('decisions').size).toBe(0);
   });
 
   it('writes references inserted in a team room as that project\'s console links', () => {

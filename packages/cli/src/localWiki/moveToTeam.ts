@@ -3,21 +3,29 @@
  * shared by `nim wiki move-to-team` and the `moveLocalWikiToTeam` MCP tool.
  * Page bodies go from the files to the server and never into the report.
  *
+ * Editor pages (drawings, spreadsheets, ...) move when the editors' document
+ * code is installed (`@nimbalyst/wiki-web`'s editor models); without it they
+ * are listed as not moved before anything is sent. Files markdown pages link
+ * to (images, attachments) are uploaded into those pages' team documents.
+ *
  * Nothing local is deleted or moved (.claude/rules/destructive-data-paths.md):
  * the files stay as the recoverable copy. Only after a verified import (every
  * page reported, no errors, Home reads back) is the move recorded as
  * `migratedTo` in `.nimbalyst/local-wiki.json` and a banner line put on the
  * local Home. Until then a re-run resumes through the server's upsert.
  */
+import * as path from 'node:path';
 import { CliError, ExitCode } from '../cli/exitCodes.js';
 import { resolveServer } from '../cloud/config.js';
 import { loadCredentials } from '../cloud/credentials.js';
 import { callTool } from '../cloud/pagesClient.js';
 import { resolveTeamsTarget, type ProjectPin } from '../cloud/repo.js';
+import { createTeamContentWriter, type TeamContentWriter } from '../cloud/teamContent.js';
 import { importToTeam, pacedCaller, planBatches, planTypeBatches, type ImportDeps, type ImportError, type ToolCaller } from '../cloud/teamImport.js';
+import type { EditorModels, EditorModelsLoader } from '../mcp/editorTools.js';
 import { readMigratedTo, writeMigratedTo, type MigratedTo } from './locate.js';
 import type { OpenedWiki } from './open.js';
-import { collectLocalWiki, MIGRATION_BANNER_PREFIX, migrationBanner } from './teamExport.js';
+import { collectLocalWiki, MIGRATION_BANNER_PREFIX, migrationBanner, type CollectOptions } from './teamExport.js';
 
 export interface MoveOptions {
   project?: ProjectPin;
@@ -28,19 +36,27 @@ export interface MoveDeps extends Omit<ImportDeps, 'call'> {
   /** The team server call; default `callTool` against `NIM_SERVER` with the `nim login` credential. */
   call?: ToolCaller;
   clock?: () => Date;
+  /** The editors' document code; without it editor pages stay in the local wiki. */
+  loadEditorModels?: EditorModelsLoader;
+  /** Writes editor pages and uploads linked files; default a writer over the team server with a `pages_import_token` credential. */
+  content?: TeamContentWriter;
 }
 
 export interface MoveReport {
   dryRun: boolean;
   project: { orgId: string; projectId: string; projectName?: string } | null;
-  counts: { pages: number; typedPages: number; types: number; skipped: number };
-  /** Editor pages and the like that have no team import yet; still in the local wiki. */
+  counts: { pages: number; editorPages: number; typedPages: number; types: number; files: number; skipped: number };
+  /** Pages the move cannot take (an editor page with no team editor, or without the editors' document code); still in the local wiki. */
   skipped: Array<{ title: string; reason: string }>;
   batches: number;
   created?: number;
   updated?: number;
   linksRewritten?: number;
+  editorPagesWritten?: number;
+  filesUploaded?: number;
   errors?: Array<ImportError & { title?: string }>;
+  /** Links left as written without failing the move: a missing file, a file over the upload limit. */
+  warnings?: Array<ImportError & { title?: string }>;
   verified?: boolean;
   homeLink?: string;
   migratedTo?: MigratedTo;
@@ -56,13 +72,28 @@ export class MoveRefusal extends CliError {
   }
 }
 
+/** The editors' document code, or why it is not available (it is optional: without it only editor pages stay behind). */
+async function editorModels(opened: OpenedWiki, load: EditorModelsLoader | undefined): Promise<{ models: EditorModels | null; editorTypes: CollectOptions['editorTypes'] }> {
+  if (!load) return { models: null, editorTypes: { unavailable: "the editors' document code is not available here" } };
+  try {
+    const models = await load(opened);
+    return { models, editorTypes: new Set(models.editorCodecs.documentTypes) };
+  } catch (err) {
+    return { models: null, editorTypes: { unavailable: err instanceof Error ? err.message : String(err) } };
+  }
+}
+
 export async function moveLocalWikiToTeam(opened: OpenedWiki, options: MoveOptions, deps: MoveDeps = {}): Promise<MoveReport> {
-  const exported = await collectLocalWiki(opened.wiki);
+  const { models, editorTypes } = await editorModels(opened, deps.loadEditorModels);
+  const wikiPrefix = path.relative(opened.projectRoot, opened.dir).split(path.sep).join('/');
+  const exported = await collectLocalWiki(opened.wiki, { editorTypes, wikiPrefix, wikiDir: opened.dir });
   const typedPages = exported.pages.filter((page) => page.kind === 'typedPage').length;
+  const editorPages = exported.editorFiles.size;
+  const files = [...exported.linkedFiles.values()].reduce((n, list) => n + list.filter((file) => file.abs).length, 0);
   const report: MoveReport = {
     dryRun: options.dryRun === true,
     project: null,
-    counts: { pages: exported.pages.length - typedPages, typedPages, types: exported.types.length, skipped: exported.skipped.length },
+    counts: { pages: exported.pages.length - typedPages - editorPages, editorPages, typedPages, types: exported.types.length, files, skipped: exported.skipped.length },
     skipped: exported.skipped.map(({ title, reason }) => ({ title, reason })),
     batches: planTypeBatches(exported.types).batches.length + planBatches(exported.pages).batches.length,
   };
@@ -98,7 +129,9 @@ export async function moveLocalWikiToTeam(opened: OpenedWiki, options: MoveOptio
   if (report.dryRun) return { ...report, homeLink: typeof status.homeLink === 'string' ? status.homeLink : undefined };
 
   const wikiId = await opened.wiki.wikiId();
-  const outcome = await importToTeam(exported, { repo: target.repo, project, wikiId }, call);
+  const needsContent = exported.editorFiles.size > 0 || exported.linkedFiles.size > 0;
+  const content = deps.content ?? (needsContent ? createTeamContentWriter({ server, call, base: { ...base, project }, models }) : undefined);
+  const outcome = await importToTeam(exported, { repo: target.repo, project, wikiId }, call, content);
   const titles = new Map(exported.pages.map((page) => [page.localId, page.title]));
   const home = exported.homeLocalId ? outcome.idMap[exported.homeLocalId] : undefined;
   // The imported Home is the user's own; the project's seeded Home stays as it is, unlinked from here.
@@ -108,7 +141,10 @@ export async function moveLocalWikiToTeam(opened: OpenedWiki, options: MoveOptio
     created: outcome.created,
     updated: outcome.updated,
     linksRewritten: outcome.linksRewritten,
+    editorPagesWritten: outcome.editorPagesWritten,
+    filesUploaded: outcome.filesUploaded,
     errors: outcome.errors.map((error) => ({ ...error, title: titles.get(error.localId) })),
+    warnings: outcome.warnings.map((warning) => ({ ...warning, title: titles.get(warning.localId) })),
     homeLink,
   });
 

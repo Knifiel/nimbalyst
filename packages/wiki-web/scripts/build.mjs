@@ -13,11 +13,13 @@
  *
  * Last, the editors' pure document code is bundled for Node into
  * `dist/models/editor-models.mjs`, which `nim mcp` loads to edit mind map and
- * drawing pages as files (see `editor-models.entry.mjs`).
+ * drawing pages as files, and `nim wiki move-to-team` loads to write editor
+ * pages into team documents (see `editor-models.entry.mjs`).
  */
 import { spawnSync } from 'node:child_process';
 import { build as esbuild } from 'esbuild';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PINNED_EXTENSIONS, pinnedExtensionEnvPrefix } from '@nimbalyst/web-editors/pinned';
@@ -74,10 +76,19 @@ await esbuild({
   format: 'esm',
   target: 'node20',
   logLevel: 'warning',
+  // The document room client reads Vite's env for its diagnostics switch; nim is a production build.
+  define: { 'import.meta.env.DEV': 'false', 'import.meta.env.VITE_COLLAB_CONNECTION_DIAGNOSTICS': '"off"' },
   alias: {
     '@nimbalyst/mindmap-model': path.join(roots.mindmap, 'src/model.ts'),
     '@nimbalyst/excalidraw-elements': path.join(roots.excalidraw, 'src/utils/elementFactory.ts'),
     '@nimbalyst/excalidraw-layout': path.join(roots.excalidraw, 'src/layout/LayoutEngine.ts'),
+    '@nimbalyst/mindmap-codec': path.join(roots.mindmap, 'src/collab/codec.ts'),
+    '@nimbalyst/canvas-codec': path.join(packageRoot, '../runtime/src/canvas/canvasCollabCodec.ts'),
+    '@nimbalyst/html-page-codec': path.join(packageRoot, '../runtime/src/ui/htmlEmbed/htmlPageCodec.ts'),
+    '@nimbalyst/document-sync': path.join(packageRoot, '../runtime/src/sync/DocumentSync.ts'),
+    // One yjs for every codec. The mind map checkout has its own node_modules,
+    // and a Y.Map from a second copy fails inside a Y.Doc from the first.
+    yjs: path.join(path.dirname(createRequire(path.join(packageRoot, 'package.json')).resolve('yjs')), 'yjs.mjs'),
   },
 });
 const licenses = writeThirdPartyLicenses({ distDir: path.join(packageRoot, 'dist'), editorRoots: roots });

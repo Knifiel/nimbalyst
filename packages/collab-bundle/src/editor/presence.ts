@@ -2,6 +2,7 @@ import {
   asTeamMemberId,
   type TeamMemberId,
 } from '@nimbalyst/runtime/auth/jwtScopes';
+import { collaboratorDisplayName } from '@nimbalyst/runtime/sync/collaboratorDisplayName';
 import type {
   AwarenessState,
   DocumentSyncStatus,
@@ -60,14 +61,13 @@ function cursorColorForMember(memberId: TeamMemberId): string {
 
 /**
  * Resolve the same human identity desktop broadcasts for shared markdown:
- * roster name, then roster email, then the team-scoped member id.
+ * roster name, then roster email, then a generic label, never the member id.
  */
 export function resolveCollabEditorUser(user: CollabEditorUser): ResolvedCollabEditorUser {
-  const name = user.name?.trim();
   const email = user.email?.trim();
   return {
     memberId: user.memberId,
-    displayName: name || email || user.memberId,
+    displayName: collaboratorDisplayName(user),
     email: email || null,
     role: user.role ?? null,
     cursorColor: user.cursorColor?.trim() || cursorColorForMember(user.memberId),
@@ -80,7 +80,7 @@ function participantFromAwareness(
 ): CollabEditorParticipant {
   return {
     memberId: asTeamMemberId(memberId),
-    displayName: state.user.name?.trim() || memberId,
+    displayName: collaboratorDisplayName({ name: state.user.name, memberId }),
     cursorColor: state.user.color,
     hasSelection: Boolean(state.cursor),
   };
@@ -115,6 +115,8 @@ export class CollabPresenceSurface implements AwarenessSyncSurface {
   private readonly sweepTimer: ReturnType<typeof setInterval>;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private localState: AwarenessState | null = null;
+  /** Set once the host knows a better name than the one the editor mounted with. */
+  private displayName: string | null = null;
   private remoteStates = new Map<string, AwarenessState>();
   private lastPresenceFingerprint = '';
   private active = true;
@@ -160,6 +162,24 @@ export class CollabPresenceSurface implements AwarenessSyncSurface {
 
   sendAwarenessDeparture(user: AwarenessState['user']): boolean {
     return this.deactivate(user);
+  }
+
+  /**
+   * Relabel this participant without remounting the editor. The editor keeps
+   * publishing the name it mounted with; every state passing through here is
+   * rewritten, and the current one is re-sent so peers see it now.
+   */
+  setDisplayName(displayName: string): void {
+    if (this.destroyed || displayName === this.displayName) return;
+    this.displayName = displayName;
+    if (!this.localState) return;
+    this.localState = this.withFreshness(this.localState);
+    if (!this.active) return;
+    if (this.delegate.sendAwareness) {
+      void this.delegate.sendAwareness(this.localState);
+    } else {
+      this.delegate.setLocalAwareness(this.localState);
+    }
   }
 
   /** Toggle whether this mounted editor is currently present in the room. */
@@ -220,6 +240,7 @@ export class CollabPresenceSurface implements AwarenessSyncSurface {
       ...state,
       user: {
         ...state.user,
+        ...(this.displayName !== null ? { name: this.displayName } : {}),
         nimbalystPresence: {
           version: 1,
           updatedAt: this.now(),

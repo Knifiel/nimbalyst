@@ -223,6 +223,11 @@ export interface EmbedFrameShellProps {
   /** `data-*` markers on the frame root (extension id, kind of page). */
   markers: Record<string, string>;
   loadingText: string;
+  /**
+   * Live without selecting first (an HTML page): no shield over the editor.
+   * The chrome bar selects the embed instead.
+   */
+  interactive?: boolean;
   children: ReactNode;
 }
 
@@ -236,6 +241,7 @@ export const EmbedFrameShell: React.FC<EmbedFrameShellProps> = ({
   onOpen,
   markers,
   loadingText,
+  interactive = false,
   children,
 }) => {
   const [editor] = useLexicalComposerContext();
@@ -247,6 +253,9 @@ export const EmbedFrameShell: React.FC<EmbedFrameShellProps> = ({
   const { isResizing, onResizeStart } = useEmbedResize(editor, nodeKey, frameRef, bodyRef);
   const [nodeSelected, setSelected, clearSelection] = useLexicalNodeSelection(nodeKey);
   const isSelected = detached || nodeSelected;
+  const isLive = isSelected || interactive;
+  // A live page with no `height=` grows to its content, as an HTML file embed does.
+  const fitsContent = interactive && !attrs.height;
 
   const handleShieldClick = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -282,19 +291,21 @@ export const EmbedFrameShell: React.FC<EmbedFrameShellProps> = ({
       {...markers}
       style={widthPx ? { width: widthPx, maxWidth: '100%' } : undefined}
     >
-      <EmbedChrome
-        relativePath={displayName}
-        absolutePath={null}
-        label={label}
-        isReadOnly
-        isDirty={false}
-        onToggleReadOnly={null}
-        onEditClick={onOpen}
-      />
+      <div onClick={interactive ? handleShieldClick : undefined}>
+        <EmbedChrome
+          relativePath={displayName}
+          absolutePath={null}
+          label={label}
+          isReadOnly
+          isDirty={false}
+          onToggleReadOnly={null}
+          onEditClick={onOpen}
+        />
+      </div>
       <div
         ref={bodyRef}
-        className="embed-frame__body"
-        style={{ height: heightPx }}
+        className={`embed-frame__body${fitsContent ? ' embed-frame__body--fit' : ''}`}
+        style={fitsContent ? undefined : { height: heightPx }}
         onPointerDown={keepInside}
         onMouseDown={keepInside}
         onClick={keepInside}
@@ -302,7 +313,7 @@ export const EmbedFrameShell: React.FC<EmbedFrameShellProps> = ({
       >
         <div
           className="embed-frame__editor-host"
-          {...(isSelected ? {} : { inert: true })}
+          {...(isLive ? {} : { inert: true })}
         >
           <EmbedErrorBoundary onError={setRenderError} absolutePath={null}>
             <React.Suspense fallback={<div className="embed-frame__loading">{loadingText}</div>}>
@@ -310,7 +321,7 @@ export const EmbedFrameShell: React.FC<EmbedFrameShellProps> = ({
             </React.Suspense>
           </EmbedErrorBoundary>
         </div>
-        {!isSelected && (
+        {!isLive && (
           <div
             className="embed-frame__shield"
             data-testid="embed-frame-shield"

@@ -8,6 +8,7 @@ The SDK is versioned independently of the Nimbalyst app. Each release declares i
 
 | SDK version | Minimum Nimbalyst app version |
 | --- | --- |
+| 0.7.1 | 0.79.0 |
 | 0.7.0 | 0.79.0 |
 | 0.6.0 | 0.78.0 |
 | 0.5.0 | 0.70.0 |
@@ -20,6 +21,14 @@ The SDK is versioned independently of the Nimbalyst app. Each release declares i
 | 0.1.0 | 0.58.5 |
 
 ## [Unreleased]
+
+## [0.7.1] - 2026-10-16
+
+Requires Nimbalyst 0.79.0.
+
+### Changed
+
+- The `filePatterns` documentation on `CustomEditorContribution` and `DocumentHeaderContribution` now lists the forms that match (`*.ext` suffixes, paths containing `/` for headers, and a `virtual://` prefix for fileless editor tabs); general globs such as `*.{csv,tsv}` never matched.
 
 ## [0.7.0] - 2026-10-09
 

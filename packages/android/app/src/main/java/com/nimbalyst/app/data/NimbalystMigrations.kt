@@ -72,7 +72,7 @@ internal object NimbalystMigrations {
         }
     }
 
-    /** #1711: same-ID transcript repairs are ordered by this stamp; NULL is version 0. */
+    /** #1711: column is no longer read or written, but builds at version 7 may be installed, so it stays. */
     val MIGRATION_6_7 = object : Migration(6, 7) {
         override fun migrate(db: SupportSQLiteDatabase) {
             db.execSQL("ALTER TABLE `messages` ADD COLUMN `projectionJson` TEXT")

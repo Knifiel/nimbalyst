@@ -52,6 +52,18 @@ The content gate (`canAccessContentRoom`) asks the org's TeamRoom for the author
 
 After the worker authenticates, it stamps `x-nimbalyst-worker-auth` (shared secret) + `x-nimbalyst-auth: <userId>:<orgId>` and forwards to the DO (`index.ts:658`). DOs read identity only from those headers; the old URL-param channel is gone (`packages/collabv3/src/workerAuth.ts:83-99`).
 
+### Credentials that are not Stytch JWTs
+
+Three collabv3-issued credentials reach `/sync/` or `/api/` without being a Stytch JWT. Each has its own resolver and its own type, is consulted only after `parseAuth` fails, and is never written into the Stytch `AuthResult`, so no team branch can see it by mistake:
+
+| Credential | Issued by | Admits | Location |
+| --- | --- | --- | --- |
+| Node credential | headless node pairing | the owner's personal rooms only | `nodeAuth.ts` |
+| GitHub MCP token | GitHub-native sign-in (behind its switch) | a wiki's TrackerRoom and its item-body DocumentRooms, sync channel only | `wiki/wikiGate.ts` |
+| Wiki import credential (`mcpimp_v1~...`) | the `pages_import_token` MCP tool, after the same project-write check as `pages_import`; 15 minutes | WebSocket upgrade on a DocumentRoom whose document is in the credential's project with write access, and document asset PUT/GET under the same check. Nothing else | `mcp/importToken.ts`, `importAuth.ts` |
+
+The import credential exists so `nim wiki move-to-team`, which holds only an MCP OAuth token, can write editor pages and attachments into the team documents `pages_import` registered. It is an HMAC over the MCP signing keys with its own prefix, so `parseAuth`, the node verifier and the MCP access-token verifier reject it on shape.
+
 ### Client acquisition points
 
 |  | Personal | Team |

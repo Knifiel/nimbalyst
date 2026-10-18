@@ -1,8 +1,9 @@
 /**
- * Finding the browser app. `nim` stays small by not carrying it: the assets are
- * the separate `@nimbalyst/wiki-web` package, installed next to `nim` the first
- * time someone runs `nim wiki serve`. Nothing is installed silently; when the
- * package is missing we print the command.
+ * Finding the browser app. The assets are the `@nimbalyst/wiki-web` package,
+ * an exact-version dependency of `@nimbalyst/cli`, so an installed `nim`
+ * resolves the copy published with it before any other. Separate installs let
+ * an old global wiki-web serve a newer nim without a word (NIM-7547). The
+ * plugin passes its own bundled copy with --assets.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -67,9 +68,9 @@ function workspacePackageDir(from: string): string | null {
 }
 
 /**
- * Order: `--assets <dir>`, the package installed beside `nim` (global installs
- * put both under one node_modules), the package installed in the project, the
- * monorepo's workspace package.
+ * Order: `--assets <dir>`, the package resolved from `nim` itself (its own
+ * dependency first, by Node's lookup), the package installed in the project,
+ * the monorepo's workspace package.
  */
 export function resolveWikiWebAssets(options: { flag?: string; projectRoot?: string; selfDir?: string }): AssetResolution {
   if (options.flag) {
@@ -97,8 +98,8 @@ export function resolveWikiWebAssets(options: { flag?: string; projectRoot?: str
 
 /** What to tell someone whose `nim` has no browser assets. */
 export function installHint(cliVersion: string, resolution: Exclude<AssetResolution, { ok: true }>): string {
-  const spec = cliVersion && cliVersion !== '0.0.0' ? `${WIKI_WEB_PACKAGE}@${cliVersion}` : WIKI_WEB_PACKAGE;
-  const lines = [`nim wiki serve needs the browser app, which ships separately as ${WIKI_WEB_PACKAGE}.`, `  ${resolution.detail}`, '', 'Install it next to nim:', `  npm install -g ${spec}`];
+  const spec = cliVersion && !cliVersion.startsWith('0.0.0') ? `@nimbalyst/cli@${cliVersion}` : '@nimbalyst/cli';
+  const lines = [`nim wiki serve needs the browser app (${WIKI_WEB_PACKAGE}), which installs with nim.`, `  ${resolution.detail}`, '', 'Reinstall nim to get it back:', `  npm install -g ${spec}`];
   if (resolution.reason === 'unbuilt') lines.push('', 'In the Nimbalyst repo, build it instead:', '  pnpm --filter @nimbalyst/wiki-web run build');
   lines.push('', 'Or point at a built copy with --assets <dir>.');
   return lines.join('\n') + '\n';

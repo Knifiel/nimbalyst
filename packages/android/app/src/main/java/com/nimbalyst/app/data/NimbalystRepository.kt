@@ -187,18 +187,7 @@ class NimbalystRepository(
             // index row lands; the caller re-requests once the row commits.
             database.sessionDao().getById(sessionId) ?: return@withTransaction false
             if (messages.isNotEmpty()) {
-                val existing = database.messageDao().getByIds(messages.map { it.id }).associateBy { it.id }
-                val newer = linkedMapOf<String, MessageEntity>()
-                for (message in messages) {
-                    val old = newer[message.id] ?: existing[message.id]
-                    // A moved identity is skipped: one bad row must not roll back the page.
-                    if (old != null && (old.sessionId != message.sessionId || old.sequence != message.sequence)) {
-                        continue
-                    }
-                    if (old == null || com.nimbalyst.app.sync.SyncProjectionStamp.parse(message.projectionJson)
-                            .isNewerThan(com.nimbalyst.app.sync.SyncProjectionStamp.parse(old.projectionJson))) newer[message.id] = message
-                }
-                database.messageDao().upsertAll(newer.values.toList())
+                database.messageDao().upsertAll(messages)
                 database.sessionDao().updateSyncWatermark(sessionId, messages.maxOf { it.sequence })
             }
             val previous = database.syncStateDao().getByRoomId(sessionId)
@@ -208,7 +197,7 @@ class NimbalystRepository(
             database.syncStateDao().upsert(
                 SyncStateEntity(
                     roomId = sessionId,
-                    lastCursor = com.nimbalyst.app.sync.mergeTranscriptCursor(previous?.lastCursor, cursor),
+                    lastCursor = cursor ?: previous?.lastCursor,
                     lastSequence = watermark,
                     lastSyncedAt = syncedAt
                 )

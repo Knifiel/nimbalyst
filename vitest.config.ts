@@ -46,6 +46,11 @@ const alias = [
     replacement: path.resolve(__dirname, './packages/collab-protocol/src'),
   },
   {
+    // wiki-web imports runtime source under this name (see its vite.config.ts); must precede the plain prefix below.
+    find: /^@nimbalyst\/runtime-source\//,
+    replacement: `${path.resolve(__dirname, './packages/runtime/src')}/`,
+  },
+  {
     find: '@nimbalyst/runtime',
     replacement: path.resolve(__dirname, './packages/runtime/src'),
   },

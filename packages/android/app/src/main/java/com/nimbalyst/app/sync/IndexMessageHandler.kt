@@ -30,6 +30,8 @@ internal class IndexMessageHandler(
     private val errors: SyncErrors,
     /** The room answered our `ping`: everything sent before it arrived. */
     private val onPong: () -> Unit = {},
+    /** A legacy full index was applied; parked writes may now replay from current rows. */
+    private val onSnapshotApplied: suspend () -> Unit = {},
     /** The versioned replication driver for the current connection, if any. */
     private val replication: () -> IndexReplicationClient? = { null },
 ) {
@@ -138,6 +140,7 @@ internal class IndexMessageHandler(
             )
         }
         reportUnreadable(health.unreadableSessions, health.encryptionMismatch)
+        onSnapshotApplied()
     }
 
     private fun reportUnreadable(unreadable: Int, encryptionMismatch: Boolean) {

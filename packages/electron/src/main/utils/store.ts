@@ -92,6 +92,8 @@ export type TrayStripStyle = FleetStatusStyle;
 
 interface AppStoreSchema {
   mobileSettingsVersion?: number;
+  /** Withheld transcripts still owed to personal sync; see services/sync/transcriptBackfill.ts. */
+  transcriptBackfill?: { projects?: string[]; sessions?: string[] };
   theme: AppTheme;
   themeIsDark?: boolean; // Whether the current theme is dark (used for extension themes)
   // The active theme's resolved --nim-bg, reported by the renderer once it has

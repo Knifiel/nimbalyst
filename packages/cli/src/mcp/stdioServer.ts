@@ -38,6 +38,7 @@ export async function handleMessage(
   tools: ToolMap,
   serverInfo: ServerInfo,
   takeNotice?: () => string | null,
+  instructions?: string,
 ): Promise<object | null> {
   if (!message || typeof message !== 'object' || Array.isArray(message)) {
     return rpcError(null, -32600, 'Invalid request');
@@ -56,6 +57,7 @@ export async function handleMessage(
           typeof request.params?.protocolVersion === 'string' ? request.params.protocolVersion : DEFAULT_PROTOCOL,
         capabilities: { tools: {} },
         serverInfo,
+        ...(instructions ? { instructions } : {}),
       });
     case 'ping':
       return reply({});
@@ -88,6 +90,8 @@ export interface StdioServerOptions {
   serverInfo: ServerInfo;
   /** A one-time notice (see updateCheck.ts) appended to a successful tool result. */
   takeNotice?: () => string | null;
+  /** Sent in `initialize`; hosts put it in the agent's system prompt. */
+  instructions?: string;
   input?: Readable;
   output?: Writable;
 }
@@ -114,7 +118,7 @@ export function runStdioServer(options: StdioServerOptions): Promise<void> {
           send(rpcError(null, -32700, 'Parse error'));
           return;
         }
-        const response = await handleMessage(message, options.tools, options.serverInfo, options.takeNotice);
+        const response = await handleMessage(message, options.tools, options.serverInfo, options.takeNotice, options.instructions);
         if (response) send(response);
       });
     });

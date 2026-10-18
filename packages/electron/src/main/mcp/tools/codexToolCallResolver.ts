@@ -70,6 +70,10 @@ export function extractToolUseIdFromMcpRequest(request: unknown): string | undef
     requestMeta?.["toolUseId"],
     requestMeta?.["tool_use_id"],
     requestMeta?.["toolCallId"],
+    // Codex app-server: `callId` is the mcpToolCall item id the transcript keys
+    // the widget on. Its sibling `itemId` (`ctc_...`) appears nowhere in the
+    // transcript, so it must not be used (#1784).
+    requestMeta?.["callId"],
     typeof requestId === "string" || typeof requestId === "number"
       ? String(requestId)
       : undefined,
@@ -85,28 +89,42 @@ export function findCodexAppServerToolCallId(
 ): string | null {
   if (!turnId || !toolName) return null;
 
+  // The asking call has started but not completed. A turn can call the same
+  // tool more than once, so anything but exactly one open call is a guess.
+  //
+  // Known limit: if call A is open while a concurrent call B's start row is
+  // still in the write queue, B resolves to A's id. This fallback cannot see
+  // unpersisted rows; `_meta.callId` (sent by Codex 0.162+) is the real fix.
+  const started = new Set<string>();
+  const completed = new Set<string>();
   for (const content of rawMessageContents) {
     try {
       const parsed = JSON.parse(content);
       const params = parsed?.params;
       const item = params?.item;
+      const method = parsed?.method;
 
       if (
-        parsed?.method === "item/started"
-        && params?.turnId === turnId
+        (method === "item/started" || method === "item/completed")
         && item?.type === "mcpToolCall"
         && item?.tool === toolName
         && typeof item?.id === "string"
         && item.id.length > 0
       ) {
-        return item.id;
+        if (method === "item/started") {
+          if (params?.turnId === turnId) started.add(item.id);
+        } else if (params?.turnId == null || params.turnId === turnId) {
+          // A completion closes its start unless it names a different turn.
+          completed.add(item.id);
+        }
       }
     } catch {
       // Ignore malformed rows while scanning recent messages.
     }
   }
 
-  return null;
+  const open = [...started].filter((id) => !completed.has(id));
+  return open.length === 1 ? open[0] : null;
 }
 
 /**
@@ -130,7 +148,9 @@ export async function resolveToolUseIdFromMcpRequest(
   if (!codexTurn?.turnId) return undefined;
 
   try {
-    const messages = await AgentMessagesRepository.list(sessionId, { limit: 50 });
+    // The tail: `list` returns the oldest rows, which never include the
+    // just-started call once a session passes 50 messages.
+    const messages = await AgentMessagesRepository.listTail(sessionId, 50);
     return findCodexAppServerToolCallId(
       messages.map((msg) => msg.content),
       codexTurn.turnId,

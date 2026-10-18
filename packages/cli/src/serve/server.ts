@@ -9,7 +9,7 @@ import { isAllowedOrigin, isLoopbackHost, newToken, sessionCookie, tokenSource }
 import { handleApi } from './api.js';
 import { ChangeStream } from './events.js';
 import { BASE_HEADERS, HttpError, sendError, sendJson } from './http.js';
-import { serveStatic } from './static.js';
+import { HTML_EMBED_SHELL_PATH, serveHtmlEmbedShell, serveStatic } from './static.js';
 
 export interface WikiServerOptions {
   wiki: LocalWiki;
@@ -60,6 +60,10 @@ export async function startWikiServer(options: WikiServerOptions): Promise<WikiS
     if (!isLoopbackHost(req.headers.host, port)) return plain(res, 421, 'This server only answers on 127.0.0.1 or localhost.');
     const url = new URL(req.url ?? '/', `http://${HOST}:${port}`);
     if (!isAllowedOrigin(req.headers.origin, port)) return plain(res, 403, 'Cross-origin requests are refused.');
+    // The shell is static and holds no wiki data (page bodies arrive by postMessage from the
+    // authed app), so it skips the token: some embedded browser panels withhold the
+    // SameSite=Strict cookie from the sandboxed frame and would otherwise render it blank.
+    if (url.pathname === HTML_EMBED_SHELL_PATH && (req.method === 'GET' || req.method === 'HEAD')) return serveHtmlEmbedShell(res);
     const source = tokenSource(req, url, port, token);
     if (!source) {
       if (url.pathname.startsWith('/api/')) {

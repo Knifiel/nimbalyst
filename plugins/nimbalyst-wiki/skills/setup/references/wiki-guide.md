@@ -21,6 +21,7 @@ Edit this page to fit your team. It overrides the base guide Nimbalyst ships.
 - **Pages nest.** Any page can hold child pages. A page with an empty body works as a folder.
 - **Some pages have a type.** A type is something the team keeps several of, such as Modules, Technologies, Competitors or People. A typed page has a few fields in its header (a status, a maturity, "in our stack") and its body is ordinary prose. Each type has its own page: a short description of the type above a table of every page of that type.
 - **Types are ours.** Add a type when the team keeps track of several things of one kind and wants them in a table. Do not add a type for a single page.
+- **Pages can name the code they explain.** On a wiki kept beside the code, a page that explains part of it lists that code in its `paths` field: the folders it covers, such as `src/sync/**`. Keep them coarse, a folder rather than a list of files. Agents read such a page before changing that code and update it after.
 - **Relations are links.** When a page links to another typed page, the link can carry a named relation, such as "built on" or "alternative to". Each relation has a name for the other direction ("underlies"), and both pages list it in their Links section. Use a plain link when no relation fits; do not invent a vague one like "related to".
 
 ## How to write
@@ -36,6 +37,30 @@ Edit this page to fit your team. It overrides the base guide Nimbalyst ships.
 - Mark what is decided, what was observed and what is a guess. Never present a guess as a decision.
 - Update a page rather than appending a second page about the same thing. When a decision changes, rewrite the sentence and say what it replaced and when.
 
+## Visuals and the big picture
+
+- **Home is the dashboard.** It says what the project is and who it serves, shows the product map, the initiatives and their health, and the open questions and recent decisions, and links to where a reader drills in. Keep it current rather than long.
+- **Most pages are text.** A visual earns its place when it helps a reader see the whole, not to decorate: a map once there are more modules than a reader can hold in their head, a 2x2 when the team weighs a handful of things on two axes, a chart when a few numbers show a trend or a comparison.
+- **Real data only.** Every point, owner and status comes from a person or a source; cite where numbers came from. Where something is not known yet, say what is missing and who can fill it in; never draw placeholder points.
+- **Visuals follow their pages.** A map or chart built from other pages changes when they change. Prefer a view of a type, which stays current, to a table typed by hand.
+- **A question for the team** names the people asked. Once it is answered, mark the decided sentence in the page it affects.
+
+### Our visual defaults
+
+What we use for each need. Change any row to suit the team: if you prefer drawings to mermaid, or a different chart, edit the row and agents follow it. When you install an extension that adds a page type, add a row for what it is for. Where the app or browser in use cannot show a row's choice, agents use the closest one that works and say so.
+
+| When we need | We use |
+| --- | --- |
+| A map of the product | An interactive HTML page, each box a link |
+| A flow or a sequence | A mermaid diagram |
+| A freeform diagram | A drawing |
+| The status of a set of typed pages | A view of their type, as a table or board |
+| Positioning, or impact against effort | A 2x2 |
+| A trend in a few numbers | A chart |
+| A question for the team | A decision block |
+| A roadmap | A timeline view of the initiatives |
+| A data table or a model of numbers | A spreadsheet, or a calc sheet |
+
 ## For agents
 
 - Read this page and the Home page before writing.
@@ -44,4 +69,4 @@ Edit this page to fit your team. It overrides the base guide Nimbalyst ships.
 - Your edits land directly, without review. Keep each edit small, never delete or rewrite what a person wrote without asking, and tell the person which pages you changed.
 - When you are unsure whether something belongs here, leave it out and ask.
 
-Based on the Nimbalyst base guide, version 5.
+Based on the Nimbalyst base guide, version 8.

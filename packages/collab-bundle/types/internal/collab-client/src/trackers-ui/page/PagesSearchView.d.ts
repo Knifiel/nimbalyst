@@ -12,6 +12,7 @@
  */
 import React from 'react';
 import type { PageSearchRequest, PageSearchResponse } from '@nimbalyst/collab-protocol';
+import './PagesSearchView.css';
 import { type PagesSearchPageInput } from './pagesSearch';
 export type PagesSearchLane = 'team' | 'personal';
 /** How an open was asked for, so a host can open in a new tab on Cmd/Ctrl. */

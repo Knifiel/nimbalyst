@@ -104,19 +104,12 @@ describe('writeSessionMessagesOverTransientSocket', () => {
 
   it('sends the rows in order and reports them sent; a fatal room error disables sync instead', async () => {
     const socket = new FakeWebSocket('wss://x');
-    socket.send.mockImplementation(raw => {
-      const sent = JSON.parse(raw);
-      const response = sent.type === 'getMessageProjection'
-        ? { type: 'messageProjectionState', messageId: sent.messageId, revision: 0 }
-        : sent.type === 'appendMessage' ? { type: 'messageAppendAck', messageId: sent.message.id, revision: 1 } : undefined;
-      if (response) socket.onmessage?.({ data: JSON.stringify(response) } as MessageEvent);
-    });
     const write = writeSessionMessagesOverTransientSocket(deps(socket), 's', [...rows, { ...rows[0], content: 'b' }]);
     await vi.waitFor(() => expect(socket.onopen).not.toBeNull());
     socket.open();
     await expect(write).resolves.toEqual({ published: true });
     expect(socket.send.mock.calls.map(([raw]) => JSON.parse(raw).message?.id ?? JSON.parse(raw).type))
-      .toEqual(['beginSessionReplay', 'getMessageProjection', 'a', 'b']);
+      .toEqual(['beginSessionReplay', 'a', 'b']);
 
     const fatal = new FakeWebSocket('wss://y');
     const disableMessageSync = vi.fn();

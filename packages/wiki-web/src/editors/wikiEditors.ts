@@ -7,6 +7,7 @@ import { listBrowserExtensions, registerBrowserExtension, type BrowserExtensionM
 import { PINNED_EXTENSION_MANIFESTS, PINNED_EXTENSION_SLUGS, loadPinnedExtensionBundle } from '@nimbalyst/web-editors/bundles';
 import { registerEmbeddableExtension } from '@nimbalyst/collab-bundle/editor';
 import { embeddableSuffixes, matchEditor, type WikiEditorMatch } from './editorPageTypes';
+import { HTML_PAGE_MANIFEST } from './html/htmlPages';
 
 export { editorPageDescriptors, type WikiEditorMatch } from './editorPageTypes';
 
@@ -32,6 +33,7 @@ export function registerWikiEditors(): void {
   if (registered) return;
   registered = true;
   registerBrowserExtension({ manifest: CANVAS_MANIFEST, load: () => import('./canvas/wikiCanvasBundle') });
+  registerBrowserExtension({ manifest: HTML_PAGE_MANIFEST, load: () => import('./html/wikiHtmlBundle') });
   for (const slug of PINNED_EXTENSION_SLUGS) {
     registerBrowserExtension({ manifest: PINNED_EXTENSION_MANIFESTS[slug], load: () => loadPinnedExtensionBundle(slug) });
   }

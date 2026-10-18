@@ -4,10 +4,14 @@
 // only when the transcript shows substantive work: a git commit, at least N
 // file edits, or a plan written. Every other stop passes through silently, and
 // so does every stop in a directory with no wiki to record into: neither a git
-// remote (team pages are reached through one) nor a local wiki.
+// remote (team pages are reached through one) nor a local wiki. With a local
+// wiki, the reason names up to five pages whose `paths` cover the files the
+// session edited, read through the SessionStart hook's bundle (wiki-context.mjs)
+// so both hooks match pages the way the `pagesForFiles` tool does.
 //
 // A hook that fails must never trap the user in a session, so every error path
-// exits 0 with no output. Plain Node, no dependencies.
+// exits 0 with no output. Plain Node; the bundle is loaded only when a local
+// wiki exists.
 //
 // Env:
 //   NIMBALYST_WIKI_NUDGE_MIN_EDITS   edits that count as substance (default 5)
@@ -22,6 +26,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const DEFAULT_MIN_EDITS = 5;
+/** Pages named in the reason; more are left to the capture skill's `pagesForFiles`. */
+const MAX_NAMED_PAGES = 5;
 // The local wiki's root marker (packages/local-wiki FORMAT.md); the hook has no dependencies to import it from.
 const LOCAL_WIKI_MARKER = '.nimbalyst-wiki.yaml';
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -43,7 +49,8 @@ function toolUses(line) {
 
 /** Summarizes a Claude Code JSONL transcript into the signals the nudge uses. */
 export function assessTranscript(text) {
-  const signals = { commits: 0, edits: 0, plans: 0, pageWrites: 0 };
+  const signals = { commits: 0, edits: 0, plans: 0, pageWrites: 0, files: [] };
+  const files = new Set();
   for (const raw of text.split('\n')) {
     if (!raw.trim()) continue;
     let line;
@@ -62,10 +69,12 @@ export function assessTranscript(text) {
       if (EDIT_TOOLS.has(name)) {
         signals.edits += 1;
         const file = String(input.file_path ?? input.notebook_path ?? '');
+        if (file) files.add(file);
         if (name === 'Write' && PLAN_PATH.test(file)) signals.plans += 1;
       }
     }
   }
+  signals.files = [...files];
   return signals;
 }
 
@@ -124,8 +133,24 @@ export function hasWiki(dir) {
   return hasGitRemote(dir) || hasLocalWiki(dir);
 }
 
+/**
+ * Titles of the local wiki pages covering `files` (or the working tree's
+ * changes when the session edited nothing), at most five, stale ones marked.
+ * Any failure counts as none.
+ */
+export async function coveredPageNames(dir, files) {
+  if (!hasLocalWiki(dir)) return [];
+  try {
+    const { coveredPages } = await import('./wiki-context.mjs');
+    const pages = await coveredPages(dir, files);
+    return pages.slice(0, MAX_NAMED_PAGES).map((page) => (page.stale ? `${page.title} (stale)` : page.title));
+  } catch {
+    return [];
+  }
+}
+
 /** Returns the hook's stdout JSON, or null to let the stop through. */
-export function decide(input, env = process.env, remoteCheck = hasWiki) {
+export async function decide(input, env = process.env, remoteCheck = hasWiki, coveredCheck = coveredPageNames) {
   if (!input || typeof input !== 'object' || input.stop_hook_active === true) return null;
   const sessionId = typeof input.session_id === 'string' ? input.session_id : '';
   const transcriptPath = typeof input.transcript_path === 'string' ? input.transcript_path : '';
@@ -136,8 +161,10 @@ export function decide(input, env = process.env, remoteCheck = hasWiki) {
   const cwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : process.cwd();
   if (!remoteCheck(cwd)) return null;
 
-  const why = substanceReason(assessTranscript(readFileSync(transcriptPath, 'utf8')), minEdits(env));
+  const signals = assessTranscript(readFileSync(transcriptPath, 'utf8'));
+  const why = substanceReason(signals, minEdits(env));
   if (!why) return null;
+  const covered = await coveredCheck(cwd, signals.files);
 
   // Record before blocking: if the write fails, the catch lets the stop through
   // rather than risking a nudge on every turn.
@@ -146,16 +173,19 @@ export function decide(input, env = process.env, remoteCheck = hasWiki) {
   return {
     decision: 'block',
     reason:
-      `This session did substantive work (${why}). Before stopping, run the /nimbalyst-wiki:capture skill` +
+      `This session did substantive work (${why}). ` +
+      (covered.length > 0 ? `It changed files covered by these wiki pages: ${covered.join(', ')}. ` : '') +
+      'Before stopping, run the /nimbalyst-wiki:capture skill ' +
+      (covered.length > 0 ? 'to update those pages or mark them outdated, and ' : '') +
       'to record any decision made or question answered in the wiki pages it affects. ' +
       'If nothing is worth keeping, reply "nothing to record" and stop. This reminder appears once per session.',
   };
 }
 
-function main() {
+async function main() {
   try {
     const raw = readFileSync(0, 'utf8');
-    const result = decide(JSON.parse(raw));
+    const result = await decide(JSON.parse(raw));
     if (result) process.stdout.write(`${JSON.stringify(result)}\n`);
   } catch {
     // Never block a stop because the hook itself failed.

@@ -1,6 +1,17 @@
 {
-  "description": "Once per session, after substantive work, ask the agent to record what it decided in the team wiki.",
+  "description": "At session start, tell the agent what the project's local wiki covers. Once per session, after substantive work, ask the agent to record what it decided in the wiki.",
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/wiki-context.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

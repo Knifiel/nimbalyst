@@ -9,13 +9,7 @@
       "direction": "input",
       "encryptedContent": "c3ludGhldGljLWVuY3J5cHRlZENvbnRlbnQ=",
       "iv": "HLh+BcnBM1nESaz/",
-      "metadata": {},
-      "projectionVersion": 1,
-      "revision": 32,
-      "payload": {
-        "transferId": "0123456789abcdef0123456789abcdef",
-        "count": 2
-      }
+      "metadata": {}
     }
   ],
   "metadata": {
@@ -63,6 +57,5 @@
     "clientMetadataIv": "B9VXsXJgPL9CyKT6"
   },
   "hasMore": true,
-  "cursor": "31",
-  "revisionCursor": 32
+  "cursor": "31"
 }

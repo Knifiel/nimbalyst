@@ -1114,9 +1114,13 @@ export class CodexAppServerProtocol implements AgentProtocol {
         return;
       }
       case 'commandExecution': {
+        // The v2 wire is camelCase (aggregatedOutput/exitCode); snake_case is
+        // kept for older app-server builds.
         const cmd = item as AnyItem & {
           command: string;
+          aggregatedOutput?: string | null;
           aggregated_output?: string;
+          exitCode?: number | null;
           exit_code?: number;
           status: string;
         };
@@ -1131,8 +1135,8 @@ export class CodexAppServerProtocol implements AgentProtocol {
               result: {
                 success: cmd.status === 'completed',
                 command: cmd.command,
-                exit_code: cmd.exit_code,
-                output: cmd.aggregated_output,
+                exit_code: cmd.exitCode ?? cmd.exit_code,
+                output: cmd.aggregatedOutput ?? cmd.aggregated_output,
               } as ToolResult,
             },
             metadata: { transport: 'app-server', threadId: n.threadId, turnId: n.turnId, itemId: (cmd as { id?: string }).id },

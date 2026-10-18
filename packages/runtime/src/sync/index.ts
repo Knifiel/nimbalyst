@@ -63,7 +63,6 @@ export {
 } from './types';
 
 export { createCollabV3Sync } from './CollabV3Sync';
-export { repairSessionProjection, type ProjectionRepairCheckpoints } from './repairSessionProjection';
 export { createPersonalSyncWriteGate, describePersonalSyncWriteGate } from './personalSyncWriteGate';
 export type { PersonalSyncWriteGateSnapshot, PersonalSyncWriteGateState, PersonalSyncBlockReason } from './personalSyncWriteGate';
 export { IndexEntryDecryptionError, isIndexEntryDecryptionError } from './indexEntryDecryptionError';

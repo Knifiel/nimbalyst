@@ -251,7 +251,11 @@ export interface CollabEditorMountOptions {
   user: CollabEditorUser;
   readOnly?: boolean;
   comments?: CollabEditorCommentsOptions;
-  renderDecisionArtifact?: (entryId: string, artifact: string) => ReactNode;
+  /**
+   * `embed` is set when the artifact is an embed block in the document rather
+   * than a decision's artifact: the link title's attributes size the preview.
+   */
+  renderDecisionArtifact?: (entryId: string, artifact: string, embed?: Omit<FileEmbedRequest, 'src'>) => ReactNode;
   /**
    * Live data for tracker references in the document. Without it references
    * render as key-only chips; with it they show live title and status, and
@@ -322,6 +326,8 @@ export interface CollabEditorHandle {
   getPresence(): CollabEditorPresence;
   /** Announce departure/backgrounding or rejoin for host-managed lifecycles. */
   setPresenceActive(active: boolean): void;
+  /** Relabel this participant once the host resolves a name. Does not remount. */
+  setUser(user: CollabEditorUser): void;
   flush(options?: { timeoutMs?: number }): Promise<CollabEditorFlushResult>;
   setReadOnly(readOnly: boolean): void;
   /**
@@ -457,6 +463,8 @@ export type ConsoleLinkOpener = (href: string) => boolean;
  * Personal page): routed in its own tab. Returns the uninstall.
  */
 export declare function setConsoleLinkOpener(next: ConsoleLinkOpener): () => void;
+/** Opens a console link through the installed opener; false when none is installed or it declined. */
+export declare function openConsoleLink(href: string): boolean;
 /** Opens a team page by id; `newTab` is true for a Cmd/Ctrl or middle click. */
 export type PageReferenceOpener = (documentId: string, options: { newTab: boolean }) => void;
 /**
@@ -825,6 +833,8 @@ export interface ExtensionEditorHandle {
   getEditorAPI(): unknown | null;
   getMenuItems(): readonly EditorMenuItem[];
   setPresenceActive(active: boolean): void;
+  /** Relabel this participant once the host resolves a name. Does not remount. */
+  setUser(user: CollabEditorUser): void;
   setTheme(theme: string): void;
   setVisible(visible: boolean): void;
   setReadOnly(readOnly: boolean): void;

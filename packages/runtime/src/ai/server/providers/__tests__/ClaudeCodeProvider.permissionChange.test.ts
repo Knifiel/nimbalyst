@@ -134,3 +134,39 @@ describe('ClaudeCodeProvider mid-turn permission changes', () => {
     expect(modeOf(provider)).toBe('auto');
   });
 });
+
+// #1740: an Agent-verified (auto) query's escalated call must wait for the user even in
+// bypass-all, but a teammate query runs 'default' and keeps the bypass-all shortcut.
+describe('ClaudeCodeProvider canUseTool under an Agent-verified lead', () => {
+  afterEach(() => {
+    BaseAgentProvider.setTrustChecker(null);
+    vi.restoreAllMocks();
+  });
+
+  function autoLeadInBypassAll() {
+    const requestToolPermission = vi.fn(async () => ({ decision: 'deny' as const, scope: 'once' as const }));
+    const provider = new ClaudeCodeProvider();
+    Object.assign(provider as unknown as Record<string, unknown>, {
+      currentMode: 'auto',
+      permissionService: { requestToolPermission },
+    });
+    vi.spyOn(provider as any, 'logAgentMessage').mockResolvedValue(undefined);
+    trustIs({ trusted: true, mode: 'bypass-all', allowAllUsesClassifier: true });
+    const handler = (...args: unknown[]) => (provider as any).createCanUseToolHandler('session', '/proj', '/proj', ...args);
+    const call = (canUseTool: any) =>
+      canUseTool('Bash', { command: 'touch /tmp/ask-probe-1' }, { signal: new AbortController().signal });
+    return { requestToolPermission, handler, call };
+  }
+
+  it('asks the permission service to wait for the user on the lead query', async () => {
+    const { requestToolPermission, handler, call } = autoLeadInBypassAll();
+    expect(await call(handler())).toMatchObject({ behavior: 'deny' });
+    expect(requestToolPermission).toHaveBeenCalledWith(expect.objectContaining({ requiresUserDecision: true }));
+  });
+
+  it('keeps the bypass-all shortcut for a teammate query running in default mode', async () => {
+    const { requestToolPermission, handler, call } = autoLeadInBypassAll();
+    expect(await call(handler('teammate-a', 'default'))).toMatchObject({ behavior: 'allow' });
+    expect(requestToolPermission).not.toHaveBeenCalled();
+  });
+});

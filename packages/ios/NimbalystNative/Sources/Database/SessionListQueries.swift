@@ -28,6 +28,8 @@ public struct SessionListRow: Identifiable, Hashable, Sendable {
     public var updatedAt: Int
     public var lastReadAt: Int?
     public var lastMessageAt: Int?
+    /// The desktop withholds this session's transcript; see `Session`.
+    public var transcriptSyncDisabled: Bool = false
 
     /// Derived display metadata; never persisted or sent over sync.
     public var treeDepth: Int = 0
@@ -46,7 +48,7 @@ public struct SessionListRow: Identifiable, Hashable, Sendable {
         "id", "projectId", "titleDecrypted", "provider", "model", "phase",
         "sessionType", "agentRole", "parentSessionId", "createdBySessionId", "worktreeId",
         "isArchived", "isPinned", "isExecuting", "hasQueuedPrompts",
-        "createdAt", "updatedAt", "lastReadAt", "lastMessageAt"
+        "createdAt", "updatedAt", "lastReadAt", "lastMessageAt", "transcriptSyncDisabled"
     ]
 
     static func selectList(alias: String, prefix: String = "") -> String {
@@ -74,7 +76,8 @@ public struct SessionListRow: Identifiable, Hashable, Sendable {
         createdAt: Int = 0,
         updatedAt: Int = 0,
         lastReadAt: Int? = nil,
-        lastMessageAt: Int? = nil
+        lastMessageAt: Int? = nil,
+        transcriptSyncDisabled: Bool = false
     ) {
         self.id = id
         self.projectId = projectId
@@ -95,6 +98,7 @@ public struct SessionListRow: Identifiable, Hashable, Sendable {
         self.updatedAt = updatedAt
         self.lastReadAt = lastReadAt
         self.lastMessageAt = lastMessageAt
+        self.transcriptSyncDisabled = transcriptSyncDisabled
     }
 
     init(row: Row, prefix: String = "") {
@@ -119,6 +123,7 @@ public struct SessionListRow: Identifiable, Hashable, Sendable {
         updatedAt = row["\(prefix)updatedAt"] ?? 0
         lastReadAt = row["\(prefix)lastReadAt"]
         lastMessageAt = row["\(prefix)lastMessageAt"]
+        transcriptSyncDisabled = row["\(prefix)transcriptSyncDisabled"] ?? false
     }
 }
 

@@ -128,6 +128,34 @@ export function resolveWikiLocation(startDir: string, location?: string): WikiLo
   return { projectRoot: root, dir: path.join(root, DEFAULT_LOCATION), source: 'default' };
 }
 
+/** The start dir and location a named folder stands for, as `resolveWikiLocation` takes them. */
+export interface Workspace {
+  startDir: string;
+  location?: string;
+}
+
+/**
+ * A folder an agent names: a wiki folder (it holds the marker file) or a
+ * project folder. A wiki folder resolves to the nearest enclosing project whose
+ * setting or default location is that folder, within the folder's repository,
+ * else stands as its own location;
+ * a project folder resolves the way the start dir does at launch.
+ */
+export function workspaceForFolder(folder: string, isWiki: (dir: string) => boolean): Workspace {
+  const dir = path.resolve(folder);
+  if (!isWiki(dir)) return { startDir: dir };
+  // Never past a repository root, the folder's own included: a wiki that is its own repository is its own project.
+  for (let at = dir; !fs.existsSync(path.join(at, '.git')) && at !== path.dirname(at); ) {
+    at = path.dirname(at);
+    try {
+      if (resolveWikiLocation(at).dir === dir) return { startDir: at };
+    } catch {
+      // an unreadable setting on the way up names some other wiki
+    }
+  }
+  return { startDir: dir, location: dir };
+}
+
 /**
  * Makes sure a wiki under `nimbalyst-local/` is gitignored, by adding
  * `nimbalyst-local/` to the root `.gitignore` when git does not already ignore

@@ -15,7 +15,7 @@
  */
 
 import type { CollaborativeEmbedProviderRequest } from '../../services/CollaborativeEmbedProviderCache';
-import { customEditorRegistry } from '../CustomEditors/registry';
+import { findPageEditorRegistration } from '../HtmlPage/htmlPageRegistration';
 import type { CustomEditorRegistration } from '../CustomEditors/types';
 import { getCollaborativeDocumentTypeCatalog } from '../../services/CollaborativeDocumentTypeCatalog';
 
@@ -101,7 +101,7 @@ export function resolveCollaborativeEmbedRequest(
   if (isLexical) {
     editor = { kind: 'lexical' };
   } else {
-    const registration = customEditorRegistry.findRegistrationForFile(`embedded${fileExtension}`);
+    const registration = findPageEditorRegistration(`embedded${fileExtension}`, { documentType: input.sharedDocumentType ?? descriptor.documentType, editorId });
     if (!registration || registration.collaboration?.supported !== true) {
       return { status: 'unavailable', error: 'The installed editor does not support collaborative embeds.' };
     }

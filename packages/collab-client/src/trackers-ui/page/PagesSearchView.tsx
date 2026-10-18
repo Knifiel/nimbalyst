@@ -19,6 +19,7 @@ import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { TrackerFilterOmnibox } from '../TrackerFilterOmnibox';
 import { useTrackerDataSelector } from '../useTrackerData';
 import { PAGES_BODY_LIMIT, usePagesBodyHits } from './usePagesBodyHits';
+import './PagesSearchView.css';
 import {
   PLAIN_PAGE_TYPE,
   buildPagesFilterFields,
@@ -222,10 +223,10 @@ export function PagesSearchView({
             <thead>
               <tr className="pages-search-thead sticky top-0 z-10 border-b border-nim bg-nim text-[11px] uppercase tracking-wide text-nim-muted">
                 <SortHeader label="Name" column="name" sort={sort} onSort={toggleSort} className="pl-4" />
-                <SortHeader label="Type" column="type" sort={sort} onSort={toggleSort} className="w-[130px]" />
-                <SortHeader label="Status" column="status" sort={sort} onSort={toggleSort} className="w-[110px]" />
-                <SortHeader label="Author" column="author" sort={sort} onSort={toggleSort} className="w-[140px]" />
-                <SortHeader label="Updated" column="updated" sort={sort} onSort={toggleSort} className="w-[100px] pr-4" />
+                <SortHeader label="Type" column="type" sort={sort} onSort={toggleSort} className="pages-search-col-wide w-[130px]" />
+                <SortHeader label="Status" column="status" sort={sort} onSort={toggleSort} className="pages-search-col-wide w-[110px]" />
+                <SortHeader label="Author" column="author" sort={sort} onSort={toggleSort} className="pages-search-col-wide w-[140px]" />
+                <SortHeader label="Updated" column="updated" sort={sort} onSort={toggleSort} className="pages-search-col-updated w-[100px] pr-4" />
               </tr>
             </thead>
             <tbody>
@@ -303,6 +304,13 @@ function PagesSearchRowView({ match, typeLabel, authorLabel, onOpen }: {
 }) {
   const { row, snippet } = match;
   const model = row.kind === 'typed' ? globalRegistry.get(row.typeId) : undefined;
+  const status = row.status ? pageStatusLabel(row.status) : '';
+  const author = row.author ? authorLabel(row.author) : '';
+  const typeChip = (
+    <span className="pages-search-type-chip inline-block max-w-full shrink-0 truncate whitespace-nowrap rounded-md bg-nim-secondary px-1.5 py-0.5 align-top text-[11.5px] font-medium text-nim-muted">
+      {typeLabel(row.typeId)}
+    </span>
+  );
   return (
     <tr
       className="pages-search-row group cursor-pointer border-b border-nim hover:bg-nim-hover"
@@ -324,6 +332,11 @@ function PagesSearchRowView({ match, typeLabel, authorLabel, onOpen }: {
               <span className="truncate text-[13.5px] text-nim">{row.title}</span>
               {row.issueKey && <span className="shrink-0 text-[11.5px] text-nim-faint">{row.issueKey}</span>}
             </div>
+            <div className="pages-search-row-meta mt-1 min-w-0 items-center gap-1.5 text-[12px] text-nim-muted">
+              {typeChip}
+              {status && <span className="truncate">{status}</span>}
+              {author && <span className="truncate">{author}</span>}
+            </div>
             {!snippet && row.summary && (
               <div className="pages-search-summary mt-0.5 truncate text-[12px] text-nim-muted">{row.summary}</div>
             )}
@@ -337,13 +350,9 @@ function PagesSearchRowView({ match, typeLabel, authorLabel, onOpen }: {
           </div>
         </div>
       </td>
-      <td className="px-2 py-2 align-top">
-        <span className="pages-search-type-chip inline-block max-w-full truncate whitespace-nowrap rounded-md bg-nim-secondary px-1.5 py-0.5 align-top text-[11.5px] font-medium text-nim-muted">
-          {typeLabel(row.typeId)}
-        </span>
-      </td>
-      <td className="truncate px-2 py-2 align-top text-nim-muted">{row.status ? pageStatusLabel(row.status) : ''}</td>
-      <td className="truncate px-2 py-2 align-top text-nim-muted">{row.author ? authorLabel(row.author) : ''}</td>
+      <td className="pages-search-col-wide px-2 py-2 align-top">{typeChip}</td>
+      <td className="pages-search-col-wide truncate px-2 py-2 align-top text-nim-muted">{status}</td>
+      <td className="pages-search-col-wide truncate px-2 py-2 align-top text-nim-muted">{author}</td>
       <td className="truncate py-2 pl-2 pr-4 align-top text-nim-muted">{relativeTime(row.updated)}</td>
     </tr>
   );

@@ -62,6 +62,7 @@ import { updateNativeTheme, updateWindowTitleBars } from '../theme/ThemeManager'
 import { createWindow, findWindowByWorkspace } from '../window/WindowManager';
 import { getWorkspaceWindowState } from '../utils/store';
 import { getWorkspaceSettingsOverview } from './workspaceSettingsOverview';
+import { transcriptBackfill } from './sync/transcriptBackfill';
 
 // ─── Allow / deny lists ─────────────────────────────────────────────
 
@@ -315,6 +316,8 @@ export class SettingsControlService {
     const docEnabled = new Set(base.docSyncEnabledProjects ?? []);
 
     if (enableSessionSync === true) {
+      // Keep the project's sessions marked until the reinit's reconcile queues their withheld transcripts.
+      if (!enabledProjects.has(workspacePath)) transcriptBackfill.holdProjects([workspacePath]);
       enabledProjects.add(workspacePath);
     } else if (enableSessionSync === false) {
       enabledProjects.delete(workspacePath);

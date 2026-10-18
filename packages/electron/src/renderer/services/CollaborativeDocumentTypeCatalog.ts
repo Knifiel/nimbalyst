@@ -17,7 +17,17 @@ import {
   CODE_COLLAB_FILE_EXTENSIONS,
   CodeCollabContentAdapter,
 } from "../utils/CodeCollabContentAdapter";
+import {
+  HTML_PAGE_DEFAULT_CONTENT,
+  HTML_PAGE_DOCUMENT_TYPE,
+  HTML_PAGE_FILE_EXTENSION,
+  HtmlPageCollabContentAdapter,
+} from "@nimbalyst/runtime/ui/htmlEmbed/htmlPageCodec";
 import { registerElectronCollabDocumentTypes } from "./ElectronCollabHost";
+import {
+  HTML_PAGE_EDITOR_COMPONENT,
+  HTML_PAGE_EDITOR_ID,
+} from "../components/HtmlPage/htmlPageEditorId";
 
 export interface CollaborativeDocumentTypeDescriptor {
   documentType: string;
@@ -113,6 +123,31 @@ function normalizeSuffix(value: string): string | null {
 function suffixFromPattern(pattern: string): string | null {
   if (!pattern.startsWith("*.")) return null;
   return normalizeSuffix(pattern.slice(1));
+}
+
+/**
+ * Suffixes the host's own page types own outright. `.html` is also in the
+ * code type's suffixes and claimed by the Browser extension's tab editor;
+ * shared and personal `.html` pages are the `html` page type all the same.
+ */
+const HOST_OWNED_SUFFIXES: ReadonlyMap<string, string> = new Map([
+  [HTML_PAGE_FILE_EXTENSION, HTML_PAGE_EDITOR_ID],
+]);
+
+function isHostOwner(entry: CatalogEntry, suffix: string | undefined): boolean {
+  return (
+    !!suffix &&
+    HOST_OWNED_SUFFIXES.get(suffix) === entry.descriptor.editor.extensionId
+  );
+}
+
+/** The host's own entry for a suffix it owns, or null to resolve as usual. */
+function hostOwnedEntries(
+  entries: CatalogEntry[],
+  suffix: string | undefined
+): CatalogEntry[] | null {
+  const owned = entries.filter((entry) => isHostOwner(entry, suffix));
+  return owned.length > 0 ? owned : null;
 }
 
 function sortSuffixes(values: Iterable<string>): string[] {
@@ -232,6 +267,9 @@ function defaultCodecSource(
   if (!getCollabContentAdapter("code")) {
     registerCollabContentAdapter(CodeCollabContentAdapter);
   }
+  if (!getCollabContentAdapter(HTML_PAGE_DOCUMENT_TYPE)) {
+    registerCollabContentAdapter(HtmlPageCollabContentAdapter);
+  }
   return {
     list: () => {
       const registered = listRegisteredCollabContentAdapters();
@@ -244,6 +282,13 @@ function defaultCodecSource(
       }
       if (!registered.some((codec) => codec.documentType === "code")) {
         builtins.push(CodeCollabContentAdapter);
+      }
+      if (
+        !registered.some(
+          (codec) => codec.documentType === HTML_PAGE_DOCUMENT_TYPE
+        )
+      ) {
+        builtins.push(HtmlPageCollabContentAdapter);
       }
       return [...builtins, ...registered];
     },
@@ -312,7 +357,10 @@ export class CollaborativeDocumentTypeCatalog {
     let candidates = this.state.entries.filter((entry) =>
       entry.descriptor.fileExtensions.includes(suffix)
     );
-    if (customOwners.length > 0) {
+    const hostOwned = hostOwnedEntries(candidates, suffix);
+    if (hostOwned) {
+      candidates = hostOwned;
+    } else if (customOwners.length > 0) {
       candidates = candidates.filter(
         (entry) =>
           entry.descriptor.editor.kind === "extension" &&
@@ -357,6 +405,7 @@ export class CollaborativeDocumentTypeCatalog {
         (entry) => editorIdFor(entry.descriptor) === editorId
       );
     }
+    candidates = hostOwnedEntries(candidates, suffix) ?? candidates;
 
     const resolvedSuffix = suffix ?? candidates[0]?.descriptor.defaultExtension;
     const entry = resolvedSuffix
@@ -421,7 +470,9 @@ export class CollaborativeDocumentTypeCatalog {
     suffix: string,
     customOwnersBySuffix: Map<string, string[]>
   ): string | undefined {
-    const owners = customOwnersBySuffix.get(suffix) ?? [];
+    const owners = isHostOwner(entry, suffix)
+      ? []
+      : customOwnersBySuffix.get(suffix) ?? [];
     if (owners.length > 1) {
       return `Conflicting custom editors claim "${suffix}": ${owners.join(
         ", "
@@ -530,6 +581,35 @@ export class CollaborativeDocumentTypeCatalog {
       sourceOrder: sourceOrder++,
     });
 
+    const htmlCodec = codecsByType.get(HTML_PAGE_DOCUMENT_TYPE);
+    if (htmlCodec) {
+      entries.push({
+        descriptor: {
+          documentType: HTML_PAGE_DOCUMENT_TYPE,
+          displayName: "HTML page",
+          fileExtensions: [HTML_PAGE_FILE_EXTENSION],
+          defaultExtension: HTML_PAGE_FILE_EXTENSION,
+          icon: "html",
+          // Like Project Canvas, a core editor on the custom-editor mount
+          // contract; see components/HtmlPage/htmlPageRegistration.ts.
+          editor: {
+            kind: "extension",
+            extensionId: HTML_PAGE_EDITOR_ID,
+            componentName: HTML_PAGE_EDITOR_COMPONENT,
+          },
+          content: { strategy: "text", codecId: HTML_PAGE_DOCUMENT_TYPE },
+          creation: { defaultContent: HTML_PAGE_DEFAULT_CONTENT, source: "builtin" },
+          capabilities: emptyCapabilities(true),
+        },
+        extensionName: "HTML page",
+        hasEditorContribution: true,
+        hasEditorComponent: true,
+        declaresCollabBinding: true,
+        codec: htmlCodec,
+        sourceOrder: sourceOrder++,
+      });
+    }
+
     const canvasCodec = codecsByType.get("canvas");
     if (canvasCodec) {
       entries.push({
@@ -564,7 +644,12 @@ export class CollaborativeDocumentTypeCatalog {
     }
 
     const consumedMenus = new Set<string>();
-    const representedCodecTypes = new Set(["markdown", "code", "canvas"]);
+    const representedCodecTypes = new Set([
+      "markdown",
+      "code",
+      "canvas",
+      HTML_PAGE_DOCUMENT_TYPE,
+    ]);
 
     for (const extension of extensions) {
       const manifest = extension.manifest;

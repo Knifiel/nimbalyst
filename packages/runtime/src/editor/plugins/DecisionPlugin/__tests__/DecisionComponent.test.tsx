@@ -130,6 +130,17 @@ describe("DecisionComponent", () => {
     expect(screen.getByText(/1 answered/)).toBeTruthy();
   });
 
+  it("writes a hand-written block's id into the fence with the first vote, so the vote survives a reload", () => {
+    const { doc } = renderBlock(SINGLE.replace("id: dcn-1\n", ""));
+    fireEvent.click(screen.getByText("Icon gutter"));
+    fireEvent.click(screen.getByTestId("decision-answer"));
+
+    const [key] = Object.keys(doc.getMap("decisions").toJSON());
+    const blockId = key.split("\x1f")[0];
+    expect(blockId).toMatch(/^dcn-[0-9a-f]{6}$/);
+    expect(testNode.content).toBe(`id: ${blockId}\n${SINGLE.replace("id: dcn-1\n", "")}`);
+  });
+
   it("keeps a private multiSelect tally hidden after one answer until the server unlocks every assigned ask", async () => {
     const multi = `id: dcn-2
 ask: Which surfaces ship in the beta?

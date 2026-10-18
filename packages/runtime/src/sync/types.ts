@@ -80,6 +80,16 @@ export interface SyncConfig {
    * `readyState`, `send`, `close`, and the four `on*` handlers.
    */
   createWebSocket?: (url: string) => WebSocket;
+
+  /**
+   * Whether this host withholds, or still owes, the transcript of a session:
+   * its project is not enabled for sync, or was enabled and the earlier
+   * transcript is not delivered yet. Read on every index publish so a change
+   * applies without reconnecting; such sessions stay listed with
+   * `transcriptSyncDisabled` in their client metadata (NIM-7545).
+   * Omitted by hosts that never withhold transcripts.
+   */
+  isTranscriptSyncDisabled?: (projectId: string, sessionId: string) => boolean;
 }
 
 /**
@@ -148,6 +158,10 @@ export interface PushChangeOutcome {
    * False when the change was deliberately not sent -- filtered content, sync
    * disabled for the session -- and re-sending it later would be wrong. Absent
    * or true means the attempt failed and may be worth another.
+   *
+   * For a retryable `metadata_updated` the CollabV3 provider has already kept
+   * the change and resends it when the index is usable again; callers need
+   * not retry it themselves. Changes pushed with `isCurrent` are not kept.
    */
   retryable?: boolean;
   /**
@@ -241,7 +255,7 @@ export interface SyncProvider {
    * session that has no permanent room socket. Refuses (non-retryable) after
    * `disconnectAll` until the provider is reconnected.
    */
-  sendSessionMessages?(sessionId: string, messages: AgentMessage[], replay?: { activityAt: number }): Promise<PushChangeOutcome>;
+  sendSessionMessages?(sessionId: string, messages: AgentMessage[]): Promise<PushChangeOutcome>;
 
   /**
    * Bulk update the sessions index with existing sessions.
@@ -260,6 +274,12 @@ export interface SyncProvider {
     /** Callback to load messages for a batch of sessions. Called lazily by the provider
      *  so PGLite isn't blocked loading all messages upfront. */
     getMessagesForSync?: (requests: Array<{ sessionId: string; sinceTimestamp: number }>) => Promise<Map<string, any[]>>;
+    /**
+     * Called once per requested session when its transcript upload settles:
+     * delivered (`published`), never deliverable (`retryable: false`), or
+     * failed and worth another try. Not called if the pass never ran.
+     */
+    onTranscriptSynced?: (sessionId: string, outcome: PushChangeOutcome) => void;
   }): void | Promise<IndexPublishOutcome>;
 
   /** Sync projects to the ProjectsIndex (tells mobile which projects exist and are enabled) */
@@ -303,6 +323,8 @@ export interface SyncProvider {
       queuedPromptCount?: number;
       /** Decrypted queued prompts when the payload is present. */
       queuedPrompts?: SyncedQueuedPrompt[];
+      /** The host listed this session but withheld its transcript (NIM-7545). */
+      transcriptSyncDisabled?: boolean;
     }>;
     projects: Array<{
       projectId: string;

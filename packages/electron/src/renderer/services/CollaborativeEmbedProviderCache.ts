@@ -16,6 +16,7 @@ import {
   resolveDesktopCollabConfigForUri,
   type CollabDocumentConfig,
 } from '../utils/collabDocumentOpener';
+import { collabPresenceName } from '../utils/collabPresenceName';
 import { ElectronLocalReplicaStore } from './ElectronLocalReplicaStore';
 
 export interface CollaborativeEmbedReference {
@@ -179,7 +180,7 @@ export async function createDefaultResource(
       yDoc: syncProvider.getYDoc(),
       user: {
         id: config.teamMemberId,
-        name: config.userName ?? config.teamMemberId,
+        name: collabPresenceName(config),
         color: '#3A8FD6',
       },
     });

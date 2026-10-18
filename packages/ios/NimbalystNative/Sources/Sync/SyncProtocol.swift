@@ -88,6 +88,9 @@ struct ClientMetadata: Codable {
     /// Whether the session has been given a real title, as opposed to still
     /// carrying its placeholder one.
     var hasBeenNamed: Bool?
+    /// The desktop lists the session but withholds its transcript because its
+    /// project is not enabled for sync. Absent means false.
+    var transcriptSyncDisabled: Bool?
 }
 
 /// A project entry as received from the server (encrypted fields).
@@ -734,7 +737,6 @@ struct SessionControlPayload: Codable {
 
 /// Request messages for a session room.
 struct SessionSyncRequest: Codable {
-    var sinceRevision: Int? = nil
     var type: String = "syncRequest"
     /// Message id cursor; the server accepts either this or `sinceSeq`.
     var sinceId: String? = nil
@@ -743,7 +745,6 @@ struct SessionSyncRequest: Codable {
 
 /// Append a message to the session.
 struct AppendMessageRequest: Codable {
-    var expectedRevision: Int? = nil
     var type: String = "appendMessage"
     let message: ServerMessageEntry
 }
@@ -752,7 +753,6 @@ struct AppendMessageRequest: Codable {
 
 /// Sync response with paginated messages.
 struct SessionSyncResponse: Codable {
-    var revisionCursor: Int? = nil
     let type: String
     let messages: [ServerMessageEntry]
     let metadata: SessionRoomMetadata?
@@ -762,9 +762,6 @@ struct SessionSyncResponse: Codable {
 
 /// A message entry from the session room.
 struct ServerMessageEntry: Codable {
-    var projectionVersion: Int? = nil
-    var revision: Int? = nil
-    var payload: SessionPayloadReference? = nil
     let id: String
     let sequence: Int
     let createdAt: Int

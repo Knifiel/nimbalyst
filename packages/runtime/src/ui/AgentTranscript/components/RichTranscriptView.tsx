@@ -16,6 +16,7 @@ import { usePendingQuestionNavigation } from './usePendingQuestionNavigation';
 import { useElapsedTimeRef } from './CustomToolWidgets/useElapsedTime';
 import type { SubagentChildContext, TranscriptToolShared } from './TranscriptToolCard';
 import { TranscriptMessageRow, computeTranscriptRowInfos, type TranscriptRowInfo } from './TranscriptMessageRow';
+import { TranscriptImageGalleryProvider } from './TranscriptImageGallery';
 
 // Edit/diff extraction moved with the tool card; re-exported for existing importers.
 export {
@@ -1105,216 +1106,218 @@ export const RichTranscriptView = React.forwardRef<
   ));
 
   return (
-    <div ref={viewRootRef} className="rich-transcript-view h-full flex flex-col bg-[var(--nim-bg)] relative overflow-x-hidden select-text">
-      {/* Search Bar */}
-      <TranscriptSearchBar
-        isVisible={showSearchBar}
-        messages={messages}
-        containerRef={scrollContainerRef}
-        onClose={() => setShowSearchBar(false)}
-        onScrollToMessage={(index) => {
-          setAtBottomState(false);
-          vlistRef.current?.scrollToIndex(index, { align: 'center' });
-        }}
-      />
+    <TranscriptImageGalleryProvider messages={messages} readFile={readFile}>
+      <div ref={viewRootRef} className="rich-transcript-view h-full flex flex-col bg-[var(--nim-bg)] relative overflow-x-hidden select-text">
+        {/* Search Bar */}
+        <TranscriptSearchBar
+          isVisible={showSearchBar}
+          messages={messages}
+          containerRef={scrollContainerRef}
+          onClose={() => setShowSearchBar(false)}
+          onScrollToMessage={(index) => {
+            setAtBottomState(false);
+            vlistRef.current?.scrollToIndex(index, { align: 'center' });
+          }}
+        />
 
-      {/* Settings Panel */}
-      {showSettings && onSettingsChange && (
-        <div className="rich-transcript-settings py-2 px-3 border-b border-[var(--nim-border)] bg-[var(--nim-bg-secondary)]">
-          <div className="rich-transcript-settings-controls flex flex-wrap gap-3 text-xs">
-            <label className="rich-transcript-settings-label flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={settings.showToolCalls}
-                onChange={(e) => onSettingsChange({ ...settings, showToolCalls: e.target.checked })}
-                className="rich-transcript-settings-checkbox rounded border border-[var(--nim-border)]"
-              />
-              <span>Show Tool Calls</span>
-            </label>
-            <label className="rich-transcript-settings-label flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={settings.compactMode}
-                onChange={(e) => onSettingsChange({ ...settings, compactMode: e.target.checked })}
-                className="rich-transcript-settings-checkbox rounded border border-[var(--nim-border)]"
-              />
-              <span>Compact Mode</span>
-            </label>
-            <label className="rich-transcript-settings-label flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={settings.showThinking}
-                onChange={(e) => onSettingsChange({ ...settings, showThinking: e.target.checked })}
-                className="rich-transcript-settings-checkbox rounded border border-[var(--nim-border)]"
-              />
-              <span>Show Thinking</span>
-            </label>
-          </div>
-        </div>
-      )}
-
-      {/* Messages */}
-      <div
-        ref={scrollContainerRef}
-        className="rich-transcript-scroll-container flex-1 min-h-0 relative overflow-hidden"
-      >
-        <div className={`rich-transcript-content mx-auto py-1 h-full ${settings.compactMode ? 'compact' : 'normal'}`}>
-          {messages.length === 0 && !isWaitingForResponse ? (
-            <div className="rich-transcript-empty flex flex-col items-center p-8 px-4 h-full max-w-4xl mx-auto">
-
-              {hideEmptyHelp ? (
-                <div className="rich-transcript-empty-extras-wrap flex-1 flex flex-col items-center justify-center w-full">
-                  {renderEmptyExtra?.()}
-                </div>
-              ) : (
-                renderEmptyExtra?.()
-              )}
+        {/* Settings Panel */}
+        {showSettings && onSettingsChange && (
+          <div className="rich-transcript-settings py-2 px-3 border-b border-[var(--nim-border)] bg-[var(--nim-bg-secondary)]">
+            <div className="rich-transcript-settings-controls flex flex-wrap gap-3 text-xs">
+              <label className="rich-transcript-settings-label flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={settings.showToolCalls}
+                  onChange={(e) => onSettingsChange({ ...settings, showToolCalls: e.target.checked })}
+                  className="rich-transcript-settings-checkbox rounded border border-[var(--nim-border)]"
+                />
+                <span>Show Tool Calls</span>
+              </label>
+              <label className="rich-transcript-settings-label flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={settings.compactMode}
+                  onChange={(e) => onSettingsChange({ ...settings, compactMode: e.target.checked })}
+                  className="rich-transcript-settings-checkbox rounded border border-[var(--nim-border)]"
+                />
+                <span>Compact Mode</span>
+              </label>
+              <label className="rich-transcript-settings-label flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={settings.showThinking}
+                  onChange={(e) => onSettingsChange({ ...settings, showThinking: e.target.checked })}
+                  className="rich-transcript-settings-checkbox rounded border border-[var(--nim-border)]"
+                />
+                <span>Show Thinking</span>
+              </label>
             </div>
-          ) : !isContainerVisible ? (
-            /* Skip VList rendering when container is hidden (display:none parent).
-               VList with 0 height renders ALL items instead of virtualizing,
-               causing massive DOM bloat and style recalculation. */
-            null
-          ) : (
-            <div
-              className={`rich-transcript-messages rich-transcript-messages-wrapper flex flex-col max-w-full overflow-x-hidden h-full ${isScrollReady ? 'scroll-ready' : ''}`}
-              onWheel={handleScrollIntent}
-              onKeyDown={handleScrollIntent}
-              onPointerDown={handleScrollIntent}
-            >
-              <VList
-                  ref={vlistRef}
-                  className="rich-transcript-vlist !h-full !w-full"
-                  style={{ height: '100%' }}
-                  bufferSize={vlistBufferSize}
-                  itemSize={90}
-                  cache={vlistCacheMap.get(sessionId)}
-                  onScrollEnd={() => {
-                    if (!hitFalseTopRef.current) return;
-                    hitFalseTopRef.current = false;
-                    // Programmatic scrollToIndex applies jumps immediately and
-                    // re-measures until stable, so it lands on the real first row.
-                    vlistRef.current?.scrollToIndex(0, { align: 'start' });
-                  }}
-                  onScroll={(offset) => {
-                    // Track if we're at the bottom for auto-scroll using per-session atom
-                    if (vlistRef.current) {
-                      if (isAtFalseTranscriptTop(offset, vlistRef.current.getItemOffset(0))) {
-                        hitFalseTopRef.current = true;
-                      } else if (offset > vlistRef.current.viewportSize / 2) {
-                        // User headed back down in the same gesture; don't yank them up.
-                        hitFalseTopRef.current = false;
-                      }
-                      const scrollSize = vlistRef.current.scrollSize;
-                      const viewportSize = vlistRef.current.viewportSize;
-                      const distanceFromBottom = scrollSize - offset - viewportSize;
-                      const movedUp = offset < lastScrollOffsetRef.current;
-                      lastScrollOffsetRef.current = offset;
-                      // Update the per-session atom - this persists across component remounts
-                      setAtBottomState(nextTranscriptFollowState(isAtBottomRef.current, distanceFromBottom, movedUp, pointerHeldRef.current));
-                      if (scrollButtonRef.current) {
-                        const show = distanceFromBottom > viewportSize;
-                        scrollButtonRef.current.style.opacity = show ? '1' : '0';
-                        // Only the button opts back into pointer events, and only while visible.
-                        // Clearing it lets the button inherit the container's pointer-events: none.
-                        if (scrollButtonElementRef.current) {
-                          scrollButtonElementRef.current.style.pointerEvents = show ? 'auto' : '';
-                        }
-                      }
-                      // Check if any pending permission widgets are visible in viewport
-                      if (pendingPermissionIndices.length > 0) {
-                        const firstVisibleIdx = vlistRef.current.findItemIndex(offset);
-                        const lastVisibleIdx = vlistRef.current.findItemIndex(offset + viewportSize);
-                        const anyVisible = pendingPermissionIndices.some(
-                          idx => idx >= firstVisibleIdx && idx <= lastVisibleIdx
-                        );
-                        if (pendingPermissionsVisibleRef.current !== anyVisible) {
-                          pendingPermissionsVisibleRef.current = anyVisible;
-                          setShowPermissionBanner(!anyVisible);
-                        }
-                      } else if (showPermissionBanner) {
-                        setShowPermissionBanner(false);
-                      }
-                  }
-                  }}
-                >
-                  {renderedMessages}
-                  {/* Restart indicator at bottom when all messages precede the restart (dev mode only) */}
-                  {restartAtBottom && (
-                    <div key="restart-bottom" className="flex items-center gap-3 my-2 px-3">
-                      <div className="flex-1 h-px bg-[var(--nim-error)]" />
-                      <span className="text-[11px] font-medium text-[var(--nim-error)] whitespace-nowrap">
-                        Nimbalyst restarted {formatMessageTime(appStartTime!)}
-                      </span>
-                      <div className="flex-1 h-px bg-[var(--nim-error)]" />
-                    </div>
-                  )}
-                  {isWaitingForResponse && (
-                    <div key="waiting" className="rich-transcript-waiting flex items-center gap-2 text-[var(--nim-text-muted)] italic py-2 px-4 mb-2">
-                      <div className="rich-transcript-waiting-dots flex gap-1">
-                        <div className="rich-transcript-waiting-dot w-2 h-2 rounded-full bg-[var(--nim-primary)]" />
-                        <div className="rich-transcript-waiting-dot w-2 h-2 rounded-full bg-[var(--nim-primary)]" />
-                        <div className="rich-transcript-waiting-dot w-2 h-2 rounded-full bg-[var(--nim-primary)]" />
-                      </div>
-                      <span className="rich-transcript-waiting-text">{waitingText}</span>
-                      {turnStartedAt !== undefined && (
-                        <span
-                          ref={turnElapsedRef}
-                          className="rich-transcript-waiting-elapsed tabular-nums not-italic text-[var(--nim-text-faint)]"
-                          data-testid="turn-elapsed"
-                        />
-                      )}
-                    </div>
-                  )}
-              </VList>
-            </div>
-          )}
-        </div>
-
-        {/* Pending permissions banner - shown when pending permission widgets are scrolled out of view */}
-        {showPermissionBanner && pendingPermissionIndices.length > 0 && (
-          <div className="sticky bottom-12 flex justify-center z-10 pointer-events-none">
-            <button
-              onClick={() => {
-                const targetIdx = pendingPermissionIndices[0];
-                setAtBottomState(false);
-                vlistRef.current?.scrollToIndex(targetIdx, { align: 'center' });
-              }}
-              className="pointer-events-auto flex items-center gap-2 px-4 py-2 bg-[var(--nim-primary)] text-white rounded-full shadow-lg text-sm font-medium cursor-pointer border-none transition-all hover:brightness-110"
-            >
-              <MaterialSymbol icon="shield" size={16} />
-              {pendingPermissionIndices.length} pending permission{pendingPermissionIndices.length > 1 ? 's' : ''} — click to review
-            </button>
           </div>
         )}
 
-        {/* Scroll to bottom button - uses ref + opacity to avoid layout shifts that interfere with text selection.
-            The container spans the full pane width, so it must stay pointer-events-none in every state;
-            only the button opts back in, otherwise it becomes a dead band for clicks and the wheel. */}
-        <div ref={scrollButtonRef} className="rich-transcript-scroll-button-container sticky bottom-3 flex justify-center pointer-events-none opacity-0 transition-opacity">
-          <button
-            ref={scrollButtonElementRef}
-            onClick={scrollToBottom}
-            className="rich-transcript-scroll-button w-9 h-9 flex items-center justify-center bg-[var(--nim-primary)] text-white rounded-full border-none shadow-lg cursor-pointer transition-all hover:bg-[var(--nim-primary-hover)] hover:scale-110"
-            title="Scroll to bottom"
-          >
-            <MaterialSymbol icon="arrow_downward" size={20} />
-          </button>
+        {/* Messages */}
+        <div
+          ref={scrollContainerRef}
+          className="rich-transcript-scroll-container flex-1 min-h-0 relative overflow-hidden"
+        >
+          <div className={`rich-transcript-content mx-auto py-1 h-full ${settings.compactMode ? 'compact' : 'normal'}`}>
+            {messages.length === 0 && !isWaitingForResponse ? (
+              <div className="rich-transcript-empty flex flex-col items-center p-8 px-4 h-full max-w-4xl mx-auto">
+
+                {hideEmptyHelp ? (
+                  <div className="rich-transcript-empty-extras-wrap flex-1 flex flex-col items-center justify-center w-full">
+                    {renderEmptyExtra?.()}
+                  </div>
+                ) : (
+                  renderEmptyExtra?.()
+                )}
+              </div>
+            ) : !isContainerVisible ? (
+              /* Skip VList rendering when container is hidden (display:none parent).
+                 VList with 0 height renders ALL items instead of virtualizing,
+                 causing massive DOM bloat and style recalculation. */
+              null
+            ) : (
+              <div
+                className={`rich-transcript-messages rich-transcript-messages-wrapper flex flex-col max-w-full overflow-x-hidden h-full ${isScrollReady ? 'scroll-ready' : ''}`}
+                onWheel={handleScrollIntent}
+                onKeyDown={handleScrollIntent}
+                onPointerDown={handleScrollIntent}
+              >
+                <VList
+                    ref={vlistRef}
+                    className="rich-transcript-vlist !h-full !w-full"
+                    style={{ height: '100%' }}
+                    bufferSize={vlistBufferSize}
+                    itemSize={90}
+                    cache={vlistCacheMap.get(sessionId)}
+                    onScrollEnd={() => {
+                      if (!hitFalseTopRef.current) return;
+                      hitFalseTopRef.current = false;
+                      // Programmatic scrollToIndex applies jumps immediately and
+                      // re-measures until stable, so it lands on the real first row.
+                      vlistRef.current?.scrollToIndex(0, { align: 'start' });
+                    }}
+                    onScroll={(offset) => {
+                      // Track if we're at the bottom for auto-scroll using per-session atom
+                      if (vlistRef.current) {
+                        if (isAtFalseTranscriptTop(offset, vlistRef.current.getItemOffset(0))) {
+                          hitFalseTopRef.current = true;
+                        } else if (offset > vlistRef.current.viewportSize / 2) {
+                          // User headed back down in the same gesture; don't yank them up.
+                          hitFalseTopRef.current = false;
+                        }
+                        const scrollSize = vlistRef.current.scrollSize;
+                        const viewportSize = vlistRef.current.viewportSize;
+                        const distanceFromBottom = scrollSize - offset - viewportSize;
+                        const movedUp = offset < lastScrollOffsetRef.current;
+                        lastScrollOffsetRef.current = offset;
+                        // Update the per-session atom - this persists across component remounts
+                        setAtBottomState(nextTranscriptFollowState(isAtBottomRef.current, distanceFromBottom, movedUp, pointerHeldRef.current));
+                        if (scrollButtonRef.current) {
+                          const show = distanceFromBottom > viewportSize;
+                          scrollButtonRef.current.style.opacity = show ? '1' : '0';
+                          // Only the button opts back into pointer events, and only while visible.
+                          // Clearing it lets the button inherit the container's pointer-events: none.
+                          if (scrollButtonElementRef.current) {
+                            scrollButtonElementRef.current.style.pointerEvents = show ? 'auto' : '';
+                          }
+                        }
+                        // Check if any pending permission widgets are visible in viewport
+                        if (pendingPermissionIndices.length > 0) {
+                          const firstVisibleIdx = vlistRef.current.findItemIndex(offset);
+                          const lastVisibleIdx = vlistRef.current.findItemIndex(offset + viewportSize);
+                          const anyVisible = pendingPermissionIndices.some(
+                            idx => idx >= firstVisibleIdx && idx <= lastVisibleIdx
+                          );
+                          if (pendingPermissionsVisibleRef.current !== anyVisible) {
+                            pendingPermissionsVisibleRef.current = anyVisible;
+                            setShowPermissionBanner(!anyVisible);
+                          }
+                        } else if (showPermissionBanner) {
+                          setShowPermissionBanner(false);
+                        }
+                    }
+                    }}
+                  >
+                    {renderedMessages}
+                    {/* Restart indicator at bottom when all messages precede the restart (dev mode only) */}
+                    {restartAtBottom && (
+                      <div key="restart-bottom" className="flex items-center gap-3 my-2 px-3">
+                        <div className="flex-1 h-px bg-[var(--nim-error)]" />
+                        <span className="text-[11px] font-medium text-[var(--nim-error)] whitespace-nowrap">
+                          Nimbalyst restarted {formatMessageTime(appStartTime!)}
+                        </span>
+                        <div className="flex-1 h-px bg-[var(--nim-error)]" />
+                      </div>
+                    )}
+                    {isWaitingForResponse && (
+                      <div key="waiting" className="rich-transcript-waiting flex items-center gap-2 text-[var(--nim-text-muted)] italic py-2 px-4 mb-2">
+                        <div className="rich-transcript-waiting-dots flex gap-1">
+                          <div className="rich-transcript-waiting-dot w-2 h-2 rounded-full bg-[var(--nim-primary)]" />
+                          <div className="rich-transcript-waiting-dot w-2 h-2 rounded-full bg-[var(--nim-primary)]" />
+                          <div className="rich-transcript-waiting-dot w-2 h-2 rounded-full bg-[var(--nim-primary)]" />
+                        </div>
+                        <span className="rich-transcript-waiting-text">{waitingText}</span>
+                        {turnStartedAt !== undefined && (
+                          <span
+                            ref={turnElapsedRef}
+                            className="rich-transcript-waiting-elapsed tabular-nums not-italic text-[var(--nim-text-faint)]"
+                            data-testid="turn-elapsed"
+                          />
+                        )}
+                      </div>
+                    )}
+                </VList>
+              </div>
+            )}
+          </div>
+
+          {/* Pending permissions banner - shown when pending permission widgets are scrolled out of view */}
+          {showPermissionBanner && pendingPermissionIndices.length > 0 && (
+            <div className="sticky bottom-12 flex justify-center z-10 pointer-events-none">
+              <button
+                onClick={() => {
+                  const targetIdx = pendingPermissionIndices[0];
+                  setAtBottomState(false);
+                  vlistRef.current?.scrollToIndex(targetIdx, { align: 'center' });
+                }}
+                className="pointer-events-auto flex items-center gap-2 px-4 py-2 bg-[var(--nim-primary)] text-white rounded-full shadow-lg text-sm font-medium cursor-pointer border-none transition-all hover:brightness-110"
+              >
+                <MaterialSymbol icon="shield" size={16} />
+                {pendingPermissionIndices.length} pending permission{pendingPermissionIndices.length > 1 ? 's' : ''} — click to review
+              </button>
+            </div>
+          )}
+
+          {/* Scroll to bottom button - uses ref + opacity to avoid layout shifts that interfere with text selection.
+              The container spans the full pane width, so it must stay pointer-events-none in every state;
+              only the button opts back in, otherwise it becomes a dead band for clicks and the wheel. */}
+          <div ref={scrollButtonRef} className="rich-transcript-scroll-button-container sticky bottom-3 flex justify-center pointer-events-none opacity-0 transition-opacity">
+            <button
+              ref={scrollButtonElementRef}
+              onClick={scrollToBottom}
+              className="rich-transcript-scroll-button w-9 h-9 flex items-center justify-center bg-[var(--nim-primary)] text-white rounded-full border-none shadow-lg cursor-pointer transition-all hover:bg-[var(--nim-primary-hover)] hover:scale-110"
+              title="Scroll to bottom"
+            >
+              <MaterialSymbol icon="arrow_downward" size={20} />
+            </button>
+          </div>
         </div>
+        {pendingQuestions.length > 0 && (
+          <div className="rich-transcript-question-navigation shrink-0 flex justify-end border-t border-[var(--nim-border)] bg-[var(--nim-bg)] px-3 py-2">
+            <button
+              onClick={() => jumpToQuestion(pendingQuestions[0])}
+              aria-label="Jump to question"
+              className="rich-transcript-question-button flex items-center gap-1.5 px-3 py-1.5 bg-[var(--nim-primary)] text-[var(--nim-on-primary)] rounded-md text-xs font-medium cursor-pointer border-none hover:brightness-110"
+            >
+              <MaterialSymbol icon="help" size={16} />
+              Jump to question
+            </button>
+          </div>
+        )}
       </div>
-      {pendingQuestions.length > 0 && (
-        <div className="rich-transcript-question-navigation shrink-0 flex justify-end border-t border-[var(--nim-border)] bg-[var(--nim-bg)] px-3 py-2">
-          <button
-            onClick={() => jumpToQuestion(pendingQuestions[0])}
-            aria-label="Jump to question"
-            className="rich-transcript-question-button flex items-center gap-1.5 px-3 py-1.5 bg-[var(--nim-primary)] text-[var(--nim-on-primary)] rounded-md text-xs font-medium cursor-pointer border-none hover:brightness-110"
-          >
-            <MaterialSymbol icon="help" size={16} />
-            Jump to question
-          </button>
-        </div>
-      )}
-    </div>
+    </TranscriptImageGalleryProvider>
   );
 });
 

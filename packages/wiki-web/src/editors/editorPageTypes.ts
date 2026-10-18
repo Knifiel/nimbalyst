@@ -28,6 +28,7 @@ export const WIKI_EDITOR_PAGE_TYPES: Readonly<Record<string, string>> = {
   '.csv': 'csv',
   '.calc.md': 'calc.md',
   '.canvas': 'canvas',
+  '.html': 'html',
 };
 
 function suffixOf(pattern: string): string | null {

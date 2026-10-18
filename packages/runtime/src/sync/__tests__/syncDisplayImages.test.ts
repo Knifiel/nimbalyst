@@ -33,8 +33,8 @@ describe('inlineDisplayImagesForSync', () => {
     });
   });
 
-  it('covers Codex mcpToolCall rows and leaves items path-only past the per-row budget', async () => {
-    const big = 'x'.repeat(400 * 1024);
+  it('covers Codex mcpToolCall rows and leaves items path-only once the row limit is reached', async () => {
+    const big = 'x'.repeat(200 * 1024);
     setSyncLocalImageLoader(async () => ({ data: big, mimeType: 'image/jpeg' }));
     const row = JSON.stringify({
       method: 'item/started',

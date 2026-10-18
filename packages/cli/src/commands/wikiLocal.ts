@@ -81,7 +81,7 @@ function readInput(args: ParsedArgs): string {
   return fs.readFileSync(0, 'utf8');
 }
 
-export async function runLocalWiki(args: ParsedArgs): Promise<number> {
+export async function runLocalWiki(args: ParsedArgs, version = '0.0.0-dev'): Promise<number> {
   const location = flagStr(args, 'location');
   if (args.verb === 'init') {
     const result = await initLocalWiki(startDir(args), location);
@@ -103,7 +103,7 @@ export async function runLocalWiki(args: ParsedArgs): Promise<number> {
   try {
     switch (args.verb) {
       case 'move-to-team':
-        return await runMoveToTeam(args, opened);
+        return await runMoveToTeam(args, opened, version);
       case 'list':
       case 'ls':
         return await runLs(args, wiki);

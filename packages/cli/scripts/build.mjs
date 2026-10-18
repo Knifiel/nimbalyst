@@ -70,6 +70,8 @@ await build({
   target: 'node22',
   external: ['better-sqlite3'],
   define: { __NIM_VERSION__: JSON.stringify(version) },
+  // The app's mark parser is pure but not a package of its own; see src/types/pageMarkSyntax.d.ts.
+  alias: { '@nimbalyst/runtime/core/pageMarkSyntax': path.join(packageDir, '../runtime/src/core/pageMarkSyntax.ts') },
   // Each entry is bundled independently rather than sharing chunks: the two bin
   // entries differ only in whether they declare the bundled SQLite channel
   // before anything opens a database, and that declaration is module state.

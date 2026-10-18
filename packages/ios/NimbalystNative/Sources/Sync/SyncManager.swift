@@ -14,7 +14,7 @@ import os
 public final class SyncManager: ObservableObject {
     let logger = Logger(subsystem: "com.nimbalyst.app", category: "SyncManager")
 
-    let crypto: CryptoManager
+    private let crypto: CryptoManager
     private let database: DatabaseManager
     let indexClient: WebSocketClient = {
         let client = WebSocketClient()
@@ -27,7 +27,9 @@ public final class SyncManager: ObservableObject {
     private let indexDecoder = IndexMessageDecoder()
 
     @Published public var isConnected = false
-    @Published public private(set) var indexLoadState: IndexLoadState = .loading
+    @Published public private(set) var indexLoadState: IndexLoadState = .loading {
+        didSet { indexLoadStateChanged(from: oldValue) }
+    }
     @Published public var connectedDevices: [DeviceInfo] = []
 
     /// The session ID currently connected to the session room, if any.
@@ -165,6 +167,7 @@ public final class SyncManager: ObservableObject {
     /// Dispatch a diagnostic to both the per-session handler (if registered)
     /// and the legacy single-callback consumer.
     private func emitSessionSyncDiagnostic(_ sessionId: String, _ diagnostic: SessionSyncDiagnostic) {
+        SyncDiagnosticsFile.shared.log(commit: diagnostic, sessionId: sessionId)
         sessionSyncDiagnosticHandlers[sessionId]?(diagnostic)
         onSessionSyncDiagnostic?(sessionId, diagnostic)
     }
@@ -329,6 +332,7 @@ public final class SyncManager: ObservableObject {
                     self.indexLoadState = .failed
                     return
                 }
+                self.indexCoverageChanged(coverage)
                 switch coverage.compatibility {
                 case .v2 where self.indexLoadState != .loaded:
                     // At least one page applied, so the list has real data.
@@ -369,6 +373,7 @@ public final class SyncManager: ObservableObject {
             return
         }
         logger.error("Index server error [\(error.code)]: \(error.message ?? "")")
+        SyncDiagnosticsFile.shared.log("indexServerError", ["code": .label(error.code)])
         replication?.handle(errorCode: error.code, requestId: error.requestId)
         if indexLoadState == .loading, error.code != "unknown_message_type" {
             indexLoadState = .failed
@@ -569,10 +574,9 @@ public final class SyncManager: ObservableObject {
                 self?.connectedDevices = []
             }
             if connected {
-                // A transport error is what this reconnect answers. Parked
-                // writes re-publish next; one that fails again reports again.
+                // A transport error is what this reconnect answers. Parked writes
+                // re-publish after index catch-up; see SyncManager+ParkedWrites.
                 if self?.syncError?.kind == .transport { self?.clearSyncError() }
-                self?.requests.reconnect()
                 // Versioned replication probes first; the probe's
                 // unknown_message_type answer is what falls back to the
                 // legacy index request (see IndexReplicationClient).
@@ -880,6 +884,7 @@ public final class SyncManager: ObservableObject {
     private func handleServerError(_ data: Data) {
         guard let error = try? decoder.decode(ServerError.self, from: data) else { return }
         logger.error("Server error [\(error.code)]: \(error.message)")
+        SyncDiagnosticsFile.shared.log("serverError", ["code": .label(error.code), "activeSessionId": .id(activeSessionId)])
     }
 
     // MARK: - Session Client Setup
@@ -929,7 +934,7 @@ public final class SyncManager: ObservableObject {
             sinceSeq = nil
         }
 
-        let request = SessionSyncRequest(sinceRevision: forceFullSync ? 0 : transcriptRevisionCursor((try? database.syncState(forRoom: sessionId))?.lastCursor), sinceSeq: sinceSeq)
+        let request = SessionSyncRequest(sinceSeq: sinceSeq)
         guard let data = try? JSONEncoder().encode(request),
               let json = String(data: data, encoding: .utf8) else {
             logger.error("requestSessionSync failed to encode request for session \(sessionId)")
@@ -940,6 +945,7 @@ public final class SyncManager: ObservableObject {
         // bug manifests when this line appears but no syncResponse ever returns,
         // so its presence/absence is a critical diagnostic signal.
         logger.info("requestSessionSync: sending sinceSeq=\(sinceSeq ?? -1) for session \(sessionId) (attempt \(attempt))")
+        SyncDiagnosticsFile.shared.log("sessionSyncRequest", ["sessionId": .id(sessionId), "sinceSeq": .int(sinceSeq ?? -1), "full": .bool(forceFullSync), "localCount": .int(localCount), "maxLocalSeq": .int(maxLocalSequence), "expected": .int(expectedCount), "attempt": .int(attempt)])
 
         // Use completion-based send to detect failures and retry.
         // The WebSocket connection may not be fully established yet when this
@@ -973,8 +979,6 @@ public final class SyncManager: ObservableObject {
         switch envelope.type {
         case "syncResponse":
             handleSessionSyncResponse(data, sessionId: sessionId)
-        case "messagePayloadPart":
-            acceptPayloadPart(data, sessionId: sessionId)
         case "messageBroadcast":
             handleMessageBroadcast(data, sessionId: sessionId)
         case "metadataBroadcast":
@@ -993,6 +997,7 @@ public final class SyncManager: ObservableObject {
         do {
             response = try decoder.decode(SessionSyncResponse.self, from: data)
             logger.info("handleSessionSyncResponse: \(response.messages.count) messages, hasMore=\(response.hasMore) for session \(self.activeSessionId ?? "nil")")
+            SyncDiagnosticsFile.shared.log("sessionSyncPage", ["sessionId": .id(sessionId), "rows": .int(response.messages.count), "hasMore": .bool(response.hasMore)])
         } catch {
             let rawPreview = String(data: data.prefix(500), encoding: .utf8) ?? "<binary>"
             logger.error("Failed to decode session syncResponse: \(error.localizedDescription) — raw: \(rawPreview)")
@@ -1008,10 +1013,11 @@ public final class SyncManager: ObservableObject {
         // Buffer messages for batch insert
         sessionSyncBuffer.append(contentsOf: response.messages)
 
-        if response.hasMore, let cursor = response.revisionCursor.map(String.init) ?? response.cursor {
+        if response.hasMore, let cursor = response.cursor {
             // Request next page
             let sinceSeq = Int(cursor)
-            let request = SessionSyncRequest(sinceRevision: response.revisionCursor, sinceSeq: response.revisionCursor == nil ? sinceSeq : nil)
+            SyncDiagnosticsFile.shared.log("sessionSyncRequest", ["sessionId": .id(sessionId), "sinceSeq": .int(sinceSeq ?? -1), "page": .bool(true)])
+            let request = SessionSyncRequest(sinceSeq: sinceSeq)
             if let data = try? JSONEncoder().encode(request),
                let json = String(data: data, encoding: .utf8) {
                 requests.send(kind: .sessionSyncPage, channel: .session, json: json)
@@ -1036,31 +1042,26 @@ public final class SyncManager: ObservableObject {
             return msg
         }
 
-        let maxRevision = sessionSyncBuffer.compactMap(\.revision).max()
-        let receivedEntries = sessionSyncBuffer
-        // An inline row that fails to decrypt is from a prior key epoch and never
-        // becomes readable; only an incomplete chunked row may heal on a refetch.
-        let holdsCursor = receivedEntries.contains { $0.payload != nil && failedIds.contains($0.id) }
         sessionSyncBuffer = []
 
         // Log decryption results
         if !failedIds.isEmpty {
             logger.error("Decryption failed for \(failedIds.count)/\(totalCount) messages in session \(sessionId). Failed sequences: \(failedSeqs.prefix(10))")
-            recordUnreadableHistory(failed: failedIds.count, of: totalCount)
+            // Unreadable history rows go to "Copy diagnostics" only, never the banner.
+            DiagnosticsLog.shared.record(area: "sync.decrypt", summary: "Some synced messages could not be decrypted",
+                                         detail: "\(failedIds.count) of \(totalCount) in one session")
         }
 
         do {
             try database.appendMessages(messages)
-            for entry in receivedEntries where !failedIds.contains(entry.id) { sessionPayloads.release(entry, sessionId: sessionId) }
 
-            let previous = try database.syncState(forRoom: sessionId)
             // Update sync watermark to max sequence
             if let maxSeq = messages.map(\.sequence).max() {
                 let now = Int(Date().timeIntervalSince1970 * 1000)
                 let syncState = SyncState(
                     roomId: sessionId,
-                    lastCursor: !holdsCursor ? maxRevision.map { "r:\(max($0, transcriptRevisionCursor(previous?.lastCursor)))" } ?? previous?.lastCursor : previous?.lastCursor,
-                    lastSequence: max(maxSeq, previous?.lastSequence ?? 0),
+                    lastCursor: nil,
+                    lastSequence: maxSeq,
                     lastSyncedAt: now
                 )
                 try database.updateSyncState(syncState)
@@ -1068,36 +1069,18 @@ public final class SyncManager: ObservableObject {
 
             logger.info("Stored \(messages.count)/\(totalCount) messages for session \(sessionId)")
 
-            // Report diagnostics
             if messages.isEmpty && totalCount > 0 {
                 logger.error("All \(totalCount) messages failed decryption for session \(sessionId)")
-                emitSessionSyncDiagnostic(sessionId, SessionSyncDiagnostic(
-                    totalServerMessages: totalCount, decryptedCount: 0, storedCount: 0,
-                    failedMessageIds: failedIds, failedSequences: failedSeqs,
-                    error: "All \(totalCount) messages failed decryption"
-                ))
-            } else if messages.isEmpty && totalCount == 0 {
+            } else if totalCount == 0 {
                 logger.info("Session sync returned 0 messages for session \(sessionId) — transcript may not exist on server")
-                emitSessionSyncDiagnostic(sessionId, SessionSyncDiagnostic(
-                    totalServerMessages: 0, decryptedCount: 0, storedCount: 0,
-                    failedMessageIds: [], failedSequences: [],
-                    error: nil
-                ))
-            } else if !failedIds.isEmpty {
-                emitSessionSyncDiagnostic(sessionId, SessionSyncDiagnostic(
-                    totalServerMessages: totalCount, decryptedCount: messages.count,
-                    storedCount: messages.count,
-                    failedMessageIds: failedIds, failedSequences: failedSeqs,
-                    error: "\(failedIds.count) of \(totalCount) messages failed decryption"
-                ))
-            } else {
-                emitSessionSyncDiagnostic(sessionId, SessionSyncDiagnostic(
-                    totalServerMessages: totalCount, decryptedCount: messages.count,
-                    storedCount: messages.count,
-                    failedMessageIds: [], failedSequences: [],
-                    error: nil
-                ))
             }
+            let decryptError = failedIds.isEmpty ? nil : messages.isEmpty
+                ? "All \(totalCount) messages failed decryption"
+                : "\(failedIds.count) of \(totalCount) messages failed decryption"
+            emitSessionSyncDiagnostic(sessionId, SessionSyncDiagnostic(
+                totalServerMessages: totalCount, decryptedCount: messages.count, storedCount: messages.count,
+                failedMessageIds: failedIds, failedSequences: failedSeqs, error: decryptError
+            ))
         } catch {
             logger.error("Failed to store session messages: \(error.localizedDescription)")
             emitSessionSyncDiagnostic(sessionId, SessionSyncDiagnostic(
@@ -1125,9 +1108,6 @@ public final class SyncManager: ObservableObject {
 
         do {
             try database.appendMessage(message)
-            if !sessionSyncBuffer.contains(where: { $0.payload?.transferId == broadcast.message.payload?.transferId }) {
-                sessionPayloads.release(broadcast.message, sessionId: sessionId)
-            }
 
             // #NIM-5924: the watermark only moves forward. A broadcast that
             // arrives late, or out of order after a reconnect, used to rewind
@@ -1137,7 +1117,7 @@ public final class SyncManager: ObservableObject {
             guard message.sequence > lastSequence else { return }
             try database.updateSyncState(SyncState(
                 roomId: sessionId,
-                lastCursor: (try database.syncState(forRoom: sessionId))?.lastCursor,
+                lastCursor: nil,
                 lastSequence: message.sequence,
                 lastSyncedAt: Int(Date().timeIntervalSince1970 * 1000)
             ))
@@ -1187,20 +1167,7 @@ public final class SyncManager: ObservableObject {
                    let metaJson = crypto.decryptOrNil(encryptedBase64: encryptedMeta, ivBase64: metaIv),
                    let metaData = metaJson.data(using: .utf8),
                    let clientMeta = try? JSONDecoder().decode(ClientMetadata.self, from: metaData) {
-                    if let ctx = clientMeta.currentContext {
-                        session.contextTokens = ctx.tokens
-                        session.contextWindow = ctx.contextWindow
-                    }
-                    if let pending = clientMeta.hasPendingPrompt {
-                        session.hasQueuedPrompts = pending
-                    }
-                    if let phase = clientMeta.phase {
-                        session.phase = phase
-                    }
-                    if let tags = clientMeta.tags, !tags.isEmpty,
-                       let tagData = try? JSONEncoder().encode(tags) {
-                        session.tagsJson = String(data: tagData, encoding: .utf8)
-                    }
+                    IndexEntryDecryptor.apply(clientMeta, to: &session)
                 }
                 // NOTE: Do NOT apply updatedAt from metadata broadcasts.
                 // Metadata updates (read state, isExecuting, context) should not
@@ -1236,8 +1203,29 @@ public final class SyncManager: ObservableObject {
 
     // MARK: - Message Decryption
 
-    /// See SyncManager+SessionPayloads.swift.
-    let sessionPayloads = SessionPayloadStore()
+    private func decryptServerMessage(_ entry: ServerMessageEntry, sessionId: String) -> Message? {
+        let decrypted: String?
+        do {
+            decrypted = try crypto.decrypt(encryptedBase64: entry.encryptedContent, ivBase64: entry.iv)
+        } catch {
+            SyncDiagnosticsFile.shared.log("decryptFailed", ["sessionId": .id(sessionId), "seq": .int(entry.sequence)])
+            logger.error("Failed to decrypt message \(entry.id) seq=\(entry.sequence) in session \(sessionId): \(error.localizedDescription). encryptedContent length=\(entry.encryptedContent.count), iv length=\(entry.iv.count)")
+            return nil
+        }
+
+        return Message(
+            id: entry.id,
+            sessionId: sessionId,
+            sequence: entry.sequence,
+            source: entry.source,
+            direction: entry.direction,
+            encryptedContent: entry.encryptedContent,
+            iv: entry.iv,
+            contentDecrypted: decrypted,
+            metadataJson: nil,
+            createdAt: entry.createdAt
+        )
+    }
 
     // MARK: - Draft Input Sync
 

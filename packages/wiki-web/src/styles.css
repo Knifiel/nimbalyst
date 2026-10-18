@@ -60,3 +60,8 @@ body {
 
 /* Last, so single-class utilities win against the bundle's component rules. */
 @tailwind utilities;
+
+/* An HTML page fills the editor area and scrolls inside its own frame. */
+.wiki-web-html-page-frame {
+  height: 100% !important;
+}

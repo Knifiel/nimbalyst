@@ -86,6 +86,8 @@ export interface CachedSessionIndex {
   draftUpdatedAt?: number;
   /** Marker that the title was AI-chosen; prevents repeated rename attempts. */
   hasBeenNamed?: boolean;
+  /** Listed, but the host withholds the transcript: its project is not enabled for sync (NIM-7545). */
+  transcriptSyncDisabled?: boolean;
 }
 
 /** Merge intent only when its serialized publication starts, never before enqueueing. */

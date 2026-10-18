@@ -30,6 +30,7 @@ import type {
   RevisionSnapshotAdapter,
 } from '@nimbalyst/runtime';
 import type { CollabDocumentConfig } from '../../utils/collabDocumentOpener';
+import { collabPresenceName } from '../../utils/collabPresenceName';
 import { store, editorDirtyAtom, makeEditorKey } from '@nimbalyst/runtime/store';
 import { errorNotificationService } from '../../services/ErrorNotificationService';
 import {
@@ -102,7 +103,7 @@ export function createCollaborationContext(args: {
     awareness,
     user: {
       id: activeConfig.teamMemberId,
-      name: activeConfig.userName ?? activeConfig.teamMemberId,
+      name: collabPresenceName(activeConfig),
       color: pickCursorColor(activeConfig.teamMemberId),
     },
     ...(hostedComments ? { comments: hostedComments.service } : {}),

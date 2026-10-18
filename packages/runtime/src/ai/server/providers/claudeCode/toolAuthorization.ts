@@ -32,6 +32,7 @@ interface ServicePermissionDeps {
     warnings?: string[];
     signal: AbortSignal;
     teammateName?: string;
+    requiresUserDecision?: boolean;
   }) => Promise<{ decision: 'allow' | 'deny' }>;
 }
 
@@ -44,6 +45,8 @@ interface ServicePermissionParams {
   permissionsPath: string | undefined;
   teammateName: string | undefined;
   warnings?: string[];
+  /** Auto mode escalated this call (classifier or a hook "ask"); skip the bypass-all shortcut. */
+  requiresUserDecision?: boolean;
 }
 
 export const COMPOUND_PART_WARNING = 'This is part of a compound command - each part is checked separately';
@@ -136,7 +139,8 @@ export async function handleToolPermissionWithService(
     workspacePath,
     permissionsPath,
     teammateName,
-    warnings = []
+    warnings = [],
+    requiresUserDecision,
   } = params;
 
   try {
@@ -188,6 +192,7 @@ export async function handleToolPermissionWithService(
       warnings,
       signal: options.signal,
       teammateName,
+      ...(requiresUserDecision && { requiresUserDecision: true }),
     });
 
     if (response.decision === 'allow') {

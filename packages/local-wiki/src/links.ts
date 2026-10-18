@@ -101,9 +101,11 @@ export function formatPageLink(text: string, relPath: string, fragment: string, 
 /**
  * Rewrites the destination of every relative image and non-page link (an
  * attachment). `replace` gets the decoded path and returns a new decoded path,
- * or null to leave the link as written; the rest of the link is kept.
+ * or null to leave the link as written; the rest of the link is kept. With
+ * `raw`, what `replace` returns is a finished destination (a URL) and is
+ * written as it is, without path encoding.
  */
-export function rewriteFileLinks(body: string, replace: (path: string) => string | null): string {
+export function rewriteFileLinks(body: string, replace: (path: string) => string | null, options: { raw?: boolean } = {}): string {
   const excluded = excludedRanges(body);
   let out = '';
   let cursor = 0;
@@ -122,7 +124,7 @@ export function rewriteFileLinks(body: string, replace: (path: string) => string
     if (match[1] !== '!' && (/\.md$/i.test(pathPart) || pathPart.endsWith('/'))) continue;
     const next = replace(safeDecode(pathPart));
     if (next === null) continue;
-    const dest = encodeLinkPath(next) + (hash >= 0 ? rawDest.slice(hash) : '');
+    const dest = (options.raw ? next : encodeLinkPath(next)) + (hash >= 0 ? rawDest.slice(hash) : '');
     const destStart = body.indexOf(match[3], start + match[1].length + match[2].length + 2);
     out += body.slice(cursor, destStart) + dest;
     cursor = destStart + match[3].length;

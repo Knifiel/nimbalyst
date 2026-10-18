@@ -25,6 +25,7 @@ export const DEFAULT_EDITOR_TYPES: Readonly<Record<string, string>> = {
   '.csv': 'csv',
   '.calc.md': 'calc.md',
   '.canvas': 'canvas',
+  '.html': 'html',
 };
 
 /** Normalized suffix table: lower-case keys with a leading dot; markdown and empty entries dropped. */

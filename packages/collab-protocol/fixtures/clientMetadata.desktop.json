@@ -10,5 +10,6 @@
   ],
   "draftInput": "Review the queued changes",
   "draftUpdatedAt": 1789232406000,
-  "hasBeenNamed": true
+  "hasBeenNamed": true,
+  "transcriptSyncDisabled": true
 }

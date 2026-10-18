@@ -1,6 +1,5 @@
-import { SessionPayloadChannel, SessionPayloadPublicationError, type PreparedSessionMessage } from './sessionPayloadChannel';
 import type { AgentMessage } from '../ai/server/types';
-import type { ClientMessage, ServerMessage, SessionMetadata } from './collabV3WireTypes';
+import type { ClientMessage, EncryptedMessage, ServerMessage, SessionMetadata } from './collabV3WireTypes';
 import type { PushChangeOutcome } from './types';
 
 /**
@@ -23,13 +22,11 @@ export interface TransientSessionWriteDeps {
   /** Opens the socket and tracks it so teardown can close it; call the returned release when done. */
   openSocket(sessionId: string): Promise<{ ws: WebSocket; release(): void }>;
   shouldSync(message: AgentMessage): boolean;
-  encryptMessage(message: AgentMessage, key: CryptoKey): Promise<PreparedSessionMessage>;
+  encryptMessage(message: AgentMessage, key: CryptoKey): Promise<EncryptedMessage>;
   encryptTitle(title: string, key: CryptoKey, sessionId?: string): Promise<{ encryptedTitle: string; titleIv: string }>;
 }
 
 export interface TransientSessionMetadata {
-  /** Activity of the original session when replaying older retained rows. */
-  activityAt?: number;
   title?: string;
   provider?: string;
   model?: string;
@@ -37,7 +34,8 @@ export interface TransientSessionMetadata {
 }
 
 const WRITE_TIMEOUT_MS = 30_000;
-const LEGACY_SETTLE_MS = 500;
+/** No per-append ack exists on the wire (#1391); give the room time to apply before closing. */
+const SETTLE_MS = 500;
 
 function activityAtOf(messages: AgentMessage[]): number {
   return messages.reduce((latest, message) => Math.max(
@@ -55,7 +53,7 @@ export async function writeSessionMessagesOverTransientSocket(
   if (deps.isMessageSyncDisabled(sessionId)) {
     return { published: false, reason: 'message sync is disabled for this session', retryable: false };
   }
-  const replayActivityAt = Math.max(activityAtOf(messages), metadata?.activityAt ?? 0);
+  const replayActivityAt = activityAtOf(messages);
   if (!deps.isRetained(replayActivityAt)) {
     return { published: false, reason: 'session is outside transcript retention', retryable: false };
   }
@@ -78,24 +76,21 @@ export async function writeSessionMessagesOverTransientSocket(
     return shutDown;
   }
 
-  const payloadChannel = new SessionPayloadChannel(ws);
   return new Promise<PushChangeOutcome>((resolve, reject) => {
     let settled = false;
     const finish = (outcome: PushChangeOutcome | Error, close = true): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      payloadChannel.dispose();
       release();
       if (close) ws.close();
       if (outcome instanceof Error) reject(outcome);
       else resolve(outcome);
     };
 
-    const timeout = setTimeout(() => finish(new Error('Timeout opening transcript write')), WRITE_TIMEOUT_MS);
+    const timeout = setTimeout(() => finish(new Error('Timeout syncing messages')), WRITE_TIMEOUT_MS);
 
     ws.onopen = async () => {
-      clearTimeout(timeout); // Each publication now has bounded acknowledgement waits.
       try {
         if (cancelled()) {
           finish(shutDown);
@@ -140,25 +135,15 @@ export async function writeSessionMessagesOverTransientSocket(
             finish(shutDown);
             return;
           }
-          try {
-            await payloadChannel.publish(encrypted);
-          } catch (err) {
-            // One refused row (an unshrinkable screenshot) must not abort the batch.
-            if (err instanceof SessionPayloadPublicationError && err.skippable) continue;
-            throw err;
-          }
+          const clientMsg: ClientMessage = { type: 'appendMessage', message: encrypted };
+          ws.send(JSON.stringify(clientMsg));
         }
 
-        // A legacy server sends no acks (#1391); give the room time to apply before closing.
-        if (!payloadChannel.acknowledged) await new Promise(r => setTimeout(r, LEGACY_SETTLE_MS));
+        await new Promise(r => setTimeout(r, SETTLE_MS));
         finish(deps.isMessageSyncDisabled(sessionId)
           ? { published: false, reason: 'message sync is disabled for this session', retryable: false }
           : { published: true });
       } catch (err) {
-        if (err instanceof SessionPayloadPublicationError) {
-          finish({ published: false, reason: err.message, retryable: err.retryable });
-          return;
-        }
         finish(err instanceof Error ? err : new Error(String(err)));
       }
     };
@@ -178,7 +163,6 @@ export async function writeSessionMessagesOverTransientSocket(
         const message: ServerMessage = JSON.parse(
           typeof event.data === 'string' ? event.data : new TextDecoder().decode(event.data)
         );
-        payloadChannel.receive(message);
         if (message.type === 'error' && message.code === 'session_expired') {
           finish({ published: false, reason: 'session expired on the server', retryable: false });
           return;

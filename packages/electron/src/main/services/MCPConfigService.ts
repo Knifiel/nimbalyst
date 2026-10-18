@@ -775,8 +775,15 @@ export class MCPConfigService {
       throw new Error('workspacePath is required');
     }
 
+    // Each watcher is deduplicated on its own. A workspace with no .mcp.json
+    // has only the directory watcher, so guarding on the file watcher alone
+    // opened a new directory handle on every call and leaked the old one (#1748).
+    this.ensureWorkspaceConfigFileWatcher(workspacePath);
+    this.ensureWorkspaceDirWatcher(workspacePath);
+  }
+
+  private ensureWorkspaceConfigFileWatcher(workspacePath: string): void {
     if (this.workspaceWatchers.has(workspacePath)) {
-      logger.mcp.debug('[MCPConfigService] Already watching workspace:', workspacePath);
       return;
     }
 
@@ -803,6 +810,7 @@ export class MCPConfigService {
         if ((error as any).code !== 'ENOENT') {
           logger.mcp.error('[MCPConfigService] Workspace config watcher error:', error);
         }
+        this.evictWatcher(this.workspaceWatchers, workspacePath, fileWatcher);
       });
 
       this.workspaceWatchers.set(workspacePath, fileWatcher);
@@ -811,8 +819,16 @@ export class MCPConfigService {
       // File doesn't exist yet - that's fine, we'll watch the directory instead
       logger.mcp.debug('[MCPConfigService] .mcp.json does not exist yet, watching directory');
     }
+  }
 
-    // Also watch the workspace directory to detect when .mcp.json is created
+  /** Watch the workspace directory to detect when .mcp.json is created. */
+  private ensureWorkspaceDirWatcher(workspacePath: string): void {
+    if (this.workspaceDirWatchers.has(workspacePath)) {
+      return;
+    }
+
+    const mcpJsonPath = path.join(workspacePath, '.mcp.json');
+
     try {
       const dirWatcher = watch(workspacePath, (eventType, filename) => {
         if (filename === '.mcp.json' && (eventType === 'rename' || eventType === 'change')) {
@@ -825,9 +841,7 @@ export class MCPConfigService {
             logger.mcp.info('[MCPConfigService] Workspace .mcp.json created/changed (external):', workspacePath);
 
             // If we weren't watching the file yet, start watching it now
-            if (!this.workspaceWatchers.has(workspacePath)) {
-              this.startWatchingWorkspaceConfig(workspacePath);
-            }
+            this.ensureWorkspaceConfigFileWatcher(workspacePath);
 
             this.notifyChange('workspace', workspacePath);
           });
@@ -836,6 +850,7 @@ export class MCPConfigService {
 
       dirWatcher.on('error', (error) => {
         logger.mcp.error('[MCPConfigService] Workspace directory watcher error:', error);
+        this.evictWatcher(this.workspaceDirWatchers, workspacePath, dirWatcher);
       });
 
       this.workspaceDirWatchers.set(workspacePath, dirWatcher);
@@ -843,6 +858,17 @@ export class MCPConfigService {
     } catch (error) {
       logger.mcp.error('[MCPConfigService] Failed to start workspace directory watcher:', error);
     }
+  }
+
+  /**
+   * Node closes an fs.watch handle when it emits 'error'. Drop it from the
+   * dedupe map so the next start replaces it instead of skipping a dead
+   * watcher. Only the same instance is removed; a replacement stays.
+   */
+  private evictWatcher(watchers: Map<string, FSWatcher>, workspacePath: string, watcher: FSWatcher): void {
+    if (watchers.get(workspacePath) !== watcher) return;
+    watchers.delete(workspacePath);
+    watcher.close();
   }
 
   /**

@@ -11,7 +11,8 @@
 //   .claude-plugin/plugin.json, marketplace.json   Claude Code and Codex
 //   .codex-plugin/, .codex-mcp.json, .mcp.json      from plugins/nimbalyst-wiki
 //   skills/, scripts/, hooks/                       from plugins/nimbalyst-wiki
-//   web/                                            built packages/wiki-web, served by openWikiInBrowser
+//   nimbalyst-wiki-team/                            the team server add-on, from plugins/nimbalyst-wiki-team
+//   web/                                           built packages/wiki-web, served by openWikiInBrowser
 //   README.md, LICENSE, FORMAT.md, CONTRIBUTING.md
 //
 //   node scripts/stage-wiki-repo.mjs <dir>                  build wiki-web, then stage into <dir>
@@ -25,7 +26,7 @@ import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkGenerated, checkManifestVersions, listFiles, PLUGIN_DIR } from './build-wiki-plugin.mjs';
+import { checkGenerated, checkManifestVersions, listFiles, PLUGIN_DIR, TEAM_PLUGIN_DIR } from './build-wiki-plugin.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB_PACKAGE = path.join(REPO_ROOT, 'packages/wiki-web');
@@ -63,7 +64,8 @@ export function unbumpedChanges(pluginDir, outDir) {
 export function stage(outDir, { buildWeb = true } = {}) {
   const stale = [...checkGenerated(), ...checkManifestVersions()];
   if (stale.length > 0) fail(`The plugin is stale; run node scripts/build-wiki-plugin.mjs first:\n  ${stale.join('\n  ')}`);
-  const unbumped = unbumpedChanges(PLUGIN_DIR, outDir);
+  const teamName = path.basename(TEAM_PLUGIN_DIR);
+  const unbumped = [...unbumpedChanges(PLUGIN_DIR, outDir), ...unbumpedChanges(TEAM_PLUGIN_DIR, path.join(outDir, teamName)).map((rel) => `${teamName}/${rel}`)];
   if (unbumped.length > 0) {
     fail(`The plugin changed since the last staging but its version did not; bump .claude-plugin and .codex-plugin plugin.json:\n  ${unbumped.join('\n  ')}`);
   }
@@ -78,6 +80,7 @@ export function stage(outDir, { buildWeb = true } = {}) {
   }
 
   cpSync(PLUGIN_DIR, outDir, { recursive: true });
+  cpSync(TEAM_PLUGIN_DIR, path.join(outDir, teamName), { recursive: true });
   cpSync(webDist, path.join(outDir, 'web'), { recursive: true });
   cpSync(TEMPLATE_DIR, outDir, { recursive: true });
   cpSync(FORMAT_DOC, path.join(outDir, 'FORMAT.md'));
@@ -90,7 +93,7 @@ export function stage(outDir, { buildWeb = true } = {}) {
   writeFileSync(path.join(outDir, 'README.md'), readme);
 
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim();
-  const dirty = execFileSync('git', ['status', '--porcelain', '--', 'plugins/nimbalyst-wiki', 'packages/cli', 'packages/local-wiki', 'packages/wiki-web', 'scripts/wiki-repo'], {
+  const dirty = execFileSync('git', ['status', '--porcelain', '--', 'plugins/nimbalyst-wiki', 'plugins/nimbalyst-wiki-team', 'packages/cli', 'packages/local-wiki', 'packages/wiki-web', 'scripts/wiki-repo'], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
   }).trim();

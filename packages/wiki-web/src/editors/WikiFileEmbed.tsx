@@ -13,6 +13,7 @@ import type { LocalPage } from '@nimbalyst/local-wiki';
 import { DraftStoreContext, type DraftStore } from '../app/drafts';
 import { ExtensionPageEditor } from './ExtensionPageEditor';
 import { editorForFile } from './wikiEditors';
+import { WikiHtmlEmbed } from './html/WikiHtmlEmbed';
 
 const DEFAULT_HEIGHT = 480;
 
@@ -27,6 +28,15 @@ export function embedSize(attrs: Readonly<Record<string, string>>): { width: str
 
 export function renderWikiFileEmbed(embed: FileEmbedRequest, page: LocalPage | null, drafts: DraftStore): ReactNode | null {
   if (!page?.path || page.documentType === 'markdown') return null;
+  // An HTML page is live and interactive in place: no editor chrome, no selection first.
+  if (page.documentType === 'html') {
+    const height = /^\d+$/.test(embed.attrs.height ?? '') ? Number(embed.attrs.height) : undefined;
+    return (
+      <div className="wiki-web-html-embed max-w-full" style={{ width: embedSize(embed.attrs).width }} data-page-id={page.id}>
+        <WikiHtmlEmbed pageId={page.id} title={embed.label || page.title} height={height} />
+      </div>
+    );
+  }
   const fileName = `${page.title}${page.fileExtension}`;
   const editor = editorForFile(fileName);
   if (!editor) return null;

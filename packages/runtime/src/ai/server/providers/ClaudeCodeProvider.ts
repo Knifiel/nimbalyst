@@ -391,8 +391,8 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       },
       getAbortSignal: () => this.abortController?.signal,
       interruptWithMessage: (message) => this.interruptWithMessage(message),
-      createCanUseToolHandler: (sessionId, workspacePath, permissionsPath, teammateName) =>
-        this.createCanUseToolHandler(sessionId, workspacePath, permissionsPath, teammateName),
+      createCanUseToolHandler: (sessionId, workspacePath, permissionsPath, teammateName, queryPermissionMode) =>
+        this.createCanUseToolHandler(sessionId, workspacePath, permissionsPath, teammateName, queryPermissionMode),
     });
 
     // Initialize permission service if all dependencies are available
@@ -3285,10 +3285,22 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
    * 2. The tool needs user approval
    *
    * Our job is to show UI, wait for user response, and save patterns if "Always" is chosen.
+   *
+   * `queryPermissionMode` is the SDK permission mode of the query that owns this
+   * handler when it is fixed for that query (teammates run 'default'). Omitted for
+   * the lead, whose mode is read live from `currentMode` (it can change mid-turn).
    */
-  private createCanUseToolHandler(sessionId?: string, workspacePath?: string, permissionsPath?: string, teammateName?: string) {
+  private createCanUseToolHandler(
+    sessionId?: string,
+    workspacePath?: string,
+    permissionsPath?: string,
+    teammateName?: string,
+    queryPermissionMode?: 'plan' | 'auto' | 'default'
+  ) {
     // Use permissionsPath for trust checks (parent project for worktrees), workspacePath for everything else
     const pathForTrust = permissionsPath || workspacePath;
+    // Only the query that is itself running in auto mode had its calls escalated by the classifier
+    const isAutoModeQuery = () => (queryPermissionMode ?? resolvePermissionMode(this.currentMode)) === 'auto';
 
     let canUseToolCallCount = 0;
 
@@ -3306,7 +3318,8 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
           workspacePath,
           permissionsPath,
           teammateName,
-          warnings
+          warnings,
+          isAutoModeQuery()
         )
       : this.handleToolPermissionFallback(toolName, input, options, sessionId, workspacePath, warnings);
 
@@ -3327,11 +3340,12 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
           input,
           options,
           sessionId,
-          pathForTrust
+          pathForTrust,
+          isAutoModeQuery
         );
         // In Auto mode the SDK classifier escalated this call, so the user
         // decides on the command as a whole rather than part by part.
-        const compoundDecision = !immediateDecision && toolName === 'Bash' && this.currentMode !== 'auto'
+        const compoundDecision = !immediateDecision && toolName === 'Bash' && !isAutoModeQuery()
           ? await authorizeCompoundBashCommand(
               {
                 isPartPreApproved: createCompoundPartPreApprovalCheck(
@@ -3377,7 +3391,8 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     input: any,
     options: ToolPermissionOptions,
     sessionId: string | undefined,
-    pathForTrust: string | undefined
+    pathForTrust: string | undefined,
+    isAutoModeQuery: () => boolean
   ): Promise<{ behavior: 'allow' | 'deny'; updatedInput?: any; message?: string } | null> {
     return resolveImmediateToolDecisionHelper(
       {
@@ -3390,7 +3405,8 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
         handleExitPlanMode: (resolvedSessionId, resolvedInput, resolvedOptions) =>
           this.handleExitPlanMode(resolvedSessionId, resolvedInput, resolvedOptions),
         setCurrentMode: (mode) => { this.currentMode = mode; },
-        getCurrentMode: () => this.currentMode,
+        // The invoking query's mode, not the lead's: a teammate of an auto-mode lead runs 'default'
+        getCurrentMode: () => isAutoModeQuery() ? 'auto' : this.currentMode === 'auto' ? 'agent' : this.currentMode,
         logSecurity: (message, data) => this.logSecurity(message, data),
       },
       {
@@ -3411,7 +3427,8 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     workspacePath: string,
     permissionsPath: string | undefined,
     teammateName: string | undefined,
-    warnings?: string[]
+    warnings: string[] | undefined,
+    requiresUserDecision: boolean
   ): Promise<{ behavior: 'allow' | 'deny'; updatedInput?: any; message?: string }> {
     return handleToolPermissionWithServiceHelper(
       {
@@ -3428,7 +3445,9 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
         workspacePath,
         permissionsPath,
         teammateName,
-        warnings
+        warnings,
+        // In auto mode canUseTool only runs for calls the classifier or a hook escalated (#1740)
+        requiresUserDecision,
       }
     );
   }

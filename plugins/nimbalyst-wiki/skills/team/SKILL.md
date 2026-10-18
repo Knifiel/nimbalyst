@@ -22,9 +22,29 @@ Call `listPages` on `nimbalyst-local`.
 
 In two sentences, no more: "Nimbalyst Teams keeps the wiki on the Nimbalyst server, shared live with your team, with history and comments. Teammates read and edit it in their browser with nothing to install, and their agents use the same pages."
 
-## 3. Sign in the team server
+## 3. Install and sign in the team server
 
-The `nimbalyst-team` server needs the user's Nimbalyst sign-in, and only the user can start it. If its tools (`pages_status` and the rest) are not available, or a call returns an authentication error, tell the user exactly:
+The `nimbalyst-team` server comes in a small add-on plugin, `nimbalyst-wiki-team`, so people who only use a local wiki are never asked to sign in. If its tools (`pages_status` and the rest) are available, skip to "Sign in" below.
+
+### Install the add-on
+
+Check whether it is installed: in Claude Code run `claude plugin list`, in Codex `codex plugin list`, and look for `nimbalyst-wiki-team`. If it is installed, skip to "Sign in".
+
+Otherwise ask once with the host's question tool: "The team wiki needs the nimbalyst-wiki-team add-on, which adds the Nimbalyst sign-in. Install it now?" with "Install" and "Not now". On "Not now", stop here and carry on with the local wiki.
+
+On "Install", run these in the terminal yourself, in order:
+
+- **Claude Code**: `claude plugin marketplace list`. If no marketplace is named `nimbalyst-wiki`, run `claude plugin marketplace add nimbalyst/nimbalyst-wiki`. Then `claude plugin install nimbalyst-wiki-team@nimbalyst-wiki -y`.
+- **Codex**: `codex plugin marketplace list`. If no marketplace is named `nimbalyst-wiki`, run `codex plugin marketplace add nimbalyst/nimbalyst-wiki`. Then `codex plugin add nimbalyst-wiki-team@nimbalyst-wiki`.
+
+If a command fails, show its output and stop. A session only loads plugins when it starts, so tell the user exactly, then wait:
+
+- Claude Code: "Installed. Type `/exit`, then run `claude --continue` in this folder to come back to this conversation with the team server loaded. Then run `/mcp`, choose `nimbalyst-team`, pick Authenticate, and tell me when it says you are connected."
+- Codex: "Installed. Run `codex mcp login nimbalyst-team` in a terminal and sign in, then start a new Codex session here and ask me to continue moving the wiki to Teams."
+
+### Sign in
+
+The `nimbalyst-team` server needs the user's Nimbalyst sign-in, and only the user can start it. If the add-on is installed but its tools are not available, or a call returns an authentication error, tell the user exactly:
 
 "Run `/mcp`, choose `nimbalyst-team`, and pick Authenticate. A browser page opens: sign in or create your Nimbalyst account there and approve. Tell me when it says you are connected."
 
@@ -54,7 +74,7 @@ Call `teamSignIn` on `nimbalyst-local`.
 
 ## 6. Move the local wiki
 
-Call `moveLocalWikiToTeam` with `dryRun: true` (and `project` when there is a pin). Show the user, in a few lines: how many pages, typed pages and types will move, into which project, and anything listed in `skipped` (those stay in the local wiki only). Ask with the host's question tool: move now, or not now.
+Call `moveLocalWikiToTeam` with `dryRun: true` (and `project` when there is a pin). Show the user, in a few lines: how many pages, editor pages, typed pages, types and linked files will move, into which project, and anything listed in `skipped` with its reason (those stay in the local wiki only). Ask with the host's question tool: move now, or not now.
 
 On "move now", call `moveLocalWikiToTeam` without `dryRun`. It sends the pages in batches, rewrites links between pages to their team pages, and returns counts, `homeLink` and `errors`. Page text never comes back to you; do not read local pages to check the move.
 
@@ -79,7 +99,9 @@ Ask with the host's question tool: invite people by email, create an invite link
 
 Tell the user to commit `.nimbalyst/wiki.json` (and `.nimbalyst/local-wiki.json` if it is checked in), so teammates' agents find the same team project. Do not commit it yourself.
 
-Close with one line on what teammates who use Claude Code do: install this plugin, run `/mcp` and authenticate `nimbalyst-team`, and their agent uses the same pages.
+In Claude Code, offer once with the host's question tool to add the wiki plugins to this repository's settings, so teammates who open it in Claude Code are offered them. On yes, run `claude plugin marketplace add nimbalyst/nimbalyst-wiki --scope project`, `claude plugin install nimbalyst-wiki@nimbalyst-wiki --scope project -y` and `claude plugin install nimbalyst-wiki-team@nimbalyst-wiki --scope project -y`. They write `.claude/settings.json`; tell the user to commit it with the pin. Do not commit it yourself.
+
+Close with one line on what teammates who use Claude Code do: install `nimbalyst-wiki` and `nimbalyst-wiki-team` (or accept them when Claude Code offers them for this repository), run `/mcp` and authenticate `nimbalyst-team`, and their agent uses the same pages.
 
 ## Errors
 

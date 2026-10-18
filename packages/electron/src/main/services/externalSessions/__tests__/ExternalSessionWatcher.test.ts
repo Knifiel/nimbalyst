@@ -3,14 +3,13 @@ import { describe, expect, it, vi } from "vitest";
 import { ExternalSessionWatcher } from "../ExternalSessionWatcher";
 import { logger } from "../../../utils/logger";
 import type { ExternalSessionIngestor } from "../ExternalSessionIngestor";
-import type { watch as watchFiles } from "chokidar";
+
+type DirListener = (type: string, filename: string | null) => void;
 
 function harness(intervalMs = 60_000) {
   const handle = {
     on: vi.fn().mockReturnThis(),
-    add: vi.fn(),
-    unwatch: vi.fn(),
-    close: vi.fn(async () => {}),
+    close: vi.fn(),
   };
   const source: any = {
     providerId: "claude-code",
@@ -28,8 +27,14 @@ function harness(intervalMs = 60_000) {
   ]);
   const scopeIsCurrent = vi.fn(() => true);
   const watch = vi.fn<
-    (...args: Parameters<typeof watchFiles>) => typeof handle
+    (root: string, options: { recursive?: boolean }, listener: DirListener) => typeof handle
   >(() => handle);
+  /** Delivers a directory event as fs.watch does: the name is relative to the watched root. */
+  const emit = (root: string, filename: string) => {
+    const call = watch.mock.calls.find(([watched]) => watched === root);
+    if (!call) throw new Error(`No watch on ${root}`);
+    call[2]("rename", filename);
+  };
   const watcher = new ExternalSessionWatcher({
     sources: [source as any],
     ingestor: { ingest } as any,
@@ -38,7 +43,7 @@ function harness(intervalMs = 60_000) {
     scopeIsCurrent,
     intervalMs,
   });
-  return { watcher, source, handle, routes, ingest, scopeIsCurrent, watch };
+  return { watcher, source, handle, routes, ingest, scopeIsCurrent, watch, emit };
 }
 describe("ExternalSessionWatcher", () => {
   it.each(["identify", "ingest"] as const)(
@@ -73,11 +78,8 @@ describe("ExternalSessionWatcher", () => {
           return { messagesAdded: 1, hasMore: false };
         });
         h.source.discover.mockResolvedValue([makeRef("healthy-discovery")]);
-        const onChange = h.handle.on.mock.calls.find(
-          ([event]) => event === "all"
-        )![1] as (event: string, file: string) => void;
-        onChange("change", "/logs/poison.jsonl");
-        onChange("change", "/logs/healthy.jsonl");
+        h.emit("/logs", "poison.jsonl");
+        h.emit("/logs", "healthy.jsonl");
         await vi.advanceTimersToNextTimerAsync();
         expect(h.ingest.mock.calls.map(([, ref]) => ref.externalId)).toContain(
           "healthy-event"
@@ -245,7 +247,8 @@ describe("ExternalSessionWatcher", () => {
     expect(h.handle.close).toHaveBeenCalledTimes(1);
     expect(h.source.dispose).toHaveBeenCalledTimes(1);
   });
-  it("ignores historical Codex trees while watching shallow ancestors and current dates", async () => {
+  it("watches each root as one directory, recursive only for leaves, and ignores historical Codex trees", async () => {
+    vi.useFakeTimers();
     const h = harness();
     h.source.watchRoots.mockReturnValue([
       "/codex/sessions",
@@ -254,15 +257,47 @@ describe("ExternalSessionWatcher", () => {
       "/codex/sessions/2026/09/14",
     ]);
     await h.watcher.start();
-    const ignored = h.watch.mock.calls[0][1]?.ignored;
-    if (typeof ignored !== "function")
-      throw new Error("Expected watcher filter");
-    expect(ignored("/codex/sessions/2025/01/01/rollout-old.jsonl")).toBe(true);
-    expect(ignored("/codex/sessions/2026/09/14/rollout-live.jsonl")).toBe(
-      false
+    // One directory handle per root, never one per file under it.
+    expect(
+      h.watch.mock.calls.map(([root, options]) => [root, options.recursive])
+    ).toEqual([
+      ["/codex/sessions", false],
+      ["/codex/sessions/2026", false],
+      ["/codex/sessions/2026/09", false],
+      ["/codex/sessions/2026/09/14", process.platform !== "linux"],
+    ]);
+    h.emit("/codex/sessions", "2025/01/01/rollout-old.jsonl");
+    h.emit("/codex/sessions/2026/09/14", "rollout-live.jsonl");
+    await vi.advanceTimersToNextTimerAsync();
+    expect(h.source.identify).toHaveBeenCalledWith(
+      "/codex/sessions/2026/09/14/rollout-live.jsonl",
+      ["/workspace"]
     );
-    expect(ignored("/other-provider/session.jsonl")).toBe(true);
+    expect(h.source.identify).not.toHaveBeenCalledWith(
+      "/codex/sessions/2025/01/01/rollout-old.jsonl",
+      expect.anything()
+    );
     await h.watcher.stop();
+    vi.useRealTimers();
+    expect(h.handle.close).toHaveBeenCalledTimes(4);
+  });
+  it("retries a root that does not exist yet on the next scan", async () => {
+    vi.useFakeTimers();
+    const h = harness(5000);
+    try {
+      h.watch.mockImplementationOnce(() => {
+        throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      });
+      await h.watcher.start();
+      expect(h.watch).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(h.watch).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(h.watch).toHaveBeenCalledTimes(2);
+    } finally {
+      await h.watcher.stop();
+      vi.useRealTimers();
+    }
   });
   it("revokes a source read when its workspace closes between scan and commit", async () => {
     const h = harness();

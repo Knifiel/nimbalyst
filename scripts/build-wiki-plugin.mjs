@@ -22,8 +22,8 @@
 // terminal-only tool outside a remote-only block.
 //
 // Also bundles the plugin's two local servers (the session-inputs helper and
-// `nim mcp` as `nimbalyst-local`) into one file each, since a plugin is
-// installed from git with no `npm install`.
+// `nim mcp` as `nimbalyst-local`) and its SessionStart hook into one file each,
+// since a plugin is installed from git with no `npm install`.
 //
 //   node scripts/build-wiki-plugin.mjs          write both copies and the helper
 //   node scripts/build-wiki-plugin.mjs --check  exit 1 if any generated file is stale
@@ -45,7 +45,16 @@ export const SESSION_HELPER_ENTRY = path.join(REPO_ROOT, 'packages/extensions/kn
 export const SESSION_HELPER_OUT = path.join(REPO_ROOT, 'plugins/nimbalyst-wiki/scripts/session-inputs.mjs');
 export const LOCAL_SERVER_ENTRY = path.join(REPO_ROOT, 'packages/cli/src/mcp/pluginEntry.ts');
 export const LOCAL_SERVER_OUT = path.join(REPO_ROOT, 'plugins/nimbalyst-wiki/scripts/nim-local-mcp.mjs');
+/** The SessionStart hook; the Stop hook (keeper-nudge.mjs, hand-written) imports its page coverage too. */
+export const WIKI_CONTEXT_ENTRY = path.join(REPO_ROOT, 'packages/cli/src/mcp/wikiContextEntry.ts');
+export const WIKI_CONTEXT_OUT = path.join(REPO_ROOT, 'plugins/nimbalyst-wiki/scripts/wiki-context.mjs');
 export const PLUGIN_DIR = path.join(REPO_ROOT, 'plugins/nimbalyst-wiki');
+/**
+ * The add-on that declares the `nimbalyst-team` HTTP server. It is a plugin of
+ * its own so a local-only user never sees a sign-in prompt; the `team` skill
+ * installs it. Hand-written: manifests and MCP config only, no skills.
+ */
+export const TEAM_PLUGIN_DIR = path.join(REPO_ROOT, 'plugins/nimbalyst-wiki-team');
 export const SIDES = ['desktop', 'remote'];
 /**
  * Source skill directory -> the skill's directory and `name` on each side. The
@@ -66,9 +75,12 @@ export const SESSION_INPUTS_TOOL = 'list_session_inputs';
 export const LOCAL_INIT_TOOL = 'initLocalWiki';
 export const LOCAL_CONVERT_TOOL = 'convertTypeStorage';
 export const LOCAL_SERVE_TOOL = 'openWikiInBrowser';
+export const LOCAL_COVERAGE_TOOL = 'pagesForFiles';
+export const LOCAL_DOCTOR_TOOL = 'wikiDoctor';
+export const LOCAL_MARKS_TOOL = 'listMarks';
 
 /** Every tool the remote server offers, plus the plugin's local servers. */
-const REMOTE_TOOLS = new Set([...PAGE_TOOL_CONTRACT.map((tool) => tool.name), SESSION_INPUTS_TOOL, LOCAL_INIT_TOOL, LOCAL_CONVERT_TOOL, LOCAL_SERVE_TOOL]);
+const REMOTE_TOOLS = new Set([...PAGE_TOOL_CONTRACT.map((tool) => tool.name), SESSION_INPUTS_TOOL, LOCAL_INIT_TOOL, LOCAL_CONVERT_TOOL, LOCAL_SERVE_TOOL, LOCAL_COVERAGE_TOOL, LOCAL_DOCTOR_TOOL, LOCAL_MARKS_TOOL]);
 /** Tools only a terminal agent has. */
 const TERMINAL_ONLY_TOOLS = new Set([
   ...PAGE_TOOL_CONTRACT.filter((tool) => tool.availability === 'remoteOnly').map((tool) => tool.name),
@@ -76,6 +88,9 @@ const TERMINAL_ONLY_TOOLS = new Set([
   LOCAL_INIT_TOOL,
   LOCAL_CONVERT_TOOL,
   LOCAL_SERVE_TOOL,
+  LOCAL_COVERAGE_TOOL,
+  LOCAL_DOCTOR_TOOL,
+  LOCAL_MARKS_TOOL,
 ]);
 /**
  * Desktop agent tools a skill could name that the remote server does not
@@ -223,14 +238,15 @@ export function bundleSessionHelper() {
 }
 
 /**
- * `nim mcp` as one ESM file. better-sqlite3 stays external: the wiki tools
- * never load it, and a plugin has no native modules to load.
+ * `nim mcp` (or another entry from packages/cli, such as the SessionStart hook)
+ * as one ESM file. better-sqlite3 stays external: the wiki tools never load it,
+ * and a plugin has no native modules to load.
  */
-export function bundleLocalServer() {
+export function bundleLocalServer(entry = LOCAL_SERVER_ENTRY) {
   const cliPackage = JSON.parse(readFileSync(path.join(REPO_ROOT, 'packages/cli/package.json'), 'utf8'));
   const result = buildSync({
     absWorkingDir: REPO_ROOT,
-    entryPoints: [path.relative(REPO_ROOT, LOCAL_SERVER_ENTRY)],
+    entryPoints: [path.relative(REPO_ROOT, entry)],
     bundle: true,
     write: false,
     platform: 'node',
@@ -242,6 +258,8 @@ export function bundleLocalServer() {
       '@nimbalyst/tracker-core': './packages/tracker-core/src/index.ts',
       '@nimbalyst/local-wiki': './packages/local-wiki/src/index.ts',
       '@nimbalyst/collab-protocol': './packages/collab-protocol/src/index.ts',
+      // The app's mark parser; see packages/cli/src/types/pageMarkSyntax.d.ts.
+      '@nimbalyst/runtime/core/pageMarkSyntax': './packages/runtime/src/core/pageMarkSyntax.ts',
     },
     banner: { js: `#!/usr/bin/env node\n// ${GENERATED_NOTE.replace(SOURCE_LABEL, 'packages/cli/src/mcp')}` },
     legalComments: 'none',
@@ -254,6 +272,7 @@ export function bundleLocalServer() {
 const BUNDLES = [
   [SESSION_HELPER_OUT, () => bundleSessionHelper()],
   [LOCAL_SERVER_OUT, () => bundleLocalServer()],
+  [WIKI_CONTEXT_OUT, () => bundleLocalServer(WIKI_CONTEXT_ENTRY)],
 ];
 
 function outputSkills(side) {
@@ -295,15 +314,24 @@ export function checkGenerated({ sourceDir = DEFAULT_SOURCE, targets = DEFAULT_T
  * The plugin's Claude Code and Codex manifests must carry one version: each
  * agent's install reads its own, and the update check in the local server
  * compares against the published one (packages/cli/src/mcp/updateCheck.ts).
+ * The team add-on carries the same version, since that check only reads
+ * nimbalyst-wiki's manifest.
  */
-export function checkManifestVersions(pluginDir = PLUGIN_DIR) {
-  const read = (dir) => {
-    const file = path.join(pluginDir, dir, 'plugin.json');
+export function checkManifestVersions(pluginDir = PLUGIN_DIR, teamDir = TEAM_PLUGIN_DIR) {
+  const read = (root, dir) => {
+    const file = path.join(root, dir, 'plugin.json');
     return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')).version : undefined;
   };
-  const claude = read('.claude-plugin');
-  const codex = read('.codex-plugin');
-  return claude === codex ? [] : [`version mismatch: .claude-plugin/plugin.json is ${claude}, .codex-plugin/plugin.json is ${codex}`];
+  const problems = [];
+  for (const [root, prefix] of [[pluginDir, ''], [teamDir, 'nimbalyst-wiki-team: ']]) {
+    const claude = read(root, '.claude-plugin');
+    const codex = read(root, '.codex-plugin');
+    if (claude !== codex) problems.push(`${prefix}version mismatch: .claude-plugin/plugin.json is ${claude}, .codex-plugin/plugin.json is ${codex}`);
+  }
+  const plugin = read(pluginDir, '.claude-plugin');
+  const team = read(teamDir, '.claude-plugin');
+  if (team !== plugin) problems.push(`version mismatch: nimbalyst-wiki-team is ${team}, nimbalyst-wiki is ${plugin}`);
+  return problems;
 }
 
 export function writeGenerated({ sourceDir = DEFAULT_SOURCE, targets = DEFAULT_TARGETS, bundle = true } = {}) {

@@ -1,6 +1,7 @@
-import { watch as watchFiles, type FSWatcher } from "chokidar";
+import { watch as watchDir, type FSWatcher } from "fs";
 import * as path from "path";
 import { logger } from "../../utils/logger";
+import { supportsRecursiveWatch } from "../../file/WorkspaceNativeWatcher";
 import type { ExternalSessionRef, ExternalSessionSource } from "./types";
 import type {
   ExternalSessionIngestor,
@@ -14,7 +15,11 @@ interface Dependencies {
   sources: ExternalSessionSource[];
   ingestor: Pick<ExternalSessionIngestor, "ingest">;
   getRoutes: () => Promise<ExternalScope[]>;
-  watch?: typeof watchFiles;
+  watch?: (
+    root: string,
+    options: { recursive: boolean; persistent: boolean },
+    listener: (type: string, filename: string | null) => void
+  ) => Pick<FSWatcher, "on" | "close">;
   intervalMs?: number;
   scopeIsCurrent?: (scope: ExternalScope) => boolean;
 }
@@ -23,7 +28,9 @@ interface Dependencies {
 export class ExternalSessionWatcher {
   private generation = 0;
   private enabled = false;
-  private handle?: FSWatcher;
+  // One directory handle per root. A per-file watcher held a descriptor for
+  // every transcript under ~/.claude/projects (2,096 on one machine).
+  private handles = new Map<string, Pick<FSWatcher, "on" | "close">>();
   private timer?: ReturnType<typeof setTimeout>;
   private running?: Promise<void>;
   private roots = new Set<string>();
@@ -51,25 +58,6 @@ export class ExternalSessionWatcher {
     if (this.enabled) return this.running ?? Promise.resolve();
     this.enabled = true;
     this.generation++;
-    this.handle = (this.deps.watch ?? watchFiles)([], {
-      ignoreInitial: true,
-      persistent: false,
-      depth: 6,
-      ignored: (file) => this.ignorePath(file),
-      awaitWriteFinish: { stabilityThreshold: 150, pollInterval: 50 },
-    });
-    this.handle.on("all", (_event, file) => {
-      if (!this.enabled) return;
-      if (file.endsWith(".jsonl") && this.changed.size < 512)
-        this.changed.add(file);
-      this.schedule(100);
-    });
-    this.handle.on("error", (error) =>
-      logger.main.warn(
-        "[ExternalSessions] Watch error; scoped polling will retry",
-        error
-      )
-    );
     return this.tick();
   }
 
@@ -79,9 +67,8 @@ export class ExternalSessionWatcher {
     this.generation++;
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
-    const handle = this.handle;
-    this.handle = undefined;
-    await handle?.close();
+    for (const handle of this.handles.values()) handle.close();
+    this.handles.clear();
     await this.running;
     await Promise.all(this.deps.sources.map((source) => source.dispose()));
     this.changed.clear();
@@ -104,6 +91,53 @@ export class ExternalSessionWatcher {
         (!roots.some((other) => other !== root && contains(root, other)) &&
           contains(root, candidate))
     );
+  }
+  private syncWatches(): void {
+    for (const [root, handle] of this.handles)
+      if (!this.roots.has(root)) {
+        handle.close();
+        this.handles.delete(root);
+      }
+    for (const root of this.roots) {
+      if (this.handles.has(root)) continue;
+      // Ancestors report only the creation of their children. Leaves admit
+      // descendants (Claude subagent logs); Linux has no native recursive
+      // watch, so discovery picks those up there.
+      const leaf = ![...this.roots].some(
+        (other) => other !== root && other.startsWith(root + path.sep)
+      );
+      try {
+        const handle = (this.deps.watch ?? watchDir)(
+          root,
+          { recursive: leaf && supportsRecursiveWatch, persistent: false },
+          (_type, filename) => this.onEvent(root, filename)
+        );
+        handle.on("error", (error) => {
+          handle.close();
+          if (this.handles.get(root) === handle) this.handles.delete(root);
+          logger.main.warn(
+            "[ExternalSessions] Watch error; scoped polling will retry",
+            error
+          );
+        });
+        this.handles.set(root, handle);
+      } catch (error: any) {
+        // A root created later (a new day, a first session) is retried next scan.
+        if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR")
+          logger.main.warn(
+            "[ExternalSessions] Watch failed; scoped polling will retry",
+            error
+          );
+      }
+    }
+  }
+  private onEvent(root: string, filename: string | null): void {
+    if (!this.enabled || !filename) return;
+    const file = path.join(root, filename);
+    if (this.ignorePath(file)) return;
+    if (file.endsWith(".jsonl") && this.changed.size < 512)
+      this.changed.add(file);
+    this.schedule(100);
   }
   private schedule(delay: number): void {
     if (!this.enabled || this.timer) return;
@@ -154,13 +188,8 @@ export class ExternalSessionWatcher {
         routes.size ? source.watchRoots([...routes.keys()]) : []
       )
     );
-    for (const root of this.roots)
-      if (!roots.has(root)) await this.handle?.unwatch(root);
-    if (!eligible()) return;
-    const previousRoots = this.roots;
     this.roots = roots;
-    for (const root of roots)
-      if (!previousRoots.has(root)) this.handle?.add(root);
+    this.syncWatches();
     // Process event files directly; source identify validates cwd and ignores foreign paths.
     const files = [...this.changed].slice(0, 32);
     for (const file of files) {

@@ -14,6 +14,7 @@ import { activeWorkspacePathAtom } from '../../store/atoms/openProjects';
 import { openConsoleLinkInWindow } from '../../utils/openConsoleLink';
 import { PersonalExtensionPageView } from '../CollabMode/PersonalExtensionPageBody';
 import { EmbedFrameShell, EmbedUnresolved } from './EmbedFrameShell';
+import { HTML_PAGE_DOCUMENT_TYPE } from '@nimbalyst/runtime/ui/htmlEmbed/htmlPageCodec';
 
 const NO_DOCUMENTS_ATOM = atom<SharedDocument[]>([]);
 
@@ -48,6 +49,7 @@ export const PersonalPageEmbedFrame: React.FC<EmbedFrameProps & { pageId: string
       onOpen={onOpen}
       markers={{ 'data-embed-personal': 'true', 'data-embed-page-id': pageId }}
       loadingText="Loading page..."
+      interactive={page.documentType === HTML_PAGE_DOCUMENT_TYPE}
     >
       <PersonalExtensionPageView
         documentId={pageId}

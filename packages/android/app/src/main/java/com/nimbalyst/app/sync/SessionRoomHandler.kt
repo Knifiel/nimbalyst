@@ -36,10 +36,6 @@ internal class SessionRoomHandler(
 
     suspend fun handle(message: String, sessionId: String) {
         when (val type = gson.parseOrNull<ServerMessageEnvelope>(message, TAG)?.type) {
-            "messagePayloadPart" -> {
-                val objectValue = gson.fromJson(message, com.google.gson.JsonObject::class.java)
-                decoder.acceptPayloadPart(gson.fromJson(objectValue.get("part"), SessionPayloadPart::class.java), sessionId)
-            }
             "syncResponse" -> handleSyncResponse(message, sessionId)
             "messageBroadcast" -> handleMessageBroadcast(message, sessionId)
             "metadataBroadcast" -> handleMetadataBroadcast(message, sessionId)
@@ -53,9 +49,7 @@ internal class SessionRoomHandler(
         val sinceSeq = explicitSinceSeq ?: repository.syncState(sessionId)?.lastSequence
         val effectiveSinceSeq = sinceSeq?.takeIf { it > 0 }
         Log.d(TAG, "[requestSync] sessionId=$sessionId sinceSeq=$effectiveSinceSeq")
-        val cursor = repository.syncState(sessionId)?.lastCursor
-        val revision = cursor?.takeIf { it.startsWith("r:") }?.drop(2)?.toLongOrNull() ?: 0L
-        send(sessionId, gson.toJson(SessionSyncRequest(sinceSeq = effectiveSinceSeq, sinceRevision = if (explicitSinceSeq == null) revision else null)))
+        send(sessionId, gson.toJson(SessionSyncRequest(sinceSeq = effectiveSinceSeq)))
     }
 
     private suspend fun handleSyncResponse(message: String, sessionId: String) {
@@ -64,20 +58,19 @@ internal class SessionRoomHandler(
         Log.d(TAG, "[syncResponse] ${response.messages.size} messages, hasMore=${response.hasMore} for $sessionId")
         response.metadata?.let { mergeMetadata(sessionId, it, crypto) }
 
-        // An inline row that does not decrypt is from a prior key epoch: asking
-        // again cannot make it readable, so it is skipped. A chunked row that
-        // cannot be reassembled throws from decodeMessage and holds the page,
-        // because its parts may still arrive. Follow the revision cursor, never
-        // a live broadcast's sequence.
         val decryptedMessages = response.messages.mapNotNull { decoder.decodeMessage(it, sessionId, crypto) }
+        // The page covers every row the server returned, readable or not:
+        // asking again cannot make an unreadable message readable. The next
+        // page follows the server's cursor, never the highest sequence seen,
+        // which may be a live message past the rest of history.
         val pageEnd = response.cursor?.toIntOrNull() ?: response.messages.maxOfOrNull { it.sequence }
         val syncedAt = System.currentTimeMillis()
 
         val persisted = repository.persistSessionMessages(
             sessionId = sessionId,
             messages = decryptedMessages,
-            cursor = response.revisionCursor?.let { "r:$it" } ?: response.cursor,
-            historyThrough = if (response.revisionCursor == null) pageEnd else null,
+            cursor = response.cursor,
+            historyThrough = pageEnd,
             syncedAt = syncedAt
         )
         if (!persisted) {
@@ -85,12 +78,10 @@ internal class SessionRoomHandler(
             catchUpWhenRowLands(sessionId)
             return
         }
-        response.messages.forEach { decoder.releasePayload(it, sessionId) }
         state.update { it.copy(lastSessionSyncAt = syncedAt, lastError = null) }
 
-        if (response.hasMore) {
-            if (response.revisionCursor != null) send(sessionId, gson.toJson(SessionSyncRequest(sinceRevision = response.revisionCursor)))
-            else if (pageEnd != null) requestSync(sessionId, pageEnd)
+        if (response.hasMore && pageEnd != null) {
+            requestSync(sessionId, pageEnd)
         }
     }
 
@@ -105,7 +96,7 @@ internal class SessionRoomHandler(
             historyThrough = null,
             syncedAt = System.currentTimeMillis()
         )
-        if (!persisted) catchUpWhenRowLands(sessionId) else decoder.releasePayload(broadcast.message, sessionId)
+        if (!persisted) catchUpWhenRowLands(sessionId)
     }
 
     /**

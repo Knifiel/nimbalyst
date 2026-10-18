@@ -9,6 +9,7 @@ import { $isMermaidNode } from './MermaidNode';
 import { ErrorBoundary } from 'react-error-boundary';
 import { useTheme } from '../../context/ThemeContext';
 import { renderMermaid } from './mermaidRender';
+import './mermaidGantt.css';
 
 interface MermaidComponentProps {
   content: string;
@@ -38,7 +39,7 @@ function MermaidDiagram({ content, id, renderKey }: { content: string; id: strin
         // Use mermaid.render() for more control - it returns SVG directly
         // Use a unique ID with renderKey to avoid mermaid's internal caching issues
         const elementId = `mermaid_${id}_${renderKey}_${Date.now()}`;
-        const { svg, bindFunctions } = await renderMermaid(elementId, content, isDarkTheme);
+        const { svg, bindFunctions } = await renderMermaid(elementId, content, isDarkTheme, containerRef.current);
 
         if (!mounted) return;
 

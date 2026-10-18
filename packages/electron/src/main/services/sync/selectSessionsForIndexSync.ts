@@ -49,6 +49,13 @@ export function selectSessionsForIndexSync<T extends SessionIndexData>(
       if (decision.syncMessages) {
         sessionsNeedingMessageSync.push(localSession.id);
       }
+    } else if (serverSession.transcriptSyncDisabled) {
+      // Listed while its project was not enabled, so the server holds no
+      // transcript (NIM-7545). Every local session here is in an enabled
+      // project: republish to clear the flag and upload the transcript from the
+      // start, mid-turn or not -- the live path only carries rows from now on.
+      sessionsNeedingIndexUpdate.push(localSession);
+      sessionsNeedingMessageSync.push(localSession.id);
     } else {
       // Compare timestamps AND message counts to detect sessions needing sync.
       // The real-time pushChange sends updatedAt=now after DB write, so

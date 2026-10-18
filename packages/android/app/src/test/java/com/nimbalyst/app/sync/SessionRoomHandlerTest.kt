@@ -126,11 +126,11 @@ class SessionRoomHandlerTest {
             addProperty("type", "syncResponse")
             add("messages", JsonArray().apply { add(message(1)); add(prior); add(message(3)) })
             addProperty("hasMore", true)
-            addProperty("revisionCursor", 3)
+            addProperty("cursor", "3")
         }.toString()
         handler.handle(response, "s1")
         assertEquals(2, repository.messageCount("s1"))
-        assertEquals(3L, JsonParser.parseString(sent.last()).asJsonObject.get("sinceRevision").asLong)
+        assertEquals(3, lastRequestedSeq())
     }
 
     @Test

@@ -89,6 +89,12 @@ data class IndexCoverage(
     val hasError: Boolean = false,
     /** Sessions written with a different sync key and not shown. */
     val skippedRowCount: Int = 0,
+    /**
+     * This connection has applied everything the server had when it caught
+     * up: the delta after a proven baseline, or a completed bootstrap with no
+     * delta owed. Writes parked across a disconnect wait for it.
+     */
+    val caughtUp: Boolean = false,
 ) {
     enum class Compatibility {
         UNKNOWN,

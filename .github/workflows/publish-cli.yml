@@ -76,9 +76,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: pnpm install --frozen-lockfile
 
-      # The two packages ship in lockstep: nim's install hint names
-      # @nimbalyst/wiki-web@<nim's version>, so a mismatch publishes a CLI that
-      # points users at a browser app that does not exist.
+      # The two packages ship in lockstep: nim depends on
+      # @nimbalyst/wiki-web@<nim's version> exactly, so a mismatch publishes a
+      # CLI that cannot be installed.
       - name: Verify versions (lockstep, and the expected version if given)
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
@@ -221,20 +221,35 @@ jobs:
         #
         # The tarball comes from `pnpm pack`, the same command the publish job
         # uses, so this installs exactly what would be published.
+        #
+        # @nimbalyst/wiki-web is an exact-version dependency of the CLI (so
+        # `nim wiki serve` always gets the browser app published with it). The
+        # version being released is not on npm yet, so its tarball is
+        # installed alongside and satisfies the dependency.
         run: |
           set -euo pipefail
           WORK=$(mktemp -d)
           pnpm pack --pack-destination "$WORK"
-          TARBALL=$(basename "$(ls "$WORK"/*.tgz)")
+          (cd ../wiki-web && pnpm pack --pack-destination "$WORK")
+          TARBALL=$(basename "$(ls "$WORK"/nimbalyst-cli-*.tgz)")
+          WEB_TARBALL=$(basename "$(ls "$WORK"/nimbalyst-wiki-web-*.tgz)")
           tar -xzOf "$WORK/$TARBALL" package/package.json > "$WORK/packed-package.json"
           if grep -q '"workspace:' "$WORK/packed-package.json"; then
             echo "::error::packed package.json still contains a workspace: specifier"
             exit 1
           fi
+          node -e "
+            const p = require('$WORK/packed-package.json');
+            const pin = p.dependencies && p.dependencies['@nimbalyst/wiki-web'];
+            if (pin !== p.version) {
+              console.error('::error::packed @nimbalyst/cli must depend on @nimbalyst/wiki-web at exactly ' + p.version + ', found ' + pin);
+              process.exit(1);
+            }
+          "
           cp scripts/smoke-fixture.mjs "$WORK/"
           cd "$WORK"
           npm init -y >/dev/null
-          npm install "./$TARBALL" >/dev/null
+          npm install "./$TARBALL" "./$WEB_TARBALL" >/dev/null
           ./node_modules/.bin/nim --help >/dev/null
           node smoke-fixture.mjs "$WORK/smoke.db"
           ./node_modules/.bin/nim tracker list --db smoke.db --workspace /tmp/nim-smoke-workspace --json > list.json
@@ -277,7 +292,7 @@ jobs:
       # everything that does not open the app database works without it. Both
       # tarballs are installed exactly as published, with optional dependencies
       # omitted, then the local wiki, `nim mcp` and `nim wiki serve` (which
-      # finds @nimbalyst/wiki-web installed beside it) are exercised.
+      # finds @nimbalyst/wiki-web, its dependency) are exercised.
       - name: Smoke test nim and wiki-web without better-sqlite3
         run: |
           set -euo pipefail
@@ -407,8 +422,8 @@ jobs:
       # the CLI publishes anonymously and bails on ENEEDAUTH even when
       # id-token: write is granted.
       #
-      # wiki-web goes first: a published nim names wiki-web@<its version> in
-      # its install hint, so that version must exist before nim does. A version
+      # wiki-web goes first: a published nim depends on wiki-web@<its version>,
+      # so that version must exist before nim does or nim will not install. A version
       # already on the registry is skipped, so re-running after a partial
       # publish (wiki-web out, nim failed) finishes the job instead of failing.
       #

@@ -186,6 +186,47 @@ class IndexReplicationTest {
         assertNull(repository.getSession("s2"))
     }
 
+    /**
+     * A draft push replaces the server's whole client-metadata blob. Replayed
+     * before catch-up it was built from the cached blob, restoring a
+     * transcriptSyncDisabled the desktop had since cleared.
+     */
+    @Test
+    fun `a parked draft replays after catch-up, carrying the desktop's current blob`() = runBlocking<Unit> {
+        repository.replaceIndexSnapshot(
+            listOf(ProjectEntity("/p", "p")),
+            listOf(SessionEntity(id = "s1", projectId = "/p", createdAt = 1, updatedAt = 1,
+                clientMetadataJson = """{"phase":"planning","transcriptSyncDisabled":true}""")),
+            1L
+        )
+        manager.connect()
+        // Not open yet: the push fails and is parked.
+        manager.updateDraftInput("s1", "typed offline")
+        index = factory.sockets.last().also { it.open() }
+        idle()
+        fun draftPatches() = index.sent.map { JsonParser.parseString(it).asJsonObject }
+            .filter { it.get("type").asString == "indexClientMetadataPatch" && it.getAsJsonObject("patch").has("encryptedClientMetadata") }
+        assertTrue("parked writes wait for index catch-up", draftPatches().isEmpty())
+
+        // The desktop has since enabled sync for the project: its blob no longer carries the flag.
+        val cleared: JsonObject.() -> Unit = {
+            val blob = crypto.encrypt("""{"phase":"planning"}""")
+            addProperty("encryptedClientMetadata", blob.encrypted)
+            addProperty("clientMetadataIv", blob.iv)
+        }
+        answer(listOf(change("s1", 5, extra = cleared)))
+        assertEquals("bootstrap", lastRequest().get("mode").asString)
+        assertTrue("still catching up", draftPatches().isEmpty())
+        answer(listOf(change("s1", 5, extra = cleared)), complete = true, cursor = 10)
+
+        val patch = draftPatches().last().getAsJsonObject("patch")
+        val sent = JsonParser.parseString(
+            crypto.decrypt(patch.get("encryptedClientMetadata").asString, patch.get("clientMetadataIv").asString)
+        ).asJsonObject
+        assertEquals("typed offline", sent.get("draftInput").asString)
+        assertTrue("the replay carries the desktop's current flag", sent.get("transcriptSyncDisabled")?.asBoolean != true)
+    }
+
     @Test
     fun `a lookup fetches the session, then its missing workstream`() = runBlocking<Unit> {
         connect()

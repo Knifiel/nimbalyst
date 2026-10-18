@@ -213,6 +213,9 @@ export function GitLogPanel({ host }: PanelHostProps) {
   const [detailLoading, setDetailLoading] = useState(false);
   const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hoveredHashRef = useRef<string | null>(null);
+  hoveredHashRef.current = hoveredHash;
+  const hoverRequestRef = useRef(0);
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{ commit: GitCommit; x: number; y: number } | null>(null);
@@ -678,6 +681,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
   const startHideTimer = useCallback(() => {
     if (showTimerRef.current) { clearTimeout(showTimerRef.current); showTimerRef.current = null; }
     hideTimerRef.current = setTimeout(() => {
+      hoverRequestRef.current++;
       setHoveredHash(null);
       setHoverAnchorRect(null);
       setCommitDetail(null);
@@ -689,8 +693,13 @@ export function GitLogPanel({ host }: PanelHostProps) {
     if (selectedIndex !== null) return;
     clearHideTimer();
     if (showTimerRef.current) clearTimeout(showTimerRef.current);
+    // Returning to the row whose card is already open is not a new hover. The
+    // card briefly overlaps its own row when it grows from the loading height,
+    // so resetting here made it blink in a loop under a still cursor.
+    if (hash === hoveredHashRef.current) return;
     const rect = e.currentTarget.getBoundingClientRect();
     showTimerRef.current = setTimeout(async () => {
+      const requestId = ++hoverRequestRef.current;
       setHoveredHash(hash);
       setHoveredAuthor(author);
       setHoveredDate(date);
@@ -699,11 +708,11 @@ export function GitLogPanel({ host }: PanelHostProps) {
       setCommitDetail(null);
       try {
         const detail = await ipc.invoke('git:commit-detail', repoPath, hash) as CommitDetail;
-        setCommitDetail(detail);
+        if (requestId === hoverRequestRef.current) setCommitDetail(detail);
       } catch {
         // non-fatal
       } finally {
-        setDetailLoading(false);
+        if (requestId === hoverRequestRef.current) setDetailLoading(false);
       }
     }, 350);
   }, [repoPath, clearHideTimer, selectedIndex]);

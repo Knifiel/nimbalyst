@@ -12,7 +12,7 @@
  * (cf. `mockup.html`), so share-time documentType resolution and the runtime
  * adapter registry agree.
  */
-import { createTextCollabContentAdapter } from '@nimbalyst/extension-sdk';
+import { createTextCollabContentAdapter } from '@nimbalyst/extension-sdk/collab';
 
 /** Shared Y.Text field carrying the full `.calc.md` document. */
 export const CALC_SHEET_TEXT_FIELD = 'content';

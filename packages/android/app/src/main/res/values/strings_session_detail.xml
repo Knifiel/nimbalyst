@@ -60,6 +60,8 @@
     <string name="session_detail_clipboard_empty">There is no image on the clipboard.</string>
     <string name="session_detail_camera_permission_denied">Camera access is needed to take a photo.</string>
 
+    <string name="session_detail_transcript_not_synced_title">Transcript not synced</string>
+    <string name="session_detail_transcript_not_synced_body">This session\'s project isn\'t synced to this device. To see the transcript, open Settings &gt; Mobile App in the Nimbalyst desktop app and add the project under Projects accessible on mobile.</string>
     <string name="session_detail_open_file_unavailable">Opening files isn\'t available on Android yet.</string>
     <string name="session_detail_interactive_invalid">The transcript sent an invalid response.</string>
     <string name="session_detail_interactive_failed">Failed to send the response to the desktop app.</string>

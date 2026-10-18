@@ -30,6 +30,7 @@ describe('nim wiki', () => {
     });
     expect(() => call('invite', 'a@x.com')).toThrow(/--org/);
     expect(() => call('import')).toThrow(/move-to-team/);
+    expect(() => call('import-token')).toThrow(/move-to-team/);
   });
 
   it('turns each verb into its tool call', () => {

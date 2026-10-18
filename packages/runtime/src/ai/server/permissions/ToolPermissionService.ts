@@ -357,6 +357,11 @@ export class ToolPermissionService {
     signal: AbortSignal;
     /** Name of the teammate requesting permission (undefined for lead agent) */
     teammateName?: string;
+    /**
+     * The caller already decided the user must answer (Agent-verified mode escalated
+     * the call, e.g. a PreToolUse hook returned "ask"), so bypass-all must not auto-approve.
+     */
+    requiresUserDecision?: boolean;
   }): Promise<PermissionDecision> {
     const {
       requestId,
@@ -372,6 +377,7 @@ export class ToolPermissionService {
       warnings = [],
       signal,
       teammateName,
+      requiresUserDecision,
     } = options;
 
     const pathForTrust = permissionsPath || workspacePath;
@@ -388,8 +394,8 @@ export class ToolPermissionService {
         throw new Error('Workspace is not trusted. Please trust the workspace to use AI tools.');
       }
 
-      // Bypass-all mode: auto-approve everything
-      if (trustStatus.mode === 'bypass-all') {
+      // Bypass-all mode: auto-approve everything, unless the call was escalated to the user (#1740)
+      if (trustStatus.mode === 'bypass-all' && !requiresUserDecision) {
         this.securityLogger('[ToolPermissionService] Bypass-all mode, auto-approving', { toolName });
         return { decision: 'allow', scope: 'once' };
       }

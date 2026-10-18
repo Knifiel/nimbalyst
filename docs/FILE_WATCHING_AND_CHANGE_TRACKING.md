@@ -494,6 +494,8 @@ When an AI edits a file that's currently open:
 7. `history:pending-cleared` event fires
 8. TabEditor exits diff mode, reloads content from disk
 
+What a Lexical review writes (`lexicalReviewResolution.ts`): at resolution, the buffer's export is compared with how the agent's bytes and the baseline bytes load (and, for accept, with Keep All replayed on the diff tree captured right after it rendered). A match writes those bytes unchanged; anything else, including any typing during the review, writes the editor's markdown export, which does not round-trip front matter, math or table formatting (#1734).
+
 ---
 
 ## 9. Worktree Integration

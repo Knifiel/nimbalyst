@@ -26,6 +26,11 @@ export default defineConfig({
         find: '@nimbalyst/local-wiki',
         replacement: path.join(repoRoot, 'packages/local-wiki/src/index.ts'),
       },
+      // The app's mark parser, from source; see src/types/pageMarkSyntax.d.ts.
+      {
+        find: '@nimbalyst/runtime/core/pageMarkSyntax',
+        replacement: path.join(repoRoot, 'packages/runtime/src/core/pageMarkSyntax.ts'),
+      },
       // The Pages tool contract: tool names and schemas for `nim mcp`.
       {
         find: '@nimbalyst/collab-protocol',

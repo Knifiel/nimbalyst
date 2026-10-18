@@ -46,8 +46,6 @@
     // in for a twenty-line function with no imports of its own.
     "src/sync/encryptionKey.ts",
     "src/sync/CollabV3Sync.ts",
-    "src/sync/repairSessionProjection.ts",
-    "src/sync/projectionRepairCheckpointFile.ts",
     "src/sync/SyncedSessionStore.ts",
     "src/sync/types.ts",
     "src/sync/syncClientInfo.ts",

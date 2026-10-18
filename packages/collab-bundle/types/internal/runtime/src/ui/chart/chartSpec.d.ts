@@ -18,7 +18,8 @@
  *
  * Interactivity comes with the small spec: a tooltip on every mark, hover
  * highlight, click a legend entry to fade a series, and x-axis zoom/pan on
- * line, area and scatter when x is numeric or a date.
+ * line, area and scatter when x is numeric or a timestamp. Date-only x values
+ * are calendar categories, one tick per row.
  *
  * Pure and React-free: unit-tested in node, and shared by the editor block
  * and the placed view.

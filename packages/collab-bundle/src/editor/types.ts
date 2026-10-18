@@ -228,8 +228,13 @@ export interface CollabEditorMountOptions {
   user: CollabEditorUser;
   readOnly?: boolean;
   comments?: CollabEditorCommentsOptions;
-  /** Optional live preview supplied by the document host; never resolves local files itself. */
-  renderDecisionArtifact?: (entryId: string, artifact: string) => ReactNode;
+  /**
+   * Optional live preview supplied by the document host; never resolves local
+   * files itself. `embed` is set when the artifact is an embed block in the
+   * document rather than a decision's artifact, carrying the link title's
+   * attributes (`width`, `height`) the host sizes the preview from.
+   */
+  renderDecisionArtifact?: (entryId: string, artifact: string, embed?: Omit<FileEmbedRequest, 'src'>) => ReactNode;
   /**
    * Live data for tracker references in the document. Without it references
    * render as key-only chips; with it they show live title and status, and
@@ -318,6 +323,11 @@ export interface CollabEditorHandle {
   getPresence(): CollabEditorPresence;
   /** Announce departure/backgrounding or rejoin for host-managed lifecycles. */
   setPresenceActive(active: boolean): void;
+  /**
+   * Relabel this participant for everyone else in the room, e.g. once a roster
+   * request resolves the name. Does not remount; the member id must not change.
+   */
+  setUser(user: CollabEditorUser): void;
   /** Wait for the room's persisted docUpdateAck, never merely a socket write. */
   flush(options?: { timeoutMs?: number }): Promise<CollabEditorFlushResult>;
   setReadOnly(readOnly: boolean): void;

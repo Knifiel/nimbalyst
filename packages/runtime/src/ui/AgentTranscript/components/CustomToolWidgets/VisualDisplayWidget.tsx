@@ -7,7 +7,7 @@
  * - Image galleries with file path loading
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import { useAtomValue } from 'jotai';
 import { FullscreenModal } from '../FullscreenModal';
 import { ZoomableImageSurface } from '../ZoomableImageSurface';
@@ -36,7 +36,9 @@ import type { TranscriptViewMessage } from '../../../../ai/server/transcript/Tra
 type ToolCall = NonNullable<TranscriptViewMessage['toolCall']>;
 import { isDarkThemeAtom } from '../../../../store/atoms/theme';
 import { GifPlayer } from './GifPlayer';
-import { localAssetUrl } from '../../../../utils/localAssetUrl';
+import { useImageSource } from './displayImageSource';
+import { useTranscriptImageGallery } from '../transcriptImageGalleryContext';
+import { displayImageKey, type DisplayImageContent } from '../../utils/transcriptImages';
 
 // Theme-aware color palettes
 const LIGHT_COLORS = [
@@ -121,18 +123,7 @@ interface ChartConfig {
 }
 
 // New schema types
-interface ImageContent {
-  path: string;
-  /** Base64 bytes attached by desktop on the mobile sync path; the phone cannot read `path`. */
-  data?: string;
-  mimeType?: string;
-}
-
-/** Inline bytes win; otherwise a URL for the local file at `path`. */
-function imageSrc(image: ImageContent): string {
-  if (image.data) return `data:${image.mimeType || 'image/png'};base64,${image.data}`;
-  return localAssetUrl(image.path);
-}
+type ImageContent = DisplayImageContent;
 
 interface ChartContent {
   chartType: 'bar' | 'line' | 'pie' | 'area' | 'scatter';
@@ -525,84 +516,18 @@ function renderScatterChart(config: ChartConfig, colors: string[], isDark: boole
   );
 }
 
+type ReadFile = (path: string) => Promise<{ success: boolean; content?: string; error?: string }>;
+
 /**
  * Component for displaying a single image with loading state
  */
 const ImageDisplay: React.FC<{
   image: ImageContent;
   description?: string;
-  readFile?: (path: string) => Promise<{ success: boolean; content?: string; error?: string }>;
+  readFile?: ReadFile;
   className?: string;
 }> = ({ image, description, readFile, className }) => {
-  const [imageData, setImageData] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const loadImage = async () => {
-      // Try to load the image via file protocol (for local files)
-      // In Electron, we can use file:// protocol for local images
-      try {
-        if (image.data) {
-          setImageData(imageSrc(image));
-          setLoading(false);
-          return;
-        }
-
-        // First try using readFile if available (for base64 loading)
-        if (readFile) {
-          const result = await readFile(image.path);
-          if (result.success && result.content) {
-            // Check if content is already base64 or needs conversion
-            if (result.content.startsWith('data:')) {
-              setImageData(result.content);
-            } else {
-              // Determine MIME type from extension
-              const ext = image.path.split('.').pop()?.toLowerCase();
-              const mimeTypes: Record<string, string> = {
-                'png': 'image/png',
-                'jpg': 'image/jpeg',
-                'jpeg': 'image/jpeg',
-                'gif': 'image/gif',
-                'webp': 'image/webp',
-                'svg': 'image/svg+xml',
-                'bmp': 'image/bmp'
-              };
-              const mimeType = mimeTypes[ext || ''] || 'image/png';
-              setImageData(`data:${mimeType};base64,${result.content}`);
-            }
-            setLoading(false);
-            return;
-          } else if (result.error) {
-            console.error('[VisualDisplayWidget] Failed to read image file:', {
-              path: image.path,
-              error: result.error
-            });
-            setError(`Failed to load image: ${result.error}`);
-            setLoading(false);
-            return;
-          }
-        }
-
-        // Fall back to a renderer-loadable URL for local Electron images.
-        // `localAssetUrl` returns `nim-asset://` in Electron (the main window
-        // runs with `webSecurity: true` and cannot load `file://`) and
-        // `file://` for non-Electron consumers.
-        setImageData(imageSrc(image));
-        setLoading(false);
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-        console.error('[VisualDisplayWidget] Image load exception:', {
-          path: image.path,
-          error: errorMessage
-        });
-        setError(`Failed to load image: ${errorMessage}`);
-        setLoading(false);
-      }
-    };
-
-    loadImage();
-  }, [image.path, image.data, image.mimeType, readFile]);
+  const { imageData, loading, error, setError } = useImageSource(image, readFile);
 
   if (loading) {
     return (
@@ -722,8 +647,9 @@ const Lightbox: React.FC<{
   selectedIndex: number;
   onClose: () => void;
   onNavigate: (index: number) => void;
-  readFile?: (path: string) => Promise<{ success: boolean; content?: string; error?: string }>;
+  readFile?: ReadFile;
 }> = ({ images, selectedIndex, onClose, onNavigate, readFile }) => {
+  const { imageData } = useImageSource(images[selectedIndex].image!, readFile);
   return (
     <FullscreenModal
       isOpen={true}
@@ -731,8 +657,8 @@ const Lightbox: React.FC<{
       ariaLabel="Image lightbox"
       contentClassName="h-[92dvh] w-[96vw] max-w-[1400px] overflow-hidden rounded-lg border border-nim bg-nim"
     >
-      <ZoomableImageSurface
-        src={imageSrc(images[selectedIndex].image!)}
+      {imageData ? <ZoomableImageSurface
+        src={imageData}
         alt={images[selectedIndex].description}
         copyFilePath={images[selectedIndex].image!.path}
         toolbarLabel={(
@@ -775,7 +701,7 @@ const Lightbox: React.FC<{
             </button>
           </>
         )}
-      />
+      /> : null}
     </FullscreenModal>
   );
 };
@@ -785,9 +711,15 @@ const Lightbox: React.FC<{
  */
 const ImageGallery: React.FC<{
   images: DisplayItem[];
+  /** Transcript gallery key per image, parallel to `images`. */
+  galleryKeys: string[];
   readFile?: (path: string) => Promise<{ success: boolean; content?: string; error?: string }>;
-}> = ({ images, readFile }) => {
+}> = ({ images, galleryKeys, readFile }) => {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const gallery = useTranscriptImageGallery();
+  const openImage = (index: number) => {
+    if (!gallery?.openImage(galleryKeys[index])) setSelectedIndex(index);
+  };
 
   const imagePaths = images.map(img => img.image?.path).filter(Boolean);
   const errorFallback = (
@@ -813,7 +745,7 @@ const ImageGallery: React.FC<{
             <div
               key={index}
               className={`group cursor-pointer rounded-md overflow-hidden border border-nim bg-nim-secondary transition-all duration-200 hover:border-nim-primary hover:shadow-md ${isSingleImage ? 'max-w-full' : 'aspect-square'}`}
-              onClick={() => setSelectedIndex(index)}
+              onClick={() => openImage(index)}
             >
               <div className={`${isSingleImage ? 'flex max-h-96 items-center justify-center bg-[var(--nim-bg)] p-2' : 'w-full h-full'} overflow-hidden`}>
                 <ImageDisplay
@@ -1012,6 +944,7 @@ export const VisualDisplayWidget: React.FC<CustomToolWidgetProps> = ({ message, 
               <ImageGallery
                 key={index}
                 images={segment.items}
+                galleryKeys={segment.items.map(item => displayImageKey(message.id, items.indexOf(item)))}
                 readFile={readFile}
               />
             );

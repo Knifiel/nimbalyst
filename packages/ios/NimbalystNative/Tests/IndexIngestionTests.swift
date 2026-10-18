@@ -192,6 +192,7 @@ final class IndexIngestionTests: XCTestCase {
         draft: String? = nil,
         draftUpdatedAt: Int? = nil,
         isExecuting: Bool? = nil,
+        transcriptSyncDisabled: Bool? = nil,
         valid: Bool = true
     ) throws -> [String: Any] {
         var dict: [String: Any] = [
@@ -207,10 +208,11 @@ final class IndexIngestionTests: XCTestCase {
             dict["titleIv"] = encrypted.iv
         }
         if let isExecuting { dict["isExecuting"] = isExecuting }
-        if phase != nil || draft != nil {
+        if phase != nil || draft != nil || transcriptSyncDisabled != nil {
             let meta = ClientMetadata(
                 currentContext: nil, hasPendingPrompt: nil, phase: phase,
-                tags: nil, draftInput: draft, draftUpdatedAt: draft == nil ? nil : (draftUpdatedAt ?? updatedAt)
+                tags: nil, draftInput: draft, draftUpdatedAt: draft == nil ? nil : (draftUpdatedAt ?? updatedAt),
+                transcriptSyncDisabled: transcriptSyncDisabled
             )
             let json = String(data: try JSONEncoder().encode(meta), encoding: .utf8)!
             let encrypted = try crypto.encrypt(plaintext: json)
@@ -386,6 +388,74 @@ final class IndexIngestionTests: XCTestCase {
         let metrics = try XCTUnwrap(sync.lastIndexIngestionMetrics)
         XCTAssertEqual(metrics.applied, 1)
         XCTAssertEqual(metrics.coalesced, 2)
+    }
+
+    // MARK: - Transcript sync disabled
+
+    /// A desktop project that is not synced still lists its sessions; the blob
+    /// says so, and a later blob that omits the flag clears it. An entry with no
+    /// blob says nothing and leaves the row alone.
+    func testTranscriptSyncDisabledFollowsTheLatestClientMetadata() async throws {
+        let db = try DatabaseManager()
+        let sync = manager(db)
+
+        try await receive(sync, sessions: [try entry("s1", updatedAt: 10, title: "T", transcriptSyncDisabled: true)])
+        XCTAssertEqual(try db.session(byId: "s1")?.transcriptSyncDisabled, true)
+
+        try await receive(sync, sessions: [try entry("s1", updatedAt: 11, title: "T")])
+        XCTAssertEqual(try db.session(byId: "s1")?.transcriptSyncDisabled, true, "No blob says nothing about the flag")
+
+        try await receive(sync, sessions: [try entry("s1", updatedAt: 12, title: "T", phase: "planning")])
+        XCTAssertEqual(try db.session(byId: "s1")?.transcriptSyncDisabled, false, "A blob without the flag clears it")
+
+        try await receive(sync, sessions: [try entry("s1", updatedAt: 13, title: "T", transcriptSyncDisabled: true)])
+        try await receive(sync, sessions: [try entry("s1", updatedAt: 14, title: "T", transcriptSyncDisabled: false)])
+        XCTAssertEqual(try db.session(byId: "s1")?.transcriptSyncDisabled, false)
+    }
+
+    /// The live metadata broadcast applies the same rule as the index merge.
+    func testBroadcastBlobClearsTranscriptSyncDisabled() {
+        var session = Session(id: "s1", projectId: "/p", phase: "planning", transcriptSyncDisabled: true)
+        IndexEntryDecryptor.apply(ClientMetadata(currentContext: nil, hasPendingPrompt: nil, phase: nil,
+                                                 tags: nil, draftInput: nil, draftUpdatedAt: nil), to: &session)
+        XCTAssertFalse(session.transcriptSyncDisabled)
+        XCTAssertEqual(session.phase, "planning", "Other omitted fields keep their cached value")
+    }
+
+    /// A draft parked across a disconnect republishes the whole client-metadata
+    /// blob from the cached row. Replayed before index catch-up, it restored a
+    /// `transcriptSyncDisabled` the desktop had since cleared.
+    func testParkedDraftReplaysAfterCatchUpWithTheServersCurrentFlag() async throws {
+        let db = try DatabaseManager()
+        final class Sends: @unchecked Sendable { var failing = false; var sent: [String] = [] }
+        let sends = Sends()
+        let sync = SyncManager(crypto: crypto, database: db, serverUrl: "https://invalid.example", userId: "test",
+                               registerDeviceCallbacks: false, sender: { _, json, completion in
+            if sends.failing { completion(NSError(domain: "test", code: 1)) } else { sends.sent.append(json); completion(nil) }
+        })
+        sync.isConnected = true
+
+        try await receive(sync, sessions: [try entry("s1", updatedAt: 10, title: "T", transcriptSyncDisabled: true)])
+        sends.failing = true
+        sync.updateDraftInput(sessionId: "s1", draftInput: "typed offline")
+        XCTAssertEqual(sync.requests.replayCount, 1)
+
+        // Reconnect. The desktop has since enabled sync for the project.
+        sends.failing = false
+        sync.indexClient.onConnectionStateChanged?(true)
+        let draftPushes = { sends.sent.filter { $0.contains("\"indexUpdate\"") && $0.contains("encryptedClientMetadata") } }
+        XCTAssertTrue(draftPushes().isEmpty, "Parked writes wait for index catch-up")
+
+        try await receive(sync, sessions: [try entry("s1", updatedAt: 11, title: "T", phase: "planning")])
+        let json = try XCTUnwrap(draftPushes().last)
+        let message = try JSONDecoder().decode(IndexUpdateMessage.self, from: Data(json.utf8))
+        let plaintext = try XCTUnwrap(crypto.decryptOrNil(
+            encryptedBase64: XCTUnwrap(message.session.encryptedClientMetadata),
+            ivBase64: XCTUnwrap(message.session.clientMetadataIv)))
+        let meta = try JSONDecoder().decode(ClientMetadata.self, from: Data(plaintext.utf8))
+        XCTAssertEqual(meta.draftInput, "typed offline")
+        XCTAssertNotEqual(meta.transcriptSyncDisabled, true, "The replay carries the desktop's current flag")
+        XCTAssertEqual(sync.requests.replayCount, 0)
     }
 
     // MARK: - Local state during ingestion

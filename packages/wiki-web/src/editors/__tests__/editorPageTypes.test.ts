@@ -8,9 +8,10 @@ import datamodel from '../../../../extensions/datamodellm/manifest.json';
 import excalidraw from '../../../../extensions/excalidraw/manifest.json';
 import mockup from '../../../../extensions/mockuplm/manifest.json';
 import { editorPageDescriptors, embeddableSuffixes, matchEditor, WIKI_EDITOR_PAGE_TYPES } from '../editorPageTypes';
+import { HTML_PAGE_MANIFEST } from '../html/htmlPages';
 
 // The mind map editor has its own repo; the live check covers it.
-const manifests = [calcSheets, csv, datamodel, excalidraw, mockup] as unknown as BrowserExtensionManifest[];
+const manifests = [calcSheets, csv, datamodel, excalidraw, mockup, HTML_PAGE_MANIFEST] as unknown as BrowserExtensionManifest[];
 
 describe('editor page types', () => {
   it('match the local wiki suffix table, and each one opens in and is created from a built-in editor', () => {
@@ -18,6 +19,9 @@ describe('editor page types', () => {
 
     expect(matchEditor(manifests, 'Budget.calc.md')?.component).toBe('CalcSheetEditor');
     expect(matchEditor(manifests, 'Notes.md')).toBeNull();
+    // The longest suffix wins: a mockup is not an HTML page.
+    expect(matchEditor(manifests, 'Screen.mockup.html')?.extensionId).toBe('com.nimbalyst.mockuplm');
+    expect(matchEditor(manifests, 'Product map.html')?.component).toBe('HtmlPageEditor');
 
     const created = editorPageDescriptors(manifests).map((descriptor) => [descriptor.defaultExtension, descriptor.documentType, descriptor.editor.componentName]);
     const expected = Object.entries(WIKI_EDITOR_PAGE_TYPES)

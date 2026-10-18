@@ -5,7 +5,7 @@
  * scripts/build.mjs does) so the test needs no prior build.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
@@ -13,11 +13,13 @@ import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { initWiki, openWiki } from '@nimbalyst/local-wiki';
-import { PAGE_TOOL_NAMES } from '@nimbalyst/collab-protocol';
+import { PAGE_TOOL_NAMES, pageToolContract } from '@nimbalyst/collab-protocol';
 import { handleMessage, runStdioServer } from '../stdioServer.js';
 import { TeamScopeRefusal, ToolMap, textResult } from '../toolMap.js';
 import { resolvePluginWorkspace } from '../pluginWorkspace.js';
-import { detectPluginInstall, startUpdateCheck, type PluginInstall } from '../updateCheck.js';
+import { writeMigratedTo } from '../../localWiki/locate.js';
+import { createLocalToolMap, LOCAL_SERVER_INSTRUCTIONS, localWikiContext } from '../serverTools.js';
+import { detectNpmInstall, detectPluginInstall, startUpdateCheck, type PluginInstall } from '../updateCheck.js';
 
 const EDITOR_TOOLS = ['mindmap_get_document', 'mindmap_apply_operations', 'excalidraw_get_elements', 'excalidraw_add_elements', 'excalidraw_add_arrows', 'excalidraw_remove_elements'];
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -42,6 +44,7 @@ beforeAll(async () => {
       '@nimbalyst/tracker-core': path.join(repoRoot, 'packages/tracker-core/src/index.ts'),
       '@nimbalyst/local-wiki': path.join(repoRoot, 'packages/local-wiki/src/index.ts'),
       '@nimbalyst/collab-protocol': path.join(repoRoot, 'packages/collab-protocol/src/index.ts'),
+      '@nimbalyst/runtime/core/pageMarkSyntax': path.join(repoRoot, 'packages/runtime/src/core/pageMarkSyntax.ts'),
     },
     logLevel: 'silent',
   });
@@ -106,6 +109,7 @@ describe('nim mcp over stdio', () => {
           protocolVersion: '2025-06-18',
           capabilities: { tools: {} },
           serverInfo: { name: 'nimbalyst-local', version: expect.any(String) },
+          instructions: LOCAL_SERVER_INSTRUCTIONS,
         },
       },
       { jsonrpc: '2.0', id: 2, result: { tools: expect.any(Array) } },
@@ -120,8 +124,13 @@ describe('nim mcp over stdio', () => {
     expect(created).toBe(true);
     // The list is stable without a wiki, and every name but the local-only ones is a contract name.
     const names = responses[1].result.tools.map((t: { name: string }) => t.name);
-    expect(names).toEqual(['initLocalWiki', ...LOCAL_TOOLS, 'convertTypeStorage', ...EDITOR_TOOLS, 'openWikiInBrowser', 'teamSignIn', 'moveLocalWikiToTeam', 'openUrl']);
+    expect(names).toEqual(['initLocalWiki', 'useLocalWiki', ...LOCAL_TOOLS, 'convertTypeStorage', 'pagesForFiles', 'wikiDoctor', 'listMarks', ...EDITOR_TOOLS, 'openWikiInBrowser', 'teamSignIn', 'moveLocalWikiToTeam', 'openUrl']);
     expect(LOCAL_TOOLS.every((n: string) => (PAGE_TOOL_NAMES as readonly string[]).includes(n))).toBe(true);
+    // createSharedDoc makes editor pages locally, so it must not inherit the remote server's markdown-only wording.
+    const createDoc = responses[1].result.tools.find((t: { name: string }) => t.name === 'createSharedDoc');
+    expect(createDoc.inputSchema.properties.documentType.description).not.toContain("Only 'markdown'");
+    expect(createDoc.inputSchema.properties.documentType.enum).toEqual(expect.arrayContaining(['markdown', 'excalidraw', 'csv', 'calc.md', 'canvas']));
+    expect(createDoc.inputSchema.properties.initialContent.description).not.toMatch(/^Markdown body/);
     expect(stderr).toContain('nim mcp');
   });
 
@@ -238,6 +247,146 @@ describe('tool calls', () => {
   });
 });
 
+describe('re-pointing the server at another project', () => {
+  const projects: string[] = [];
+  const project = async (withWiki: boolean) => {
+    const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'nim-mcp-repoint-')));
+    projects.push(dir);
+    if (withWiki) await initWiki(path.join(dir, 'nimbalyst-local', 'wiki'));
+    return dir;
+  };
+  afterAll(() => {
+    for (const dir of projects) rmSync(dir, { recursive: true, force: true });
+  });
+  const run = async (tools: ToolMap, name: string, args: Record<string, unknown> = {}) => {
+    const result = await tools.get(name)!.call(args);
+    return { isError: result.isError === true, text: result.content[0].text, body: () => JSON.parse(result.content[0].text) };
+  };
+
+  it('useLocalWiki moves every later call to the named project or wiki folder, and names the folder in each result', async () => {
+    const a = await project(true);
+    const b = await project(true);
+    const empty = await project(false);
+    const wikiA = path.join(a, 'nimbalyst-local', 'wiki');
+    const wikiB = path.join(b, 'nimbalyst-local', 'wiki');
+    const tools = createLocalToolMap(localWikiContext(a));
+
+    expect((await run(tools, 'listPages')).body().wikiFolder).toBe(wikiA);
+    expect((await run(tools, 'useLocalWiki', { folder: b })).body()).toEqual({ projectRoot: b, wikiFolder: wikiB });
+    expect((await run(tools, 'listPages')).body().wikiFolder).toBe(wikiB);
+    const created = await run(tools, 'createSharedDoc', { title: 'Moved' });
+    expect(created.body()).toMatchObject({ wikiFolder: wikiB, path: 'Moved.md' });
+    expect(existsSync(path.join(wikiB, 'Moved.md'))).toBe(true);
+    expect(existsSync(path.join(wikiA, 'Moved.md'))).toBe(false);
+
+    // A wiki folder itself works too, and resolves to its project.
+    expect((await run(tools, 'useLocalWiki', { folder: wikiA })).body()).toEqual({ projectRoot: a, wikiFolder: wikiA });
+    expect((await run(tools, 'tracker_list_types')).body().wikiFolder).toBe(wikiA);
+
+    // A folder that does not exist changes nothing.
+    const missing = await run(tools, 'useLocalWiki', { folder: path.join(a, 'nope') });
+    expect(missing.isError).toBe(true);
+    expect((await run(tools, 'listPages')).body().wikiFolder).toBe(wikiA);
+
+    // A project without a wiki: pointed there, told to create one, and initLocalWiki creates it there.
+    const none = await run(tools, 'useLocalWiki', { folder: empty });
+    expect(none.isError).toBe(true);
+    expect(none.text).toContain('initLocalWiki');
+    expect(none.text).toContain(path.join(empty, 'nimbalyst-local', 'wiki'));
+    expect((await run(tools, 'initLocalWiki')).body().dir).toBe(path.join(empty, 'nimbalyst-local', 'wiki'));
+  });
+
+  it('useLocalWiki on a wiki folder that is its own git repository makes that folder the project', async () => {
+    const outer = await project(true);
+    const wiki = path.join(outer, 'nimbalyst-local', 'wiki');
+    execFileSync('git', ['init', '-q'], { cwd: wiki, stdio: 'ignore' });
+    // Sandboxed: the repository is the temp wiki folder, never this checkout.
+    expect(realpathSync(execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: wiki, encoding: 'utf8' }).trim())).toBe(wiki);
+    const tools = createLocalToolMap(localWikiContext(await project(true)));
+
+    expect((await run(tools, 'useLocalWiki', { folder: wiki })).body()).toEqual({ projectRoot: wiki, wikiFolder: wiki });
+  });
+
+  it('pagesForFiles names the pages whose paths cover the given files, and which clock dated them', async () => {
+    const dir = await project(true);
+    writeFileSync(path.join(dir, 'nimbalyst-local', 'wiki', 'Sync.md'), '---\nid: page-sync\npaths: [src/sync/**]\n---\n\nBody.\n');
+    const tools = createLocalToolMap(localWikiContext(dir));
+    const result = (await run(tools, 'pagesForFiles', { files: ['src/sync/a.ts', 'README.md'] })).body();
+    expect(result).toMatchObject({ wikiFolder: path.join(dir, 'nimbalyst-local', 'wiki'), source: 'given' });
+    // Outside git there is no commit to compare, so nothing is stale and the page is dated by mtime.
+    expect(result.pages).toEqual([expect.objectContaining({ id: 'page-sync', title: 'Sync', files: ['src/sync/a.ts'], stale: false, clock: 'mtime' })]);
+    const none = await run(createLocalToolMap(localWikiContext(await project(false))), 'pagesForFiles', {});
+    expect(none.isError).toBe(true);
+    expect(none.text).toContain('initLocalWiki');
+  });
+
+  it('setPageFields records the globs a page covers in paths, and ignores a value that is not a list of globs', async () => {
+    const dir = await project(true);
+    const tools = createLocalToolMap(localWikiContext(dir));
+    const page = (await run(tools, 'createSharedDoc', { title: 'Sync' })).body();
+    const set = (await run(tools, 'setPageFields', { itemId: page.itemId ?? page.documentId, fields: { paths: ['src/sync/**', 'packages/sync'] } })).body();
+    expect(set.fields.paths).toEqual(['src/sync/**', 'packages/sync']);
+    expect(readFileSync(path.join(dir, 'nimbalyst-local', 'wiki', 'Sync.md'), 'utf8')).toContain('src/sync/**');
+    const bad = (await run(tools, 'setPageFields', { itemId: set.itemId, fields: { paths: 'src/**' } })).body();
+    expect(bad.ignored).toEqual(['paths']);
+    expect(bad.fields.paths).toEqual(['src/sync/**', 'packages/sync']);
+    // The model only sends what the schema shows it; the shared contract has no paths.
+    const schema = tools.definitions().find((t) => t.name === 'setPageFields')!.inputSchema.properties.fields as { properties: Record<string, unknown> };
+    expect(Object.keys(schema.properties)).toEqual(['owner', 'status', 'summary', 'tags', 'paths']);
+    expect(Object.keys((pageToolContract('setPageFields')!.inputSchema.properties.fields as { properties: object }).properties)).not.toContain('paths');
+  });
+
+  it('wikiDoctor and listMarks answer over the local wiki, and ask for initLocalWiki without one', async () => {
+    const dir = await project(true);
+    const wikiDir = path.join(dir, 'nimbalyst-local', 'wiki');
+    writeFileSync(path.join(wikiDir, 'Storage.md'), '---\nid: page-storage\n---\n\n[Use SQLite.]{decided by=Dana on=2026-10-01 over=Postgres} [Backups?]{open}\n');
+    const tools = createLocalToolMap(localWikiContext(dir));
+    const doctor = (await run(tools, 'wikiDoctor', {})).body();
+    expect(doctor).toMatchObject({ wikiFolder: wikiDir, summary: { orphans: 1 } });
+    expect(doctor.orphans.pages).toEqual([expect.objectContaining({ id: 'page-storage' })]);
+    const marks = (await run(tools, 'listMarks', { kind: 'decided' })).body();
+    // `line` counts in the body readCollabDoc returns, not the file with its frontmatter.
+    expect(marks.marks).toEqual([{ pageId: 'page-storage', title: 'Storage', line: 2, kind: 'decided', by: 'Dana', on: '2026-10-01', over: 'Postgres', text: 'Use SQLite.' }]);
+    writeMigratedTo(dir, { orgId: 'org-1', projectId: 'proj-1', at: '2026-10-15T00:00:00.000Z' });
+    const archived = (await run(tools, 'listMarks', {})).body();
+    expect(archived.movedToTeam).toMatchObject({ orgId: 'org-1', projectId: 'proj-1', note: expect.stringContaining('archive') });
+    const none = await run(createLocalToolMap(localWikiContext(await project(false))), 'listMarks', {});
+    expect(none.isError).toBe(true);
+    expect(none.text).toContain('initLocalWiki');
+  });
+
+  it('rewords contract arguments that mean something else on a local wiki', () => {
+    const tools = createLocalToolMap(localWikiContext(tmpdir()));
+    const descriptions = tools
+      .definitions()
+      .filter((t) => (PAGE_TOOL_NAMES as readonly string[]).includes(t.name) && !t.name.startsWith('tracker_'))
+      .flatMap((t) => Object.entries(t.inputSchema.properties).map(([key, value]) => [`${t.name}.${key}`, (value as { description?: string }).description ?? '']));
+    // Local typed pages have ids, never issue keys, and the wiki has no sections or projects.
+    expect(descriptions.filter(([, text]) => /issue key|top of the (section|project)/.test(text))).toEqual([]);
+    const parent = tools.definitions().find((t) => t.name === 'createSharedDoc')!.inputSchema.properties.parentFolderId as { description: string };
+    expect(parent.description).toBe('Parent page id, or typed page id. Omit for the top of the wiki.');
+  });
+
+  it('sends the instructions it was given in initialize, and none when given none', async () => {
+    const initialize = { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} };
+    const info = { name: 'nimbalyst-local', version: 'test' };
+    const bare = (await handleMessage(initialize, new ToolMap(), info)) as { result: Record<string, unknown> };
+    expect(bare.result).not.toHaveProperty('instructions');
+    const given = (await handleMessage(initialize, new ToolMap(), info, undefined, 'Read the wiki.')) as { result: { instructions: string } };
+    expect(given.result.instructions).toBe('Read the wiki.');
+  });
+
+  it('the local server tells the agent to consult the wiki before changes and to check covered pages after them', () => {
+    // Static text: the server answers initialize without touching the disk.
+    expect(LOCAL_SERVER_INSTRUCTIONS).toContain('`update` skill');
+    expect(LOCAL_SERVER_INSTRUCTIONS).toContain('useLocalWiki');
+    expect(LOCAL_SERVER_INSTRUCTIONS).toContain('searchPages');
+    expect(LOCAL_SERVER_INSTRUCTIONS).toContain('pagesForFiles');
+    expect(LOCAL_SERVER_INSTRUCTIONS).toContain('`capture` skill');
+    expect(LOCAL_SERVER_INSTRUCTIONS).toContain('listMarks');
+  });
+});
+
 describe('plugin workspace', () => {
   const pluginRoot = '/home/u/.codex/plugins/cache/nimbalyst/nimbalyst-wiki/0.3.0';
 
@@ -252,11 +401,13 @@ describe('plugin workspace', () => {
 
 describe('plugin update check', () => {
   const install: PluginInstall = {
+    kind: 'plugin',
     agent: 'claude',
     marketplace: 'nimbalyst',
     version: '0.5.0',
-    manifestUrl: 'https://example.test/plugin.json',
+    url: 'https://example.test/plugin.json',
   };
+  const cachedAs = (latestVersion: string | null, checkedAt: number, ok = true) => ({ [install.url]: { checkedAt, latestVersion, ok } });
   const manifestFetch = (version: string) => (async () => new Response(JSON.stringify({ version }))) as unknown as typeof fetch;
 
   it('appends the notice once, to the first successful tool result after a newer version is fetched, and caches it', async () => {
@@ -265,7 +416,7 @@ describe('plugin update check', () => {
       const cacheFile = path.join(dir, 'nested', 'update-check.json');
       const check = startUpdateCheck({ install, env: {}, cacheFile, now: () => 1000, fetchImpl: manifestFetch('0.6.0'), log: () => {} });
       await check.settled;
-      expect(JSON.parse(readFileSync(cacheFile, 'utf8'))).toEqual({ checkedAt: 1000, latestVersion: '0.6.0' });
+      expect(JSON.parse(readFileSync(cacheFile, 'utf8'))).toEqual(cachedAs('0.6.0', 1000));
 
       const tools = new ToolMap()
         .register({ definition: { name: 'ok', description: 'Ok.', inputSchema: { type: 'object', properties: {} } }, call: async () => textResult('done') })
@@ -284,12 +435,12 @@ describe('plugin update check', () => {
     }
   });
 
-  it('uses a fresh cache without fetching, refetches a stale one, and stays quiet when opted out or offline', async () => {
+  it('uses a fresh cache without fetching, refetches a stale one, and stays quiet when opted out, in CI or offline', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'nim-update-'));
     try {
       const cacheFile = path.join(dir, 'update-check.json');
       const day = 24 * 60 * 60 * 1000;
-      writeFileSync(cacheFile, JSON.stringify({ checkedAt: 0, latestVersion: '0.7.0' }));
+      writeFileSync(cacheFile, JSON.stringify(cachedAs('0.7.0', 0)));
       const failFetch = (async () => {
         throw new Error('offline');
       }) as unknown as typeof fetch;
@@ -308,20 +459,28 @@ describe('plugin update check', () => {
       await optedOut.settled;
       expect(fetched).toBe(false);
       expect(optedOut.takeNotice()).toBeNull();
+      const inCi = startUpdateCheck({ install, env: { CI: 'true' }, cacheFile, now: () => 2 * day, fetchImpl: noFetch });
+      await inCi.settled;
+      expect(fetched).toBe(false);
+      expect(inCi.takeNotice()).toBeNull();
 
-      // Offline with a stale cache: the cached version still counts, and the cache is left alone.
+      // Offline with a stale cache: the cached version still counts, and the failure is recorded
+      // so the next start an hour later retries instead of every start.
       const logs: string[] = [];
       const offline = startUpdateCheck({ install, env: {}, cacheFile, now: () => 2 * day, fetchImpl: failFetch, log: (line) => logs.push(line) });
       await offline.settled;
       expect(logs[0]).toContain('offline');
-      expect(JSON.parse(readFileSync(cacheFile, 'utf8')).checkedAt).toBe(0);
+      expect(JSON.parse(readFileSync(cacheFile, 'utf8'))).toEqual(cachedAs('0.7.0', 2 * day, false));
       expect(offline.takeNotice()).toContain('0.7.0');
+      const soonAfter = startUpdateCheck({ install, env: {}, cacheFile, now: () => 2 * day + 1000, fetchImpl: noFetch, log: () => {} });
+      await soonAfter.settled;
+      expect(fetched).toBe(false);
 
-      // A stale cache is replaced by what the fetch finds; the same version as installed is no notice.
-      const current = startUpdateCheck({ install, env: {}, cacheFile, now: () => 2 * day, fetchImpl: manifestFetch('0.5.0'), log: () => {} });
+      // An hour after the failure the fetch runs again; the same version as installed is no notice.
+      const current = startUpdateCheck({ install, env: {}, cacheFile, now: () => 2 * day + 60 * 60 * 1000, fetchImpl: manifestFetch('0.5.0'), log: () => {} });
       await current.settled;
       expect(current.takeNotice()).toBeNull();
-      expect(JSON.parse(readFileSync(cacheFile, 'utf8')).latestVersion).toBe('0.5.0');
+      expect(JSON.parse(readFileSync(cacheFile, 'utf8'))[install.url].latestVersion).toBe('0.5.0');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -342,10 +501,11 @@ describe('plugin update check', () => {
 
       const codex = detectPluginInstall({ PWD: '/repo' }, codexRoot, codexRoot);
       expect(codex).toMatchObject({ agent: 'codex', marketplace: 'nimbalyst-wiki', version: '0.5.0' });
-      expect(codex?.manifestUrl).toContain('nimbalyst-wiki/main/.codex-plugin/plugin.json');
+      expect(codex?.url).toContain('nimbalyst-wiki/main/.codex-plugin/plugin.json');
+      // The `nimbalyst` marketplace installs from the generated mirror too, so it reads the mirror's manifest.
       const claude = detectPluginInstall({ CLAUDE_PROJECT_DIR: '/repo' }, '/repo', claudeRoot);
       expect(claude).toMatchObject({ agent: 'claude', marketplace: 'nimbalyst' });
-      expect(claude?.manifestUrl).toContain('nimbalyst/main/plugins/nimbalyst-wiki/.claude-plugin/plugin.json');
+      expect(claude?.url).toBe('https://raw.githubusercontent.com/nimbalyst/nimbalyst-wiki/main/.claude-plugin/plugin.json');
 
       expect(detectPluginInstall({}, '/repo', otherRoot)).toBeNull();
       expect(detectPluginInstall({}, '/repo', path.join(repoRoot, 'plugins/nimbalyst-wiki'))).toBeNull();
@@ -356,5 +516,21 @@ describe('plugin update check', () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+
+  it('classifies the npm or pnpm install a running nim belongs to, and what npm cannot update', () => {
+    const bin = (...parts: string[]) => path.join(path.sep, ...parts, 'node_modules', '@nimbalyst', 'cli', 'dist', 'bin', 'cli.js');
+    expect(detectNpmInstall(bin('usr', 'local', 'lib'), '0.9.0')).toMatchObject({
+      kind: 'npm',
+      manager: 'npm',
+      global: true,
+      packageDir: path.join(path.sep, 'usr', 'local', 'lib', 'node_modules', '@nimbalyst', 'cli'),
+      url: 'https://registry.npmjs.org/@nimbalyst/cli/latest',
+    });
+    expect(detectNpmInstall(bin('home', 'me', 'Library', 'pnpm', 'global', '5', 'node_modules', '.pnpm', '@nimbalyst+cli@0.9.0'), '0.9.0')).toMatchObject({ manager: 'pnpm', global: true });
+    expect(detectNpmInstall(bin('work', 'app'), '0.9.0')).toMatchObject({ manager: 'npm', global: false });
+    expect(detectNpmInstall(bin('home', 'me', '.npm', '_npx', 'abc123'), '0.9.0')).toEqual({ kind: 'unmanaged', reason: 'npx' });
+    expect(detectNpmInstall(path.join(packageDir, 'dist', 'bin', 'cli.js'), '0.9.0')).toEqual({ kind: 'unmanaged', reason: 'checkout' });
+    expect(detectNpmInstall(path.join(path.sep, 'Applications', 'Nimbalyst.app', 'Contents', 'Resources', 'nim', 'dist', 'bin', 'cli-bundled.js'), '0.9.0')).toEqual({ kind: 'unmanaged', reason: 'app' });
   });
 });

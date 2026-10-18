@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const showErrorBox = vi.fn();
@@ -42,6 +43,35 @@ describe('createUncaughtExceptionHandler', () => {
     handle(err);
 
     expect(errorSpy).toHaveBeenCalledWith('[Bootstrap] Uncaught exception:', err);
+    expect(showErrorBox).toHaveBeenCalledTimes(1);
+  });
+
+  // #1779: an fs.watch handle that hits the descriptor limit emits 'error' from
+  // FSWatcher._handle.onchange; with no listener that lands here. A modal error
+  // box per watcher blocked startup with many restored projects. Watching is a
+  // degraded feature, not a crash: log it, never block on a dialog.
+  it('logs watcher resource-exhaustion errors without a blocking dialog', () => {
+    const handle = createUncaughtExceptionHandler();
+    const emfile = Object.assign(new Error('EMFILE: too many open files, watch'), {
+      code: 'EMFILE',
+      syscall: 'watch',
+    });
+
+    handle(emfile);
+    handle(Object.assign(new Error('ENOSPC: System limit for number of file watchers reached, watch'), {
+      code: 'ENOSPC',
+      syscall: 'watch',
+    }));
+
+    expect(showErrorBox).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('watcher'), emfile);
+  });
+
+  it('still shows a dialog for EMFILE outside a watcher', () => {
+    const handle = createUncaughtExceptionHandler();
+
+    handle(Object.assign(new Error('EMFILE: too many open files, open'), { code: 'EMFILE', syscall: 'open' }));
+
     expect(showErrorBox).toHaveBeenCalledTimes(1);
   });
 

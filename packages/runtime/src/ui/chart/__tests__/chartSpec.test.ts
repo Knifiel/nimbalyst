@@ -6,6 +6,8 @@
  * with no warnings, and that a broken one comes back as a readable error.
  */
 
+import { parse, View } from 'vega';
+import { compile } from 'vega-lite';
 import { describe, expect, it } from 'vitest';
 
 import { setFenceYamlValues } from '../../../core/fenceBody';
@@ -18,6 +20,25 @@ function compiled(source: string) {
   return result.spec as Record<string, any>;
 }
 
+/** The x axis's tick labels (the axis titled with the x field), as Vega draws them headlessly. */
+async function xAxisLabels(spec: Record<string, any>): Promise<string[]> {
+  const view = new View(parse(compile({ ...spec, width: 600 } as never).spec), { renderer: 'none' });
+  await view.runAsync();
+  const texts = (axis: any, role: string): string[] =>
+    (axis.items ?? []).flatMap((group: any) => (group.items ?? []).filter((mark: any) => mark.role === role))
+      .flatMap((mark: any) => (mark.items ?? []).map((item: any) => String(item.text)));
+  const axes: any[] = [];
+  const walk = (node: any) => {
+    if (!node || typeof node !== 'object') return;
+    if (node.marktype === 'group' && node.role === 'axis') axes.push(node);
+    for (const item of node.items ?? []) walk(item);
+  };
+  walk((view.scenegraph() as any).root);
+  view.finalize();
+  const xAxis = axes.find((axis) => texts(axis, 'axis-title').includes(spec.encoding.x.field));
+  return xAxis ? texts(xAxis, 'axis-label') : [];
+}
+
 const SERIES = `type: line
 title: Sessions per week
 x: week
@@ -28,22 +49,43 @@ data: |
   2026-09-08,131,22`;
 
 describe('compileChart', () => {
-  it('folds a list of y columns into series with tooltips, hover, legend toggle and x zoom', () => {
+  it('folds a list of y columns into series with tooltips, hover and legend toggle', () => {
     const spec = compiled(SERIES);
     expect(spec.data.values).toEqual([
       { week: '2026-09-01', desktop: 120, web: 14 },
       { week: '2026-09-08', desktop: 131, web: 22 },
     ]);
     expect(spec.transform).toEqual([{ fold: ['desktop', 'web'], as: ['series', 'value'] }]);
-    expect(spec.encoding.x).toMatchObject({ field: 'week', type: 'temporal' });
     expect(spec.encoding.tooltip.map((t: { field: string }) => t.field)).toEqual(['week', 'series', 'value']);
-    expect(spec.params.map((p: { name: string }) => p.name)).toEqual(['hover', 'legend', 'zoom']);
+    expect(spec.params.map((p: { name: string }) => p.name)).toEqual(['hover', 'legend']);
     expect(spec.params[1].bind).toBe('legend');
-    expect(spec.params[2]).toMatchObject({ select: { type: 'interval', encodings: ['x'] }, bind: 'scales' });
 
     const validation = validateVegaLite(spec);
     expect(validation.error).toBeUndefined();
     expect(validation.warnings).toEqual([]);
+  });
+
+  it('labels date-only x values once per row with month and day, in any time zone', async () => {
+    const spec = compiled(`type: line
+x: week
+y: [fixed, smart]
+data: |
+  week,fixed,smart
+  2026-08-31,212,208
+  2026-09-07,219,251
+  2026-09-14,224,288`);
+    expect(await xAxisLabels(spec)).toEqual(['Aug 31', 'Sep 7', 'Sep 14']);
+    expect(spec.params.some((p: { name: string }) => p.name === 'zoom')).toBe(false);
+    expect(validateVegaLite(spec).warnings).toEqual([]);
+
+    const months = compiled('type: bar\nx: month\ny: n\ndata: |\n  month,n\n  2025-12,4\n  2026-01,6');
+    expect(await xAxisLabels(months)).toEqual(['Dec 2025', 'Jan 2026']);
+  });
+
+  it('keeps a zoomable time axis for timestamps', () => {
+    const spec = compiled('type: line\nx: at\ny: n\ndata: |\n  at,n\n  2026-09-01T10:00,1\n  2026-09-01T11:30,2');
+    expect(spec.encoding.x).toMatchObject({ field: 'at', type: 'temporal' });
+    expect(spec.params.find((p: { name: string }) => p.name === 'zoom')).toMatchObject({ select: { type: 'interval', encodings: ['x'] }, bind: 'scales' });
   });
 
   it('compiles every type, from CSV or YAML rows, without Vega-Lite warnings', () => {

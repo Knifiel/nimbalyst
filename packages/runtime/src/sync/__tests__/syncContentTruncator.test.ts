@@ -1,13 +1,18 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it } from 'vitest';
 
+import type { AgentMessage } from '../../ai/server/types';
+import { decrypt } from '../collabV3Crypto';
+import { encryptSessionMessage } from '../encryptSessionMessage';
+import { setSyncLocalImageLoader } from '../syncDisplayImages';
 import {
+  MAX_SYNC_ROW_CONTENT_BYTES,
   setSyncImageCompressor,
   shouldSyncMessageForSessionRoom,
   truncateContentForSync,
 } from '../syncContentTruncator';
 
-afterEach(() => setSyncImageCompressor(null));
+afterEach(() => { setSyncImageCompressor(null); setSyncLocalImageLoader(null); });
 
 /** Build a claude-code tool_result message carrying one inline image block. */
 function screenshotMessage(data: string, mediaType = 'image/png'): string {
@@ -28,14 +33,57 @@ function screenshotMessage(data: string, mediaType = 'image/png'): string {
 }
 
 describe('truncateContentForSync', () => {
-  it('preserves unknown-provider text for lossless transport', () => {
-    const raw = 'x'.repeat(40 * 1024);
-    const result = truncateContentForSync(raw, 'custom-provider');
-    expect(result.content).toBe(raw);
-    expect(result.stats.elidedBytes).toBe(0);
+  it('keeps unknown-provider text whole up to the inline row limit and elides it past that', () => {
+    // The limit counts the content as it is escaped into the encrypted envelope, quotes included.
+    const fits = 'x'.repeat(MAX_SYNC_ROW_CONTENT_BYTES - 2);
+    expect(truncateContentForSync(fits, 'custom-provider').content).toBe(fits);
+
+    const over = truncateContentForSync(fits + 'x', 'custom-provider');
+    expect(over.content).toMatch(/^\[Full custom-provider message elided from mobile sync: .+ raw\. View on desktop for the full content\.\]$/);
+    expect(over.stats.elidedBytes).toBeGreaterThan(MAX_SYNC_ROW_CONTENT_BYTES - 512);
   });
 
-  it('keeps tool output bounded once the whole-row clamp is gone (#1711)', () => {
+  it('counts JSON escaping toward the inline row limit', () => {
+    const quotes = '"'.repeat(MAX_SYNC_ROW_CONTENT_BYTES / 2);
+    expect(truncateContentForSync(quotes, 'custom-provider').content).toContain('elided from mobile sync');
+  });
+
+  // SessionRoom.MAX_ENCRYPTED_CONTENT_BYTES compares the base64 ciphertext length to 512 KiB.
+  const SERVER_MAX_ENCRYPTED_CONTENT_CHARS = 512 * 1024;
+  async function encryptRow(content: string, metadata: Record<string, unknown>) {
+    const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    const encrypted = await encryptSessionMessage({
+      sessionId: 's', source: 'custom-provider', direction: 'output', content, metadata, createdAt: new Date(0),
+    } as AgentMessage, key);
+    return { encrypted, envelope: JSON.parse(await decrypt(encrypted.encryptedContent, encrypted.iv, key)) };
+  }
+
+  it('a content-limit row keeps its content and fits the server inline cap once encrypted', async () => {
+    const content = 'x'.repeat(MAX_SYNC_ROW_CONTENT_BYTES - 2);
+    const { encrypted, envelope } = await encryptRow(content, { usage: { inputTokens: 1, outputTokens: 2 } });
+    expect(encrypted.encryptedContent.length).toBeLessThanOrEqual(SERVER_MAX_ENCRYPTED_CONTENT_CHARS);
+    expect(envelope.content).toBe(content);
+  });
+
+  it.each([32 * 1024, 600 * 1024])('a content-limit row with %i bytes of metadata still fits the server inline cap', async (metadataBytes) => {
+    const content = 'x'.repeat(MAX_SYNC_ROW_CONTENT_BYTES - 2);
+    const { encrypted, envelope } = await encryptRow(content, { blob: 'm'.repeat(metadataBytes) });
+    expect(encrypted.encryptedContent.length).toBeLessThanOrEqual(SERVER_MAX_ENCRYPTED_CONTENT_CHARS);
+    expect(envelope.content).toMatch(/^\[Full custom-provider message elided from mobile sync: /);
+  });
+
+  it('leaves a display image path-only when the row metadata leaves no room for its bytes', async () => {
+    setSyncLocalImageLoader(async () => ({ data: 'i'.repeat(300 * 1024), mimeType: 'image/jpeg' }));
+    const row = JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{
+      type: 'tool_use', id: 'toolu_display', name: 'mcp__nimbalyst__display_to_user',
+      input: { items: [{ description: 'shot', image: { path: '/shot.png' } }] },
+    }] } });
+    const { encrypted, envelope } = await encryptRow(row, { blob: 'm'.repeat(100 * 1024) });
+    expect(encrypted.encryptedContent.length).toBeLessThanOrEqual(SERVER_MAX_ENCRYPTED_CONTENT_CHARS);
+    expect(JSON.parse(envelope.content).message.content[0].input.items[0].image).toEqual({ path: '/shot.png' });
+  });
+
+  it('bounds tool output field by field, far below the whole-row clamp (#1711)', () => {
     const big = 'x'.repeat(2_000_000);
     const smallResult = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'ok' }] };
     const largeJson = JSON.stringify(Array.from({ length: 20_000 }, (_, i) => ({ i, v: 'abcdefgh' })));

@@ -18,7 +18,8 @@
  *
  * Interactivity comes with the small spec: a tooltip on every mark, hover
  * highlight, click a legend entry to fade a series, and x-axis zoom/pan on
- * line, area and scatter when x is numeric or a date.
+ * line, area and scatter when x is numeric or a timestamp. Date-only x values
+ * are calendar categories, one tick per row.
  *
  * Pure and React-free: unit-tested in node, and shared by the editor block
  * and the placed view.
@@ -66,6 +67,29 @@ function fieldType(rows: readonly ChartRow[], field: string): FieldType {
   if (values.every((value) => typeof value === 'number' && Number.isFinite(value))) return 'quantitative';
   if (values.every((value) => (typeof value === 'string' && DATE_PATTERN.test(value)) || value instanceof Date)) return 'temporal';
   return 'nominal';
+}
+
+interface CalendarAxis {
+  timeUnit: string;
+  format: string;
+}
+
+/**
+ * Dates with no time part (2026-08-31, or 2026-08 for months) are calendar
+ * categories: one tick per row, labelled in UTC so a bare date never shows as
+ * the previous day west of Greenwich. A continuous time scale would instead
+ * pick its own ticks ("Mon 31", "Thu 03") that miss the rows.
+ */
+function calendarAxis(rows: readonly ChartRow[], field: string): CalendarAxis | null {
+  const values = rows.map((row) => row[field]).filter((value) => value !== undefined && value !== null && value !== '');
+  if (values.length === 0 || !values.every((value) => typeof value === 'string')) return null;
+  const strings = values as string[];
+  const years = new Set(strings.map((value) => value.slice(0, 4)));
+  if (strings.every((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))) {
+    return { timeUnit: 'utcyearmonthdate', format: years.size > 1 ? '%b %-d, %Y' : '%b %-d' };
+  }
+  if (strings.every((value) => /^\d{4}-\d{2}$/.test(value))) return { timeUnit: 'utcyearmonth', format: '%b %Y' };
+  return null;
 }
 
 function columnsOf(rows: readonly ChartRow[]): string[] {
@@ -217,7 +241,8 @@ function compileSmallSpec(type: ChartType, title: string | undefined, x: string,
   const titleOf = (field: string) => fieldTitles[field] ?? field;
   const multi = ys.length > 1;
   const yField = multi ? VALUE_FIELD : ys[0];
-  const xType = fieldType(rows, x);
+  const calendar = type === 'pie' ? null : calendarAxis(rows, x);
+  const xType = calendar ? 'ordinal' : fieldType(rows, x);
   const spec: VegaLiteSpec = {
     $schema: 'https://vega.github.io/schema/vega-lite/v6.json',
     ...(title ? { title } : {}),
@@ -225,8 +250,9 @@ function compileSmallSpec(type: ChartType, title: string | undefined, x: string,
     data: { values: rows },
     ...(multi ? { transform: [{ fold: ys, as: [SERIES_FIELD, VALUE_FIELD] }] } : {}),
   };
+  const calendarFields = calendar ? { timeUnit: calendar.timeUnit, format: calendar.format } : {};
   const tooltip = [
-    { field: x, type: xType === 'quantitative' ? 'quantitative' : xType === 'temporal' ? 'temporal' : 'nominal', title: titleOf(x) },
+    { field: x, type: xType === 'quantitative' ? 'quantitative' : xType === 'temporal' ? 'temporal' : xType === 'ordinal' ? 'ordinal' : 'nominal', title: titleOf(x), ...calendarFields },
     ...(multi ? [{ field: SERIES_FIELD, type: 'nominal', title: 'series' }] : []),
     { field: yField, type: 'quantitative', title: multi ? 'value' : titleOf(yField) },
   ];
@@ -277,7 +303,13 @@ function compileSmallSpec(type: ChartType, title: string | undefined, x: string,
   if (params.length > 0) spec.params = params;
 
   const encoding: Record<string, unknown> = {
-    x: { field: x, type: xType, title: titleOf(x), ...(xType === 'nominal' ? { sort: null } : {}) },
+    x: {
+      field: x,
+      type: xType,
+      title: titleOf(x),
+      ...(xType === 'nominal' ? { sort: null } : {}),
+      ...(calendar ? { timeUnit: calendar.timeUnit, axis: { format: calendar.format, labelAngle: 0 } } : {}),
+    },
     // Series overlap rather than stack, as in the transcript's charts.
     y: { field: yField, type: 'quantitative', title: multi ? null : titleOf(yField), ...((type === 'bar' || type === 'area') && multi ? { stack: null } : {}) },
     tooltip,

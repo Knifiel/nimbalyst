@@ -1,0 +1,26 @@
+/*
+ * Below the width where Name, Type, Status, Author and Updated all fit (a phone,
+ * a narrow pane), the Type, Status and Author columns fold into a line under
+ * the page name so the name keeps the row's width.
+ */
+.pages-search-view {
+  container: pages-search / inline-size;
+}
+
+.pages-search-view .pages-search-row-meta {
+  display: none;
+}
+
+@container pages-search (max-width: 680px) {
+  .pages-search-view .pages-search-col-wide {
+    display: none;
+  }
+
+  .pages-search-view .pages-search-row-meta {
+    display: flex;
+  }
+
+  .pages-search-view .pages-search-col-updated {
+    width: 76px;
+  }
+}

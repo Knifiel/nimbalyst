@@ -5,7 +5,7 @@ export { orderBetween, ORDER_STEP } from './project.js';
 export { DEFAULT_EDITOR_TYPES, SIDECAR_SUFFIX, sidecarName } from './sidecar.js';
 export { loadTypeDefs, RESERVED_FIELD_NAMES, type WikiTypeDef, type WikiFieldDef, type WikiTypeStorage } from './typeDefs.js';
 export { fileStemForTitle, uniqueStem, titleForStem } from './names.js';
-export { findLinks, formatPageLink, encodeLinkPath, type MarkdownLink } from './links.js';
+export { findLinks, formatPageLink, encodeLinkPath, rewriteFileLinks, type MarkdownLink } from './links.js';
 export { ATTACHMENTS_DIR } from './attachments.js';
 export { parseCsv, stringifyCsv, joinMultiValue, splitMultiValue, CsvParseError } from './csv.js';
 export { ulid, contentVersion } from './ids.js';

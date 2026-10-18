@@ -10,6 +10,11 @@
       "name": "nimbalyst-wiki",
       "source": "./",
       "description": "A local wiki your agents write for you, so you can think, organize, and set direction. Capture decisions, track typed pages, read and edit it in your browser, and optionally share it with your team."
+    },
+    {
+      "name": "nimbalyst-wiki-team",
+      "source": "./nimbalyst-wiki-team",
+      "description": "The team wiki server for Nimbalyst Wiki. The nimbalyst-wiki team skill installs it when you share the wiki with your team."
     }
   ]
 }

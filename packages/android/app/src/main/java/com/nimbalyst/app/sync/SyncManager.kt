@@ -74,7 +74,7 @@ class SyncManager internal constructor(
     @Volatile private var crypto: CryptoManager? = null
     @Volatile private var indexRoomId: String? = null
 
-    private val decoder = SessionEntryDecoder(gson, SessionPayloadStore(java.io.File(context.cacheDir, "SessionPayloads"), gson))
+    private val decoder = SessionEntryDecoder(gson)
     private val indexUpdates = SessionIndexUpdates(gson)
     private val presence = DevicePresence(context, gson)
     private val settings = SettingsSyncApplier(context)
@@ -99,7 +99,8 @@ class SyncManager internal constructor(
     private val indexHandler = IndexMessageHandler(
         repository, decoder, gson, { crypto }, _state, _connectedDevices,
         settings, indexRequests, creations, commands, signals, errors,
-        onPong = requests::deliveryConfirmed
+        onPong = requests::deliveryConfirmed,
+        onSnapshotApplied = requests::reconnect,
     ) { replication }
     private val _indexCoverage = MutableStateFlow(IndexCoverage())
     @Volatile private var replication: IndexReplicationClient? = null
@@ -368,7 +369,8 @@ class SyncManager internal constructor(
             submit = indexIngestion::submit,
             onApplied = indexHandler::afterReplicatedPage,
             onBootstrapFinalized = indexHandler::bootstrapFinalized,
-            onLegacyServer = { indexRequests.requestFull() }
+            onLegacyServer = { indexRequests.requestFull() },
+            onCaughtUp = requests::reconnect,
         )
         replication = client
         client.setForeground(presence.isInForeground)
@@ -432,7 +434,8 @@ class SyncManager internal constructor(
         notificationManager.state.value.deviceToken?.let(::registerPushToken)
         startReplication()
         startJwtRefreshTimer()
-        indexIngestion.submit { requests.reconnect() }
+        // Parked writes replay on index catch-up (onCaughtUp / onSnapshotApplied), not here:
+        // a draft blob replaces the server's, so it must carry the desktop's current fields.
         rejoinActiveSession()
     }
 

@@ -23,7 +23,6 @@ import { markToolResultPersisted } from "../../services/ai/claudeCliToolResultSe
 import {
   resolveClaudeCliToolPermission,
   normalizeToolPermissionAnswer,
-  parseToolPermissionResponseRecord,
   type ToolPermissionAnswer,
 } from "../../services/ai/claudeCliToolPermission";
 import {
@@ -35,6 +34,7 @@ import { ClaudeSettingsManager } from "../../services/ClaudeSettingsManager";
 import { getPermissionService } from "../../services/PermissionService";
 import { SessionCommitService } from "../../services/SessionCommitService";
 import { resolveGitCommitProposalTarget } from "../../services/gitCommitProposalTarget";
+import { findGitCommitProposalResponse, findToolPermissionResponse } from "./promptResponsePoll";
 import { findFreshInteractiveResponse } from "./interactiveResponsePolling";
 import { isInteractivePromptClosed } from "../../services/ai/questionTerminalResultLookup";
 import {
@@ -261,14 +261,8 @@ function waitForToolPermissionAnswer(
     pollTimer = setInterval(async () => {
       if (settled) return;
       try {
-        const messages = await AgentMessagesRepository.list(sessionId, { limit: 50 });
-        for (const msg of messages) {
-          const answer = parseToolPermissionResponseRecord(msg.content, requestId);
-          if (answer) {
-            settle(answer, "db-poll");
-            return;
-          }
-        }
+        const answer = await findToolPermissionResponse(sessionId, requestId);
+        if (answer) settle(answer, "db-poll");
       } catch {
         // Database fallback is best-effort; the timeout still fail-closes.
       }
@@ -959,34 +953,8 @@ export async function handleGitCommitProposal(
         }
 
         try {
-          const messages = await AgentMessagesRepository.list(
-            targetSessionId,
-            { limit: 20 }
-          );
-          for (const msg of messages) {
-            try {
-              const content = JSON.parse(msg.content);
-              if (
-                content.type === "git_commit_proposal_response" &&
-                content.proposalId === proposalId
-              ) {
-                settle(
-                  {
-                    action: content.action || "cancelled",
-                    commitHash: content.commitHash,
-                    commitDate: content.commitDate,
-                    error: content.error,
-                    filesCommitted: content.filesCommitted,
-                    commitMessage: content.commitMessage,
-                  },
-                  "db-poll"
-                );
-                return;
-              }
-            } catch {
-              // Not valid JSON, skip
-            }
-          }
+          const response = await findGitCommitProposalResponse(targetSessionId, proposalId);
+          if (response) settle(response, "db-poll");
         } catch {
           // Database error, continue polling
         }

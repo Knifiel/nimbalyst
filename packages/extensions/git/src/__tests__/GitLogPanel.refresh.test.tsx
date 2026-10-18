@@ -148,3 +148,61 @@ describe('GitLogPanel refresh', () => {
     });
   });
 });
+
+describe('GitLogPanel commit hover card', () => {
+  const COMMIT = { hash: 'abc1234def', message: 'Fix the thing', author: 'Dev', date: '2026-10-01T12:00:00Z' };
+  const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+  beforeEach(() => {
+    invoke.mockReset();
+    invoke.mockImplementation((channel: string) => {
+      switch (channel) {
+        case 'git:status':
+          return Promise.resolve({ branch: 'main', ahead: 0, behind: 0, hasUncommitted: false });
+        case 'git:branches':
+          return Promise.resolve({ branches: ['main'], current: 'main' });
+        case 'git:log':
+          return Promise.resolve([COMMIT]);
+        case 'git:list-workspace-repos':
+          return Promise.resolve({ success: true, repos: [WORKSPACE] });
+        case 'git:commit-detail':
+          return Promise.resolve({
+            body: 'Fix the thing',
+            files: [{ status: 'M', path: 'src/thing.ts', added: 1, deleted: 1 }],
+            summary: { filesChanged: 1, insertions: 1, deletions: 1 },
+          });
+        default:
+          return Promise.resolve(null);
+      }
+    });
+  });
+
+  // When the detail loads, the card grows from its loading height and, for a
+  // frame, overlaps the row under the cursor; the cursor then lands back on the
+  // row. Treating that as a new hover reset the card to Loading and refetched,
+  // which re-triggered the overlap: the card blinked as long as the mouse sat
+  // still.
+  it('does not reload the card when the cursor returns to the row it belongs to', async () => {
+    render(<GitLogPanel host={makeHost()} />);
+    // Panel state is per workspace and module-scoped, so an earlier test can
+    // leave the Changes tab active.
+    fireEvent.click(await screen.findByRole('button', { name: /^log$/i }));
+    const row = (await screen.findByText('Fix the thing')).closest('tr');
+    if (!row) throw new Error('Commit row not rendered');
+
+    fireEvent.mouseEnter(row);
+    await wait(400);
+    const card = await screen.findByText('thing.ts').then(el => el.closest('.git-hover-card'));
+    if (!card) throw new Error('Hover card not rendered');
+
+    fireEvent.mouseLeave(row);
+    fireEvent.mouseEnter(card);
+    fireEvent.mouseLeave(card);
+    fireEvent.mouseEnter(row);
+    await wait(400);
+
+    expect(invoke.mock.calls.filter(([channel]) => channel === 'git:commit-detail')).toHaveLength(1);
+    expect(screen.queryByText('Loading...')).toBeNull();
+    expect(screen.getByText('thing.ts')).toBeDefined();
+  });
+});

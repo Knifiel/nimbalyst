@@ -72,15 +72,6 @@ final class WireFixtureTests: XCTestCase {
     /// Every Swift type the manifest may name. A manifest entry naming a type
     /// absent from this table fails rather than passing unnoticed.
     private static let roundTrips: [String: RoundTrip] = [
-        "SessionPayloadAppendPart": roundTrip(SessionPayloadAppendPart.self),
-        "SessionPayloadGetParts": roundTrip(SessionPayloadGetParts.self),
-        "SessionProjectionRequest": roundTrip(SessionProjectionRequest.self),
-        "SessionProjectionResponse": roundTrip(SessionProjectionResponse.self),
-        "SessionPayloadReady": roundTrip(SessionPayloadReady.self),
-        "SessionPayloadPartMessage": roundTrip(SessionPayloadPartMessage.self),
-        "SessionPayloadPartAck": roundTrip(SessionPayloadPartAck.self),
-        "SessionMessageAppendAck": roundTrip(SessionMessageAppendAck.self),
-
         "AppendMessageRequest": roundTrip(AppendMessageRequest.self),
         "ClientMetadata": roundTrip(ClientMetadata.self),
         "CreateSessionRequestBroadcast": roundTrip(CreateSessionRequestBroadcast.self),

@@ -1,6 +1,7 @@
 import { getSessionStateManager } from '@nimbalyst/runtime/ai/server/SessionStateManager';
 import { store } from '../../utils/store';
 import { resolveProjectPath } from '../../utils/workspaceDetection';
+import { transcriptBackfill, type TranscriptBackfill } from './transcriptBackfill';
 
 /**
  * Predicate handed to `getAllSessionsForSync` so reconciliation never loads
@@ -23,25 +24,16 @@ export function createEnabledProjectFilter(): (workspaceId: string) => boolean {
 }
 
 /**
- * The live-message counterpart of the reconcile filter (NIM-7479): whether a
- * session's new transcript rows may be uploaded. The session's workspace is
- * looked up once; the enabled list is read on every call so a Settings change
- * applies without restarting sync, and each workspace path resolves once.
+ * Whether a project is enabled right now. The enabled list is read on every
+ * call so a Settings change applies without restarting sync; each workspace
+ * path resolves (a disk touch) once.
  */
-export function createLiveSessionSyncFilter(
-  getWorkspaceId: (sessionId: string) => Promise<string | null | undefined>,
+export function createLiveProjectEnabledCheck(
   getEnabledProjects: () => readonly string[] = () => store.get('sessionSync')?.enabledProjects ?? [],
   resolve: (workspaceId: string) => string = resolveProjectPath,
-): (sessionId: string) => Promise<boolean> {
-  const workspaceBySession = new Map<string, string | null>();
+): (workspaceId: string) => boolean {
   const resolvedByWorkspace = new Map<string, string>();
-  return async (sessionId) => {
-    let workspaceId = workspaceBySession.get(sessionId);
-    if (workspaceId === undefined) {
-      workspaceId = (await getWorkspaceId(sessionId)) ?? null;
-      workspaceBySession.set(sessionId, workspaceId);
-    }
-    if (workspaceId === null) return false;
+  return (workspaceId) => {
     const enabled = getEnabledProjects();
     if (enabled.includes(workspaceId)) return true;
     let resolved = resolvedByWorkspace.get(workspaceId);
@@ -51,6 +43,43 @@ export function createLiveSessionSyncFilter(
     }
     return enabled.includes(resolved);
   };
+}
+
+/**
+ * The live-message counterpart of the reconcile filter (NIM-7479): whether a
+ * session's new transcript rows may be uploaded. The session's workspace is
+ * looked up once.
+ */
+export function createLiveSessionSyncFilter(
+  getWorkspaceId: (sessionId: string) => Promise<string | null | undefined>,
+  getEnabledProjects?: () => readonly string[],
+  resolve?: (workspaceId: string) => string,
+): (sessionId: string) => Promise<boolean> {
+  const workspaceBySession = new Map<string, string | null>();
+  const isEnabled = createLiveProjectEnabledCheck(getEnabledProjects, resolve);
+  return async (sessionId) => {
+    let workspaceId = workspaceBySession.get(sessionId);
+    if (workspaceId === undefined) {
+      workspaceId = (await getWorkspaceId(sessionId)) ?? null;
+      workspaceBySession.set(sessionId, workspaceId);
+    }
+    return workspaceId !== null && isEnabled(workspaceId);
+  };
+}
+
+/**
+ * The provider's `isTranscriptSyncDisabled`: true for a project the user has
+ * not enabled, a project enabled so recently no reconcile has read the server
+ * since, or a session whose earlier transcript is still owed (see
+ * transcriptBackfill.ts).
+ */
+export function createTranscriptSyncDisabledPredicate(
+  backfill: Pick<TranscriptBackfill, 'isWithheld'> = transcriptBackfill,
+  getEnabledProjects?: () => readonly string[],
+  resolve?: (workspaceId: string) => string,
+): (projectId: string, sessionId: string) => boolean {
+  const isEnabled = createLiveProjectEnabledCheck(getEnabledProjects, resolve);
+  return (projectId, sessionId) => !isEnabled(projectId) || backfill.isWithheld(projectId, sessionId);
 }
 
 /** A turn in progress on this desktop; its rows publish live (see selectSessionsForIndexSync). */

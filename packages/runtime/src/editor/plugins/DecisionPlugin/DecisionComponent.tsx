@@ -32,6 +32,7 @@ import {
   parseDecisionFence,
   reconcileDecisionFence,
   sealDecisionFence,
+  withDecisionId,
 } from "./decisionFence";
 import { $isDecisionNode } from "./DecisionNode";
 import { useDecisionVotes, type DecisionVotingState } from "../../decisions";
@@ -329,6 +330,23 @@ const DecisionBlock: React.FC<{
   const progress = decisionProgress(source, effectiveVotes);
 
   /**
+   * A hand-written fence has no id, so every parse names it afresh. Votes and
+   * seal claims are keyed by the id, so write it into the fence before the
+   * first one, or the next load would orphan them.
+   */
+  const persistBlockId = useCallback((): void => {
+    editor.update(
+      () => {
+        const node = $getNodeByKey(nodeKey);
+        if (!$isDecisionNode(node)) return;
+        const next = withDecisionId(node.getContent(), source.id);
+        if (next !== null) node.setContent(next);
+      },
+      { discrete: true }
+    );
+  }, [editor, nodeKey, source.id]);
+
+  /**
    * Writes the sealed record into the fence.
    *
    * Shared documents first claim one CRDT key; after concurrent offline claims
@@ -345,6 +363,7 @@ const DecisionBlock: React.FC<{
       if (!voting.canSeal) return;
       const resolvedBy = voting.viewer?.name ?? voting.viewer?.id ?? "unknown";
       if (voting.canRecordVotes) {
+        persistBlockId();
         voting.claimSeal({
           outcome,
           resolvedBy,
@@ -416,7 +435,7 @@ const DecisionBlock: React.FC<{
       setSealing(false);
       setSealError(null);
     },
-    [editor, nodeKey, voting, $getFrontmatter, $setFrontmatter, effectiveVotes]
+    [editor, nodeKey, voting, $getFrontmatter, $setFrontmatter, effectiveVotes, persistBlockId]
   );
 
   const proposed = useMemo(
@@ -465,6 +484,7 @@ const DecisionBlock: React.FC<{
       }
       return;
     }
+    persistBlockId();
     if (await voting.castVote(draft)) setEditing(false);
   };
 

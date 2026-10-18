@@ -12,6 +12,8 @@ import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { main } from '../../index.js';
 import { boundedExpiresMs, boundedIntervalMs } from '../auth.js';
+import { assetIdFor, createTeamContentWriter, MAX_UPLOAD_BYTES } from '../teamContent.js';
+import type { EditorModels } from '../../mcp/editorTools.js';
 
 interface Call {
   url: string;
@@ -719,5 +721,135 @@ describe('nim wiki', () => {
     stdout = '';
     expect(await main(['wiki', 'read', 'collab://org:o1:doc:home', '--workspace', dir])).toBe(0);
     expect(stdout).toBe('# Home\n\nLine two\n');
+  });
+});
+
+describe('team content writer (the wiki move)', () => {
+  const credential = (n: number, expiresAt: number) => ({ token: `mcpimp_v1~k~${n}~sig`, expiresAt, orgId: 'org_1', projectId: 'proj_1', memberId: 'member_1' });
+
+  /** A document room that has synced and holds whatever the codec stub says. */
+  function fakeModels(outcome: 'seeded' | 'applied' | 'unchanged' | 'edited', opts: { synced?: boolean; flushed?: boolean; serverEmpty?: boolean; undecoded?: boolean } = {}) {
+    const providers: any[] = [];
+    const writes: unknown[][] = [];
+    const doc = { clientID: 1 };
+    class Provider {
+      flushes = 0;
+      destroyed = false;
+      constructor(readonly config: any) {
+        providers.push(this);
+      }
+      async connect() {
+        if (opts.synced !== false) this.config.onFirstSyncComplete?.(opts.serverEmpty ?? false);
+      }
+      getYDoc() {
+        return doc;
+      }
+      async flushWithAck() {
+        this.flushes++;
+        return opts.flushed !== false;
+      }
+      getLastAuthRejectionStatus() {
+        return opts.synced === false ? 403 : null;
+      }
+      hasUndecodedContent() {
+        return opts.undecoded === true;
+      }
+      destroy() {
+        this.destroyed = true;
+      }
+    }
+    const models = {
+      DocumentSyncProvider: Provider,
+      editorCodecs: { documentTypes: ['excalidraw'], writeDoc: (...args: unknown[]) => (writes.push(args), outcome), exportDoc: () => '' },
+    } as unknown as EditorModels;
+    return { models, providers, writes, doc };
+  }
+
+  it("writes an editor page through its room with the server's emptiness answer, flushes, and maps a teammate edit to body_edited", async () => {
+    const toolCalls: Array<{ name: string; args: unknown }> = [];
+    const call = async (name: string, args: Record<string, unknown>) => (toolCalls.push({ name, args }), credential(1, Date.now() + 15 * 60_000));
+    const seeded = fakeModels('seeded', { serverEmpty: true });
+    const writer = createTeamContentWriter({ server: 'https://sync.test', call, base: { project: { orgId: 'org_1', projectId: 'proj_1' } }, models: seeded.models });
+
+    const page = { localId: 'L1', documentId: 'doc-1', documentType: 'excalidraw', text: '{}' };
+    expect(await writer.writeEditorPage(page)).toEqual({ ok: true, outcome: 'seeded' });
+    const [provider] = seeded.providers;
+    expect(provider.config).toMatchObject({ serverUrl: 'wss://sync.test', orgId: 'org_1', teamMemberId: 'member_1', documentId: 'doc-1' });
+    expect(await provider.config.getJwt()).toBe('mcpimp_v1~k~1~sig');
+    expect(seeded.writes).toEqual([['excalidraw', seeded.doc, '{}', { roomHadState: false }]]);
+    expect(provider.flushes).toBe(1);
+    expect(provider.destroyed).toBe(true);
+    // One credential for the run while it is fresh.
+    await writer.writeEditorPage(page);
+    expect(toolCalls.map((c) => c.name)).toEqual(['pages_import_token']);
+    expect(toolCalls[0].args).toEqual({ project: { orgId: 'org_1', projectId: 'proj_1' } });
+
+    const edited = fakeModels('edited');
+    const editedWriter = createTeamContentWriter({ server: 'https://sync.test', call, base: {}, models: edited.models });
+    expect(await editedWriter.writeEditorPage(page)).toMatchObject({ ok: false, code: 'body_edited' });
+    expect(edited.providers[0].flushes).toBe(0);
+
+    const refused = fakeModels('seeded', { synced: false });
+    const refusedWriter = createTeamContentWriter({ server: 'https://sync.test', call, base: {}, models: refused.models, connectTimeoutMs: 20 });
+    // Never read as an empty room: no write happens without the first sync.
+    expect(await refusedWriter.writeEditorPage(page)).toMatchObject({ ok: false, code: 'room_refused' });
+    expect(refused.writes).toEqual([]);
+
+    // A room the client could only partly read is not written, and a non-empty room is reported as such to the codec.
+    const unreadable = fakeModels('seeded', { undecoded: true });
+    const unreadableWriter = createTeamContentWriter({ server: 'https://sync.test', call, base: {}, models: unreadable.models });
+    expect(await unreadableWriter.writeEditorPage(page)).toMatchObject({ ok: false, code: 'room_unreadable' });
+    expect(unreadable.writes).toEqual([]);
+    const full = fakeModels('unchanged');
+    await createTeamContentWriter({ server: 'https://sync.test', call, base: {}, models: full.models }).writeEditorPage(page);
+    expect(full.writes[0][3]).toEqual({ roomHadState: true });
+  });
+
+  it('asks for a new credential once the current one is about to lapse', async () => {
+    let issued = 0;
+    let clock = 1_000_000;
+    const call = async () => credential(++issued, clock + 15 * 60_000);
+    const { models } = fakeModels('unchanged');
+    const writer = createTeamContentWriter({ server: 'https://sync.test', call, base: {}, models, now: () => clock });
+    const page = { localId: 'L1', documentId: 'doc-1', documentType: 'excalidraw', text: '{}' };
+    await writer.writeEditorPage(page);
+    clock += 14.5 * 60_000;
+    await writer.writeEditorPage(page);
+    expect(issued).toBe(2);
+  });
+
+  it('uploads a linked file under a content-hash id with the asset headers, retrying once on a lapsed credential', async () => {
+    const file = path.join(tmp, 'chart.png');
+    fs.writeFileSync(file, 'png-bytes');
+    let issued = 0;
+    const call = async () => credential(++issued, Date.now() + 15 * 60_000);
+    const requests: Array<{ url: string; init: RequestInit }> = [];
+    const fetchStub = (async (url: string, init: RequestInit) => {
+      requests.push({ url, init });
+      return new Response(requests.length === 1 ? 'expired' : '{}', { status: requests.length === 1 ? 401 : 200 });
+    }) as unknown as typeof fetch;
+    const writer = createTeamContentWriter({ server: 'https://sync.test', call, base: {}, models: null, fetch: fetchStub });
+
+    const assetId = assetIdFor(new TextEncoder().encode('png-bytes'));
+    expect(await writer.uploadFile({ documentId: 'doc 1', abs: file })).toEqual({ ok: true, uri: `collab-asset://doc/doc%201/asset/${assetId}` });
+    expect(requests.map((r) => r.url)).toEqual([0, 1].map(() => `https://sync.test/api/collab/docs/doc%201/assets/${assetId}`));
+    expect(requests[1].init.headers).toMatchObject({
+      Authorization: 'Bearer mcpimp_v1~k~2~sig',
+      'X-Collab-Asset-Format': 'plaintext.v1',
+      'X-Collab-Asset-File-Name': 'chart.png',
+      'X-Collab-Asset-Mime-Type': 'image/png',
+      'X-Collab-Asset-Plaintext-Size': '9',
+    });
+
+    const big = path.join(tmp, 'big.bin');
+    fs.writeFileSync(big, '');
+    fs.truncateSync(big, MAX_UPLOAD_BYTES + 1);
+    expect(await writer.uploadFile({ documentId: 'doc-1', abs: big })).toMatchObject({ ok: false, code: 'file_too_large' });
+    expect(requests).toHaveLength(2);
+  });
+
+  it('cannot write an editor page without the editors\' document code', async () => {
+    const writer = createTeamContentWriter({ server: 'https://sync.test', call: async () => ({}), base: {}, models: null });
+    expect(await writer.writeEditorPage({ localId: 'L1', documentId: 'd', documentType: 'excalidraw', text: '{}' })).toMatchObject({ ok: false, code: 'editor_code_unavailable' });
   });
 });

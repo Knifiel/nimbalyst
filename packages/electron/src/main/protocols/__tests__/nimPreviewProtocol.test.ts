@@ -8,7 +8,11 @@ import {
   ensureUtf8HtmlResponse,
   NIM_PREVIEW_SCHEME,
   NIM_PREVIEW_HOST,
+  HTML_EMBED_SHELL_URL,
+  htmlEmbedShellResponse,
 } from '../nimPreviewProtocol';
+import { HTML_EMBED_SHELL_CSP } from '@nimbalyst/runtime/ui/htmlEmbed/htmlEmbedShell';
+import { DESKTOP_HTML_EMBED_SHELL_URL } from '../../../renderer/components/EmbedFrame/htmlEmbedShellUrl';
 
 const ROOT = `${sep}tmp${sep}preview-root`;
 const OTHER = `${sep}tmp${sep}preview-other`;
@@ -183,6 +187,25 @@ describe('nimPreviewProtocol', () => {
 
     it('previewPathInsideRoot still rejects sibling substring prefixes case-insensitively', () => {
       expect(previewPathInsideRoot(ROOT, `${ROOT}-EVIL${sep}index.html`, true)).toBe(false);
+    });
+  });
+
+  // Release-blocking: the HTML embed shell must always carry the sandbox CSP,
+  // so a teammate's HTML never runs as the app's origin.
+  describe('html embed shell', () => {
+    it('serves the shell with the sandbox CSP at the URL the renderer frames', async () => {
+      expect(DESKTOP_HTML_EMBED_SHELL_URL).toBe(HTML_EMBED_SHELL_URL);
+      const response = htmlEmbedShellResponse(new URL(DESKTOP_HTML_EMBED_SHELL_URL))!;
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-security-policy')).toBe(HTML_EMBED_SHELL_CSP);
+      expect(response.headers.get('content-security-policy')).toMatch(/^sandbox allow-scripts allow-popups;/);
+      expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8');
+      expect(await response.text()).toContain('nimbalyst-html-embed');
+    });
+
+    it('serves nothing else from the shell host and leaves preview URLs alone', () => {
+      expect(htmlEmbedShellResponse(new URL(`${NIM_PREVIEW_SCHEME}://html-embed/other`))!.status).toBe(404);
+      expect(htmlEmbedShellResponse(new URL(encodeNimPreviewUrl(ROOT, 'index.html')))).toBeNull();
     });
   });
 });

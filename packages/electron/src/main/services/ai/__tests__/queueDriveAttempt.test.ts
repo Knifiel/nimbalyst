@@ -71,6 +71,25 @@ describe('runQueueDriveAttempt', () => {
     expect(deps.dispatch).not.toHaveBeenCalled();
   });
 
+  // NIM-7512: a turn blocked on a question reports `waiting_for_input`, and if it
+  // went straight to the tool call it never set `isStreaming`, so it looked idle.
+  // Dispatching then started a human turn that superseded the question.
+  it('holds the queue while the turn waits on an unanswered question, even into a drain', async () => {
+    const deps = createDeps({
+      isAwaitingUserInput: vi.fn(() => true),
+      canDispatchIntoDrain: vi.fn(() => true),
+    });
+
+    expect(await run(deps, 'renderer-trigger')).toEqual({ kind: 'deferred', reason: 'session-busy' });
+    expect(deps.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('lets an explicit send-now go out past an unanswered question', async () => {
+    const deps = createDeps({ isAwaitingUserInput: vi.fn(() => true) });
+
+    expect(await run(deps, 'send-now')).toEqual({ kind: 'dispatched', promptId: 'p1' });
+  });
+
   it('defers as no-window rather than dropping the prompt', async () => {
     const deps = createDeps({
       resolveWindow: vi.fn(async () => ({ kind: 'deferred', reason: 'no-window' }) as const),

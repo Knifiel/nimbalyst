@@ -17,14 +17,18 @@ export function summarizeNotificationParams(
     case 'error':
     case 'turn/failed': {
       const errorObj = params.error as
-        | { message?: string; codexErrorInfo?: string; additionalDetails?: unknown }
+        | { message?: string; codexErrorInfo?: unknown; additionalDetails?: unknown }
         | undefined;
       return {
         threadId: params.threadId,
         turnId: params.turnId,
         willRetry: params.willRetry,
         message: previewForLog(errorObj?.message),
-        codexErrorInfo: previewForLog(errorObj?.codexErrorInfo),
+        // A string variant ("usageLimitExceeded") or an object variant
+        // ({ httpConnectionFailed: { httpStatusCode } }); objects log as-is.
+        codexErrorInfo: typeof errorObj?.codexErrorInfo === 'string'
+          ? previewForLog(errorObj.codexErrorInfo)
+          : errorObj?.codexErrorInfo,
         additionalDetails: errorObj?.additionalDetails,
       };
     }

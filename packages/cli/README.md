@@ -10,6 +10,7 @@
 npm install -g @nimbalyst/cli     # Node.js 22 or later
 nim wiki init                     # start a local wiki in nimbalyst-local/wiki
 nim wiki serve                    # read and edit it in your browser
+nim update                        # later: update nim and the wiki plugins
 nim --help
 ```
 
@@ -72,7 +73,7 @@ nim wiki move-to-team [--org <id> --project <id>] [--dry-run]   # the whole wiki
 - The folder is `--location`, else `location` in `.nimbalyst/local-wiki.json` (relative to the project root; `init` writes it), else `nimbalyst-local/wiki`. In a git worktree the project root is the main checkout, so worktrees share one wiki.
 - `init` adds `nimbalyst-local/` to `.gitignore` only when the wiki is under it and git does not already ignore it.
 - `write` reads the body from `--file` or stdin. With `--expected-version` (from `read --json`) it refuses to overwrite a page that changed since, with exit code `7` and nothing written.
-- `move-to-team` needs `nim login` and a repository connected to a team project (`nim wiki status` says bound). It copies every markdown page and typed page, with hierarchy, order, fields and type definitions, and rewrites links between pages to the team pages. Page bodies go from the files to the server in batches paced under the server's rate limit. Editor pages (drawings, spreadsheets) are listed as not moved. The local files are never deleted; after a verified move `.nimbalyst/local-wiki.json` gets `migratedTo` and the local Home gets a line pointing at the team wiki. Re-running it resumes an interrupted move without duplicating pages. `--dry-run` only counts and checks the target.
+- `move-to-team` needs `nim login` and a repository connected to a team project (`nim wiki status` says bound). It copies every markdown page, typed page and editor page, with hierarchy, order, fields and type definitions, uploads the images and attachments markdown pages link to, and rewrites links to the team pages and uploads. Page bodies go from the files to the server in batches paced under the server's rate limit. Editor pages (drawings, mind maps, data models, mockups, spreadsheets, calc sheets, canvases) are written with each editor's own collaboration code, which comes with `@nimbalyst/wiki-web` (installed with `nim`); when it cannot be loaded they are listed as not moved. An editor page someone has edited in the team since the move wrote it is left as it is. The local files are never deleted; after a verified move `.nimbalyst/local-wiki.json` gets `migratedTo` and the local Home gets a line pointing at the team wiki. Re-running it resumes an interrupted move without duplicating pages. `--dry-run` only counts and checks the target.
 - `nim tracker list/get/show/create/update` use the local wiki for wiki types: a type whose `.nimbalyst/trackers/<type>.yaml` declares `storage: pages` or `storage: table` (list and create, from its first item), a type that already has typed pages in the wiki (list), or the id of a typed page or table row there (get, show, update). `--local` forces the wiki. New items of a type without `storage:` are refused in the wiki (its items live in the app database). Everything else goes to the app database as before.
 
 ## `nim mcp`
@@ -86,6 +87,23 @@ claude mcp add nimbalyst-local -- nim mcp
 It serves the local wiki under the same tool names as the team wiki server: `listPages`, `searchPages`, `readCollabDoc`, `applyCollabDocEdit` (exact replacements, or `content` for the whole body, with an optional `expectedVersion`), `createSharedDoc`, `createSharedFolder`, `moveSharedItem`, `renameSharedItem`, `deleteSharedItem` (to the wiki's `.trash/`), `setPageType`, `setPageFields`, and `tracker_list_types`, `tracker_list`, `tracker_get`, `tracker_create`, `tracker_update` for types placed in the wiki. Pages are addressed as `local-wiki://<id>`, by id, or by path. It also serves `initLocalWiki`, which creates the wiki (default `nimbalyst-local/wiki`, or a `location` relative to the project root), so an agent can start one without anyone running `nim wiki init`. The list does not change during a session: without a wiki each tool answers that `initLocalWiki` creates one. Team data is never read or written here: a call with `section: 'team'`, a `collab://` uri, a console link or a team issue key is refused and names the tool to call on the `nimbalyst-team` server instead. `--workspace` and `--location` choose the wiki as for `nim wiki`.
 
 For moving the local wiki to Nimbalyst Teams without the app it also serves `teamSignIn` (the `nim login` device flow; the first call opens the approval page and answers `pending`, a later call answers `signedIn`; tokens are stored where `nim login` keeps them), `moveLocalWikiToTeam` (the same move as `nim wiki move-to-team`; it returns counts, links and errors, never page bodies) and `openUrl` (opens `https://console.nimbalyst.com/...` pages only).
+
+`wikiDoctor` starts with a `versions` section: the running `nim`, how it was installed, the browser app it uses, the latest version the update check has seen, whether a restart is needed, and the wiki plugins installed for Claude Code and Codex.
+
+## Updating
+
+```sh
+nim update                       # nim, plus the nimbalyst-wiki plugin for Claude Code and Codex
+nim update --check               # report only; exit 1 if anything is out of date
+nim update --dry-run             # print the commands without running them
+nim update --only cli|claude|codex
+nim doctor [--json]              # installed versions and where they come from
+```
+
+- `nim update` runs `npm install -g` (or `pnpm add -g`) for the `nim` it runs from, and the agents' own commands for the plugins (`claude plugin marketplace update` and `claude plugin update`, `codex plugin marketplace upgrade`) when `claude` or `codex` is on PATH. It then reads each install's version from disk and reports a command that left the old version as failed. It never uses sudo: when npm cannot write to the global directory it prints the command to run yourself. A `nim` installed as a project dependency, run through npx, or bundled with the Nimbalyst app is left to that project, npx or the app.
+- The browser app (`@nimbalyst/wiki-web`) is an exact-version dependency of `@nimbalyst/cli`, so it updates with `nim`. An older copy installed globally beside `nim` is not used.
+- Once a day `nim mcp` checks npm for a newer `nim` and adds a line to the first tool result the agent receives. In a terminal, `nim` prints one line on stderr instead, only when stderr is a terminal and not for `--json`, `--csv` or `--quiet`; the check runs in a background process, so a command never waits for it. The result is cached in `~/.nimbalyst-wiki/update-check.json`. `NIMBALYST_WIKI_NO_UPDATE_CHECK=1` turns the check off, and it is off when `CI` is set.
+- Processes started before an update keep the old version: start a new agent session for `nim mcp` and the plugins, and restart a running `nim wiki serve`.
 
 ## Trackers in the Nimbalyst app
 

@@ -4,6 +4,7 @@
  * The server lives as long as the MCP server does; a second call reuses it.
  */
 import { CliError } from '../cli/exitCodes.js';
+import { resolveWikiLocation, type Workspace } from '../localWiki/locate.js';
 import { NoLocalWikiError, openLocalWiki } from '../localWiki/open.js';
 import { installHint, resolveWikiWebAssets } from '../serve/assets.js';
 import { openBrowser } from '../serve/runWikiServe.js';
@@ -17,6 +18,8 @@ export const SERVE_TOOL_NAME = 'openWikiInBrowser';
 export interface ServeToolOptions {
   startDir: string;
   location?: string;
+  /** The current project, when the server can be re-pointed (useLocalWiki); wins over startDir/location. */
+  workspace?: () => Workspace;
   /** Built wiki-web folder; the plugin ships one. Otherwise an installed `@nimbalyst/wiki-web` is looked up. */
   assetsDir?: string;
   version: string;
@@ -32,6 +35,13 @@ export interface ServeTool extends McpTool {
 export function serveTool(options: ServeToolOptions): ServeTool {
   const openUrl = options.openUrl ?? openBrowser;
   let running: { server: WikiServer; dir: string; closeWiki: () => void } | null = null;
+  const close = async () => {
+    if (!running) return;
+    const { server, closeWiki } = running;
+    running = null;
+    await server.close();
+    closeWiki();
+  };
 
   return {
     definition: {
@@ -52,8 +62,11 @@ export function serveTool(options: ServeToolOptions): ServeTool {
     call: async (args) => {
       try {
         refuseTeamScope(SERVE_TOOL_NAME, args);
+        const { startDir, location } = options.workspace?.() ?? options;
+        // After useLocalWiki, a browser server on the old project's wiki gives way to one on the new.
+        if (running && running.dir !== resolveWikiLocation(startDir, location).dir) await close();
         if (!running) {
-          const opened = await openLocalWiki(options.startDir, options.location);
+          const opened = await openLocalWiki(startDir, location);
           const resolution = resolveWikiWebAssets({ flag: options.assetsDir, projectRoot: opened.projectRoot });
           if (!resolution.ok) {
             opened.wiki.close();
@@ -74,12 +87,6 @@ export function serveTool(options: ServeToolOptions): ServeTool {
         return textResult(`${SERVE_TOOL_NAME}: ${(err as Error).message}`, true);
       }
     },
-    close: async () => {
-      if (!running) return;
-      const { server, closeWiki } = running;
-      running = null;
-      await server.close();
-      closeWiki();
-    },
+    close,
   };
 }

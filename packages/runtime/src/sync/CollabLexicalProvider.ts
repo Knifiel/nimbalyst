@@ -128,6 +128,7 @@
 import type { Provider, ProviderAwareness, UserState } from '@lexical/yjs';
 import * as Y from 'yjs';
 import type { Doc } from 'yjs';
+import { collaboratorDisplayName } from './collaboratorDisplayName';
 import { DocumentSyncProvider } from './DocumentSync';
 import type { DocumentSyncStatus } from './documentSyncTypes';
 import {
@@ -434,7 +435,8 @@ export class CollabLexicalProvider implements Provider {
           anchorPos: state.cursor ? JSON.parse(state.cursor.anchor) : null,
           focusPos: state.cursor ? JSON.parse(state.cursor.head) : null,
           color: state.user.color,
-          name: state.user.name,
+          // Clients that fell back to the member id still broadcast it as a name.
+          name: collaboratorDisplayName({ name: state.user.name, memberId: userId }),
           focusing: !!state.cursor,
           awarenessData: {},
         });

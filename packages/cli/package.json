@@ -1,6 +1,6 @@
 {
   "name": "@nimbalyst/cli",
-  "version": "0.4.0",
+  "version": "0.10.0",
   "description": "nim — companion command-line tool for Nimbalyst trackers and agent interop",
   "license": "MIT",
   "author": "Nimbalyst Team",
@@ -43,6 +43,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "prepublishOnly": "pnpm run build"
+  },
+  "dependencies": {
+    "@nimbalyst/wiki-web": "workspace:*"
   },
   "optionalDependencies": {
     "better-sqlite3": "13.0.3"

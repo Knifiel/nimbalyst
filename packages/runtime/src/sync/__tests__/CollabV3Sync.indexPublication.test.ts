@@ -4,6 +4,8 @@ import { asPersonalJwt, asPersonalMemberId } from '../../auth/jwtScopes';
 
 import { createCollabV3Sync } from '../CollabV3Sync';
 import { clearStableCiphertextCache } from '../stableCiphertext';
+import { decrypt } from '../collabV3Crypto';
+import type { PushChangeOutcome } from '../types';
 import { createProjectConfigSync } from '../../../../electron/src/main/services/sync/projectConfigSync';
 
 /**
@@ -80,7 +82,7 @@ function indexPackets(socket: FakeWebSocket): Array<Record<string, any>> {
     .filter((message) => INDEX_PACKET_TYPES.has(message.type));
 }
 
-async function createConnectedProvider() {
+async function createConnectedProvider(overrides: Partial<Parameters<typeof createCollabV3Sync>[0]> = {}) {
   const encryptionKey = await crypto.subtle.generateKey(
     { name: 'AES-GCM', length: 256 },
     true,
@@ -92,6 +94,7 @@ async function createConnectedProvider() {
     personalMemberId: asPersonalMemberId('user-1'),
     getJwt: async () => asPersonalJwt(jwtFor('user-1')),
     encryptionKey,
+    ...overrides,
   });
 
   await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
@@ -589,5 +592,123 @@ describe('CollabV3 index publication gate', () => {
     expect(queued.published).toBe(false);
     expect(queued.retryable).toBe(true);
     expect(queued.reason).toContain('queued');
+  });
+
+  /**
+   * NIM-7545: a session in a project the user did not enable stays listed on
+   * the phone, but its transcript is withheld, so every index publish has to
+   * say so -- bulk, full update, patch, and first-sight -- and stop saying so
+   * once the project is enabled.
+   */
+  it('marks sessions of a project not enabled for sync on every publish path, and clears the mark once enabled', async () => {
+    const enabled = new Set<string>();
+    const { provider, indexSocket, encryptionKey } = await createConnectedProvider({
+      isTranscriptSyncDisabled: projectId => !enabled.has(projectId),
+    });
+    const clientMetaOf = async (packet: Record<string, any> | undefined) => {
+      const body = packet?.session ?? packet?.patch;
+      if (!body?.encryptedClientMetadata) return {};
+      return JSON.parse(await decrypt(body.encryptedClientMetadata, body.clientMetadataIv, encryptionKey));
+    };
+    try {
+      await publishBatch(provider, [baseSession({ workspaceId: '/opted-out' })]);
+      expect(await clientMetaOf(indexPackets(indexSocket).at(-1))).toMatchObject({ transcriptSyncDisabled: true });
+
+      await provider.pushChange('session-1', { type: 'metadata_updated', metadata: { isExecuting: true } });
+      expect(indexPackets(indexSocket).at(-1)?.type).toBe('indexUpdate');
+      expect(await clientMetaOf(indexPackets(indexSocket).at(-1))).toMatchObject({ transcriptSyncDisabled: true });
+
+      await provider.pushChange('session-1', { type: 'metadata_updated', metadata: { draftInput: 'draft', draftUpdatedAt: 2_000 } as any });
+      expect(indexPackets(indexSocket).at(-1)?.type).toBe('indexClientMetadataPatch');
+      expect(await clientMetaOf(indexPackets(indexSocket).at(-1))).toMatchObject({ transcriptSyncDisabled: true });
+
+      await provider.pushChange('session-2', { type: 'metadata_updated', metadata: {
+        title: 'Created while opted out', provider: 'claude-code', workspaceId: '/opted-out', updatedAt: 3_000,
+      } });
+      expect(indexPackets(indexSocket).at(-1)?.session.sessionId).toBe('session-2');
+      expect(await clientMetaOf(indexPackets(indexSocket).at(-1))).toMatchObject({ transcriptSyncDisabled: true });
+
+      // The flag survives the round trip, so reconciliation can see which rows lack a transcript.
+      const flaggedRow = indexPackets(indexSocket).filter(p => p.session?.sessionId === 'session-1').at(-1)!.session;
+      const fetching = provider.fetchIndex!();
+      const pageRequests = () => indexSocket.send.mock.calls.map(([p]) => JSON.parse(p as string)).filter(m => m.type === 'indexPageRequest');
+      await vi.waitFor(() => expect(pageRequests()).toHaveLength(2));
+      indexSocket.receive({ type: 'indexPageResponse', protocolVersion: 2, requestId: pageRequests().at(-1)!.requestId, mode: 'delta',
+        entries: [{ entity: 'session', id: 'session-1', revision: 1, deleted: false, session: flaggedRow }], complete: true, cursor: 1 });
+      const index = await fetching;
+      expect(index.sessions.find(s => s.sessionId === 'session-1')?.transcriptSyncDisabled).toBe(true);
+
+      // Enabled in Settings > Sync: the next publish of either kind drops the mark.
+      enabled.add('/opted-out');
+      await provider.pushChange('session-1', { type: 'metadata_updated', metadata: { isExecuting: false } });
+      expect(indexPackets(indexSocket).at(-1)?.type).toBe('indexUpdate');
+      expect((await clientMetaOf(indexPackets(indexSocket).at(-1))).transcriptSyncDisabled).toBeUndefined();
+      await publishBatch(provider, [baseSession({ workspaceId: '/opted-out', updatedAt: 4_000 })]);
+      expect((await clientMetaOf(indexPackets(indexSocket).at(-1))).transcriptSyncDisabled).toBeUndefined();
+
+      // Disabled again: a patch alone must carry the change, not be suppressed as a no-op.
+      enabled.delete('/opted-out');
+      await provider.pushChange('session-1', { type: 'metadata_updated', metadata: { draftInput: 'draft', draftUpdatedAt: 2_000 } as any });
+      expect(indexPackets(indexSocket).at(-1)?.type).toBe('indexClientMetadataPatch');
+      expect(await clientMetaOf(indexPackets(indexSocket).at(-1))).toMatchObject({ transcriptSyncDisabled: true });
+    } finally {
+      provider.disconnectAll();
+    }
+  });
+
+  it('reports each requested transcript upload, including a failed load, so a backfill is never assumed delivered', async () => {
+    const { provider } = await createConnectedProvider();
+    const outcomes: Array<[string, PushChangeOutcome]> = [];
+    let failLoad = true;
+    try {
+      const sync = (ids: string[]) => provider.syncSessionsToIndex!(ids.map(id => baseSession({ id })) as never, {
+        syncMessages: true,
+        messageSyncRequests: ids.map(sessionId => ({ sessionId, sinceTimestamp: 0 })),
+        getMessagesForSync: async () => { if (failLoad) throw new Error('database busy'); return new Map(); },
+        onTranscriptSynced: (sessionId, outcome) => { outcomes.push([sessionId, outcome]); },
+      });
+      await sync(['owed-1']);
+      await vi.waitFor(() => expect(outcomes).toHaveLength(1));
+      expect(outcomes[0]).toEqual(['owed-1', expect.objectContaining({ published: false, retryable: true, reason: 'transcript load failed' })]);
+
+      failLoad = false;
+      await sync(['owed-1']);
+      // Nothing stored past the requested point: nothing left to deliver.
+      await vi.waitFor(() => expect(outcomes).toHaveLength(2));
+      expect(outcomes[1]).toEqual(['owed-1', { published: true }]);
+    } finally {
+      provider.disconnectAll();
+    }
+  });
+
+  /**
+   * NIM-7546: `isExecuting: false` pushed during an index 1006 drop came back
+   * `index publication deferred` and was never sent again, so the phone showed
+   * the session running for hours.
+   */
+  it('resends an execution-state change deferred while the index was down once the index is usable again', async () => {
+    const { provider, indexSocket } = await createConnectedProvider();
+    try {
+      await publishBatch(provider, [baseSession({ createdBySessionId: 'manager-1' })]);
+      await provider.pushChange('session-1', { type: 'metadata_updated', metadata: { isExecuting: true, updatedAt: 2_000 } });
+      expect(indexPackets(indexSocket).at(-1)?.session.isExecuting).toBe(true);
+
+      indexSocket.readyState = 3;
+      indexSocket.onclose?.({ code: 1006, reason: '', wasClean: false } as CloseEvent);
+      const deferred = await provider.pushChange('session-1', { type: 'metadata_updated', metadata: { isExecuting: false, updatedAt: 3_000 } });
+      expect(deferred).toMatchObject({ published: false, retryable: true });
+      // A model-only change and an explicit manager clear made offline must survive too.
+      await provider.pushChange('session-1', { type: 'metadata_updated', metadata: { model: 'claude-code:opus', createdBySessionId: null } });
+
+      await provider.reconnectIndex!();
+      await vi.waitFor(() => expect(FakeWebSocket.instances.length).toBeGreaterThan(1));
+      const freshSocket = FakeWebSocket.instances.at(-1)!;
+      freshSocket.open();
+      await vi.waitFor(() => expect(indexPackets(freshSocket).at(-1)?.session).toMatchObject({ sessionId: 'session-1', isExecuting: false }), { timeout: 2_000 });
+      expect(indexPackets(freshSocket).at(-1)?.session).toMatchObject({ model: 'claude-code:opus', createdBySessionId: null });
+      expect(provider.getCachedIndexEntry?.('session-1')?.isExecuting).toBe(false);
+    } finally {
+      provider.disconnectAll();
+    }
   });
 });

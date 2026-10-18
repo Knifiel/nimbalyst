@@ -46,7 +46,10 @@ enum SessionIndexUpdates {
             phase: session.phase,
             tags: session.tags.isEmpty ? nil : session.tags,
             draftInput: draft,
-            draftUpdatedAt: draftUpdatedAt
+            draftUpdatedAt: draftUpdatedAt,
+            // The server stores the blob whole, so a field left out here is
+            // cleared for every other device.
+            transcriptSyncDisabled: session.transcriptSyncDisabled ? true : nil
         )
         let metaJson = try JSONEncoder().encode(clientMeta)
         guard let metaString = String(data: metaJson, encoding: .utf8) else {

@@ -29,6 +29,7 @@ import { protocol, net, type Session } from 'electron';
 import { realpath } from 'fs/promises';
 import { resolve, sep, extname, join } from 'path';
 import { pathToFileURL } from 'url';
+import { HTML_EMBED_SHELL_CSP, HTML_EMBED_SHELL_HTML } from '@nimbalyst/runtime/ui/htmlEmbed/htmlEmbedShell';
 
 export const NIM_PREVIEW_SCHEME = 'nim-preview';
 /** Host of the two legacy URL forms; current URLs carry the hex root as host. */
@@ -282,9 +283,34 @@ export function registerNimPreviewSchemeAsPrivileged(): void {
   ]);
 }
 
+/**
+ * The HTML embed sandbox shell. Documents frame it for `.html` embeds; the
+ * response CSP keeps its origin opaque even when the URL is opened directly.
+ * The host is not hex, so it can never collide with a workspace preview URL.
+ */
+export const HTML_EMBED_SHELL_HOST = 'html-embed';
+export const HTML_EMBED_SHELL_URL = `${NIM_PREVIEW_SCHEME}://${HTML_EMBED_SHELL_HOST}/shell`;
+
+/** The shell response for an `html-embed` host URL, or null for any other URL. */
+export function htmlEmbedShellResponse(url: URL): Response | null {
+  if (url.host !== HTML_EMBED_SHELL_HOST) return null;
+  if (url.pathname !== '/shell') return new Response('Not found', { status: 404 });
+  return new Response(HTML_EMBED_SHELL_HTML, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Security-Policy': HTML_EMBED_SHELL_CSP,
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    },
+  });
+}
+
 async function handleNimPreviewRequest(request: Request): Promise<Response> {
   try {
     const url = new URL(request.url);
+    const shell = htmlEmbedShellResponse(url);
+    if (shell) return shell;
     const parsed = decodePreviewRequest(url);
     if (!parsed) {
       return new Response('Bad request', { status: 400 });

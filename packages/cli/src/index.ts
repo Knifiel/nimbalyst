@@ -4,7 +4,12 @@
  * Entry point: parse argv, dispatch the noun, translate thrown CliErrors into
  * stable exit codes. All command output goes to stdout; diagnostics to stderr.
  */
-import { parseArgs, flagBool } from './cli/parse.js';
+import { fileURLToPath } from 'node:url';
+import { parseArgs, flagBool, type ParsedArgs } from './cli/parse.js';
+import { terminalNotice, wantsTerminalNotice } from './cli/updateNotice.js';
+import { detectNpmInstall, startUpdateCheck } from './mcp/updateCheck.js';
+import { runUpdate } from './commands/update.js';
+import { runDoctor } from './commands/doctor.js';
 import { setColorEnabled } from './cli/colors.js';
 import { CliError, ExitCode } from './cli/exitCodes.js';
 import { safeText } from './cli/output.js';
@@ -25,6 +30,8 @@ import { runWikiServe } from './serve/runWikiServe.js';
  */
 declare const __NIM_VERSION__: string;
 export const VERSION: string = typeof __NIM_VERSION__ === 'string' ? __NIM_VERSION__ : '0.0.0-dev';
+/** The running bundle (dist/bin/cli.js once built), which tells us how this nim was installed. */
+const ENTRY_FILE = fileURLToPath(import.meta.url);
 
 const PAGES_HELP = `Wiki: one noun for the local wiki (files in this project, no account) and the team wiki.
   list (ls), read, move and search use the local wiki when the project has one, else the team wiki;
@@ -79,6 +86,15 @@ Nouns:
   workspace   list / show workspaces
   status      what nim is connected to (live or direct), schema, workspaces
   mcp         MCP server on stdio for agents: local wiki pages and typed pages (stdout is protocol only)
+  update      update nim and the Nimbalyst Wiki plugins for Claude Code and Codex
+  doctor      which nim and browser app this is, how they were installed, and the installed plugins
+
+Update and versions:
+  nim update [--check] [--dry-run] [--only cli|claude|codex]
+                     (--check: report only, exit 1 if anything is out of date)
+  nim doctor [--versions] [--json]
+  A terminal command prints one line on stderr when a newer nim is published (once a day at most;
+  NIMBALYST_WIKI_NO_UPDATE_CHECK=1 turns it off).
 
 Tracker (read):
   nim tracker ready  [--type T] [--limit N | --all] [--json|--csv|-q]
@@ -163,6 +179,15 @@ export async function main(argv: string[]): Promise<number> {
     return ExitCode.OK;
   }
 
+  const code = await dispatch(args);
+  if (wantsTerminalNotice(args, Boolean(process.stderr.isTTY))) {
+    const notice = terminalNotice({ entryFile: ENTRY_FILE, version: VERSION });
+    if (notice) process.stderr.write(notice);
+  }
+  return code;
+}
+
+async function dispatch(args: ParsedArgs): Promise<number> {
   try {
     switch (args.noun) {
       case 'tracker':
@@ -185,9 +210,17 @@ export async function main(argv: string[]): Promise<number> {
         return await runWhoami(args);
       case 'wiki':
         if (args.verb === 'serve') return await runWikiServe(args, { version: VERSION });
-        return isLocalWikiCall(args) ? await runLocalWiki(args) : await runPages(args);
-      case 'mcp':
-        return await runMcp(VERSION, args);
+        return isLocalWikiCall(args) ? await runLocalWiki(args, VERSION) : await runPages(args);
+      case 'mcp': {
+        // The plugin starts its server through mcp/pluginEntry.ts, which runs its own check.
+        const install = detectNpmInstall(ENTRY_FILE, VERSION);
+        const check = install.kind === 'npm' ? startUpdateCheck({ install }) : null;
+        return await runMcp(VERSION, args, { takeNotice: check?.takeNotice, install, executable: ENTRY_FILE });
+      }
+      case 'update':
+        return await runUpdate(args, { version: VERSION, entryFile: ENTRY_FILE });
+      case 'doctor':
+        return await runDoctor(args, { version: VERSION, entryFile: ENTRY_FILE });
       default:
         process.stderr.write(`nim: unknown command '${args.noun}'. Run 'nim --help'.\n`);
         return ExitCode.USAGE;

@@ -370,6 +370,13 @@ struct SessionRow: View {
                         PhaseBadge(phase: phase)
                     }
 
+                    if session.transcriptSyncDisabled {
+                        Text("Not synced")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("session-row-not-synced")
+                    }
+
                     Spacer()
 
                     Text(RelativeTimestamp.format(epochMs: session.updatedAt))

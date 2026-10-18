@@ -197,7 +197,14 @@ export function validateScheduleSpec(
 function positiveInteger(value: unknown, fallback: number, at: string, errors: CrewDefinitionError[]): number {
   if (value === undefined) return fallback;
   if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
-    errors.push({ path: at, message: 'must be a positive whole number' });
+    // Only suggest unquoting when the unquoted number would pass; "0" would not.
+    const quoted = typeof value === 'string' && /^\d+$/.test(value.trim()) && Number(value) > 0;
+    errors.push({
+      path: at,
+      message: quoted
+        ? `must be a positive whole number (got the text "${value}"; remove the quotes)`
+        : 'must be a positive whole number',
+    });
     return fallback;
   }
   return value;

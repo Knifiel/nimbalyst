@@ -38,6 +38,7 @@
     <string name="session_list_pinned_indicator">Pinned</string>
     <string name="session_list_queued_indicator">Prompt queued</string>
     <string name="session_list_archived_indicator">Archived</string>
+    <string name="session_list_not_synced">Not synced</string>
     <string name="session_list_status_waiting">Waiting for input</string>
 
     <!-- Pending session (notification taps) -->

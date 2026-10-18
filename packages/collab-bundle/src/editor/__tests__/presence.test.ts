@@ -70,7 +70,35 @@ describe('collaboration presence surface', () => {
       name: ' ',
       email: 'rowan@example.com',
     }).displayName).toBe('rowan@example.com');
-    expect(resolveCollabEditorUser({ memberId }).displayName).toBe('member-1');
+    // The member id is never a label: a host that has not resolved the name
+    // yet, or passed the id as the name, gets the generic one.
+    expect(resolveCollabEditorUser({ memberId }).displayName).toBe('Teammate');
+    expect(resolveCollabEditorUser({ memberId, name: 'member-1' }).displayName).toBe('Teammate');
+    expect(resolveCollabEditorUser({ memberId, name: 'member-1', email: 'rowan@example.com' }).displayName)
+      .toBe('rowan@example.com');
+  });
+
+  it('relabels the local participant after mount and keeps the label on later editor states', () => {
+    const delegate = new FakeAwarenessSurface();
+    const surface = new CollabPresenceSurface(delegate);
+    // The editor mounted before the roster answered.
+    surface.setLocalAwareness({ user: { name: 'Teammate', color: '#3366ff' } });
+
+    surface.setDisplayName('Rowan Petrie');
+    expect(delegate.sentStates.at(-1)?.user.name).toBe('Rowan Petrie');
+
+    // Lexical keeps publishing the name it mounted with on every selection change.
+    surface.setLocalAwareness({ user: { name: 'Teammate', color: '#3366ff' }, cursor: { anchor: '{}', head: '{}' } });
+    expect(delegate.localStates.at(-1)?.user.name).toBe('Rowan Petrie');
+    surface.destroy();
+  });
+
+  it('never shows a peer by the member id it broadcast as its name', () => {
+    const delegate = new FakeAwarenessSurface();
+    const surface = new CollabPresenceSurface(delegate);
+    delegate.emit(new Map([['member-live-abc', { user: { name: 'member-live-abc', color: '#16A34A' } }]]));
+    expect(surface.getPresence().participants.map((participant) => participant.displayName)).toEqual(['Teammate']);
+    surface.destroy();
   });
 
   it('keeps active clients alive and removes a disconnected bundle participant', async () => {

@@ -1,0 +1,63 @@
+.html-page-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--nim-bg);
+}
+
+.html-page-editor__toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--nim-border);
+}
+
+.html-page-editor__mode {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--nim-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.html-page-editor__mode:hover {
+  background: var(--nim-bg-hover);
+  color: var(--nim-text);
+}
+
+.html-page-editor__mode--active {
+  border-color: var(--nim-border);
+  background: var(--nim-bg-secondary);
+  color: var(--nim-text);
+}
+
+.html-page-editor__preview,
+.html-page-editor__source {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.html-page-editor__preview[hidden],
+.html-page-editor__source[hidden] {
+  display: none;
+}
+
+/* In a page tab, or an embed with a set height, the preview fills the area
+ * and scrolls itself. An embed sized by its content keeps the frame's
+ * measured height. */
+.html-page-editor__preview > .html-embed-frame:not(.embed-frame__body--fit *) {
+  height: 100% !important;
+}
+
+.embed-frame__body--fit .html-page-editor,
+.embed-frame__body--fit .html-page-editor__preview {
+  height: auto;
+  overflow: visible;
+}

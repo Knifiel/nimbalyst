@@ -867,11 +867,16 @@ if (!allowMultipleInstances) {
     // Watch the userData directory for the signal file
     try {
         const userDataPath = app.getPath('userData');
-        fs.watch(userDataPath, (eventType, filename) => {
+        const signalWatcher = fs.watch(userDataPath, (eventType, filename) => {
             if (filename === '.pending-open-file') {
                 // Small delay to ensure the file is fully written
                 setTimeout(checkPendingFile, 50);
             }
+        });
+        // Without a listener an async watch error (EMFILE once the process
+        // is out of descriptors) is an uncaught exception (#1779).
+        signalWatcher.on('error', (err) => {
+            logger.main.warn('[SingleInstance] Open-file signal watcher error:', err);
         });
     } catch (err) {
         logger.main.warn('[SingleInstance] Failed to watch for open-file signals:', err);

@@ -117,9 +117,19 @@ export type WikiFeedEvent = { type: 'change'; change: LocalWikiChange } | { type
  * listeners refetch then: anything that changed while the stream was down
  * arrives as a fresh snapshot rather than as the events that were missed.
  */
-class WikiChangeFeed {
+export class WikiChangeFeed {
   private source: EventSource | null = null;
   private readonly listeners = new Set<(event: WikiFeedEvent) => void>();
+  private reachable = true;
+
+  /**
+   * False from a stream error until the next `ready`. The server lives in the
+   * agent's MCP process, so it stops when that session ends; the EventSource
+   * keeps retrying and a restarted server on the same port reconnects it.
+   */
+  isReachable(): boolean {
+    return this.reachable;
+  }
 
   subscribe(listener: (event: WikiFeedEvent) => void): () => void {
     this.listeners.add(listener);
@@ -131,6 +141,8 @@ class WikiChangeFeed {
   }
 
   private emit(event: WikiFeedEvent): void {
+    if (event.type === 'down') this.reachable = false;
+    else if (event.type === 'ready') this.reachable = true;
     for (const listener of [...this.listeners]) listener(event);
   }
 

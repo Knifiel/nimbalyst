@@ -235,8 +235,37 @@ enum IndexEntryDecryptor {
             lastReadAt: entry.lastReadAt ?? existing?.lastReadAt,
             lastMessageAt: entry.lastMessageAt ?? existing?.lastMessageAt,
             draftInput: draft.input,
-            draftUpdatedAt: draft.updatedAt
+            draftUpdatedAt: draft.updatedAt,
+            transcriptSyncDisabled: transcriptSyncDisabled(incoming: clientMeta, existing: existing)
         )
+    }
+
+    /// A readable blob is the publisher's whole client metadata, so a blob that
+    /// omits the flag clears it. No blob says nothing, and the row stands.
+    static func transcriptSyncDisabled(incoming: ClientMetadata?, existing: Session?) -> Bool {
+        guard let incoming else { return existing?.transcriptSyncDisabled ?? false }
+        return incoming.transcriptSyncDisabled ?? false
+    }
+
+    /// Apply a live metadata broadcast's client blob to the cached row. Fields
+    /// the blob omits keep their cached value, except `transcriptSyncDisabled`,
+    /// whose absence means false.
+    static func apply(_ clientMeta: ClientMetadata, to session: inout Session) {
+        if let ctx = clientMeta.currentContext {
+            session.contextTokens = ctx.tokens
+            session.contextWindow = ctx.contextWindow
+        }
+        if let pending = clientMeta.hasPendingPrompt {
+            session.hasQueuedPrompts = pending
+        }
+        if let phase = clientMeta.phase {
+            session.phase = phase
+        }
+        if let tags = clientMeta.tags, !tags.isEmpty,
+           let tagData = try? JSONEncoder().encode(tags) {
+            session.tagsJson = String(data: tagData, encoding: .utf8)
+        }
+        session.transcriptSyncDisabled = transcriptSyncDisabled(incoming: clientMeta, existing: session)
     }
 
     /// Decide which side's draft wins.

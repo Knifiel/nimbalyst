@@ -313,6 +313,42 @@ describe("CollaborativeDocumentTypeCatalog", () => {
     catalog.dispose();
   });
 
+  it("shares .html as the html page type even though the Browser extension and code claim it", () => {
+    const extensions = new MutableExtensionSource([
+      extension({
+        id: "com.nimbalyst.browser",
+        editors: [customEditor([".html", ".htm"], "BrowserEditor", undefined)],
+        components: ["BrowserEditor"],
+      }),
+    ]);
+    const codecs = new MutableCodecSource([
+      codec("code", [".html", ".htm", ".ts"]),
+      codec("html", [".html"]),
+    ]);
+    const catalog = makeCatalog(extensions, codecs);
+
+    const html = {
+      state: "ready",
+      descriptor: {
+        documentType: "html",
+        defaultExtension: ".html",
+        editor: { kind: "extension", extensionId: "builtin.html" },
+        content: { strategy: "text", codecId: "html" },
+        capabilities: { shareToTeam: true, sharedCreate: true },
+      },
+    };
+    expect(catalog.resolveShareability("Product map.html")).toMatchObject(html);
+    expect(catalog.resolveMetadata("html", ".html")).toMatchObject(html);
+    expect(catalog.resolveMetadata("html", ".html", "builtin.html")).toMatchObject(html);
+    // A page shared as code before the html type existed still opens as code.
+    expect(catalog.resolveMetadata("code", ".html")).toMatchObject({
+      descriptor: { documentType: "code" },
+    });
+    // .mockup.html and .htm keep their owners.
+    expect(catalog.resolveShareability("legacy.htm")).toMatchObject({ state: "unsupported" });
+    catalog.dispose();
+  });
+
   it("projects the Monaco suffix/language map without treating markdown as code", () => {
     const catalog = makeCatalog(
       new MutableExtensionSource(),

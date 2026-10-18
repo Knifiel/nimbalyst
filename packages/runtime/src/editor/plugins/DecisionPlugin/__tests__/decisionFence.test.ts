@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { parseDecisionFence, serializeDecisionFence } from "../decisionFence";
+import { parseDecisionFence, serializeDecisionFence, withDecisionId } from "../decisionFence";
 
 const SEALED_FENCE = `id: dcn-7f3a2c
 ask: Which navigation model for the web console?
@@ -154,5 +154,11 @@ asked: greg, karl, sam`)!;
     // Only a body that is not a mapping at all is a non-decision.
     expect(parseDecisionFence("- just\n- a list\n")).toBeNull();
     expect(parseDecisionFence("%%% not yaml : : :\n")).toBeNull();
+  });
+
+  it("writes an id only into a fence that has none, and only when it reads back", () => {
+    expect(withDecisionId("ask: Ship?\ntype: confirm\n", "dcn-abc123")).toBe("id: dcn-abc123\nask: Ship?\ntype: confirm\n");
+    expect(withDecisionId("id: dcn-keep\nask: Ship?\n", "dcn-abc123")).toBeNull();
+    expect(withDecisionId("{ask: Ship?, type: confirm}", "dcn-abc123")).toBeNull();
   });
 });

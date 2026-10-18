@@ -24,7 +24,11 @@ const flags: Record<string, string> = existsSync(path.join(webDir, 'index.html')
 // Only an install from one of our marketplaces has anything to update.
 const install = detectPluginInstall(process.env, process.cwd(), pluginRoot);
 const updateCheck = install ? startUpdateCheck({ install }) : null;
-runMcp(__NIM_VERSION__, { noun: 'mcp', positionals: [], flags }, updateCheck?.takeNotice).catch((err) => {
+runMcp(__NIM_VERSION__, { noun: 'mcp', positionals: [], flags }, {
+  takeNotice: updateCheck?.takeNotice,
+  install: install ?? { kind: 'unmanaged', reason: 'checkout' },
+  executable: fileURLToPath(import.meta.url),
+}).catch((err) => {
   process.stderr.write(`nimbalyst-local: ${(err as Error).stack ?? err}\n`);
   process.exit(1);
 });

@@ -28,6 +28,8 @@ import {
   MockupProjectCollabContentAdapter,
 } from '@nimbalyst/mockuplm/collab-adapters';
 
+import { HtmlPageCollabContentAdapter } from '@nimbalyst/runtime/ui/htmlEmbed/htmlPageCodec';
+
 import { CodeCollabContentAdapter } from '../utils/CodeCollabContentAdapter';
 
 let registered = false;
@@ -38,6 +40,7 @@ export function registerBuiltinRendererCollabCodecs(): void {
   registerCollabContentAdapter(MarkdownCollabContentAdapter);
   registerCollabContentAdapter(canvasCollabCodec);
   registerCollabContentAdapter(CodeCollabContentAdapter);
+  registerCollabContentAdapter(HtmlPageCollabContentAdapter);
   registerCollabContentAdapter(CalcSheetCollabContentAdapter);
   registerCollabContentAdapter(CsvCollabContentAdapter);
   registerCollabContentAdapter(ExcalidrawCollabContentAdapter);

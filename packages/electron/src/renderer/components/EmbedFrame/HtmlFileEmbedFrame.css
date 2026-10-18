@@ -1,0 +1,63 @@
+.html-file-embed {
+  position: relative;
+  border-radius: 6px;
+}
+
+.html-file-embed--selected {
+  outline: 2px solid color-mix(in srgb, var(--nim-primary) 60%, transparent);
+  outline-offset: 2px;
+}
+
+.html-file-embed__handles {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.html-file-embed:hover .html-file-embed__handles,
+.html-file-embed--selected .html-file-embed__handles,
+.html-file-embed__handles:focus-within {
+  opacity: 1;
+}
+
+.html-file-embed__handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--nim-border);
+  border-radius: 4px;
+  background: var(--nim-bg-secondary);
+  color: var(--nim-text-muted);
+  cursor: pointer;
+}
+
+.html-file-embed__handle:hover {
+  background: var(--nim-bg-hover);
+  color: var(--nim-text);
+}
+
+/* A saved height sizes the body; the frame fills it, including while the
+ * corner grip drags the body live. */
+.html-file-embed__body--sized > .html-embed-frame {
+  height: 100% !important;
+}
+
+.html-file-embed__placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 120px;
+  border: 1px dashed var(--nim-border);
+  border-radius: 6px;
+  color: var(--nim-text-muted);
+  font-size: 13px;
+}

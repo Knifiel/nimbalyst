@@ -1,15 +1,14 @@
-import { SESSION_PROJECTION_VERSION } from '@nimbalyst/collab-protocol';
 import type { AgentMessage } from '../ai/server/types';
 import type { EncryptedMessage } from './collabV3WireTypes';
-import type { PreparedSessionMessage } from './sessionPayloadChannel';
-import { truncateContentForSync } from './syncContentTruncator';
+import { utf8ByteLen } from '../utils/contentBytes';
+import { MAX_SYNC_ROW_PLAINTEXT_BYTES, truncateContentForSync, wholeRowElisionMarker } from './syncContentTruncator';
 import { inlineDisplayImagesForSync } from './syncDisplayImages';
-import { encodeSessionPayload } from './sessionPayloadCodec';
+import { encrypt } from './collabV3Crypto';
 
 export async function encryptSessionMessage(
     message: AgentMessage,
     key: CryptoKey
-  ): Promise<PreparedSessionMessage> {
+  ): Promise<EncryptedMessage> {
     // Trim large tool_result payloads before encryption so the SessionRoom
     // doesn't store full Bash/Read/Grep output for every step. Local raw log
     // keeps the unmodified content -- this only changes what crosses the wire.
@@ -17,15 +16,23 @@ export async function encryptSessionMessage(
       message.content,
       message.source,
     );
-    // display_to_user images are desktop paths; the phone needs the bytes.
-    const syncContent = await inlineDisplayImagesForSync(truncatedContent);
-
     // Include hidden flag in encrypted content so it syncs to mobile
-    const content = JSON.stringify({
-      content: syncContent,
-      metadata: message.metadata,
-      hidden: message.hidden ?? false,
-    });
+    const envelope = (body: string, metadata: unknown) =>
+      JSON.stringify({ content: body, metadata, hidden: message.hidden ?? false });
+    // What the envelope leaves for the escaped content, after metadata and keys.
+    const contentRoom = MAX_SYNC_ROW_PLAINTEXT_BYTES - (utf8ByteLen(envelope('', message.metadata)) - 2);
+    // display_to_user images are desktop paths; the phone needs the bytes.
+    const syncContent = await inlineDisplayImagesForSync(truncatedContent, contentRoom);
+
+    // Every send path encrypts here, so this is the bound the server enforces:
+    // a row over it is refused as message_too_large and never reaches the phone.
+    let content = envelope(syncContent, message.metadata);
+    if (utf8ByteLen(content) > MAX_SYNC_ROW_PLAINTEXT_BYTES) {
+      const marker = wholeRowElisionMarker(message.source, utf8ByteLen(message.content));
+      content = envelope(marker, message.metadata);
+      // Metadata alone past the limit is pathological; the row still reaches the phone.
+      if (utf8ByteLen(content) > MAX_SYNC_ROW_PLAINTEXT_BYTES) content = envelope(marker, undefined);
+    }
 
 
     // Use provider-assigned message ID if available (e.g., SDK uuid)
@@ -53,10 +60,8 @@ export async function encryptSessionMessage(
       syncId = hashArray.slice(0, 16).map(b => b.toString(16).padStart(2, '0')).join('');
     }
 
-    const encoded = await encodeSessionPayload(syncId, content, key);
+    const { encrypted, iv } = await encrypt(content, key);
     return {
-      ...encoded,
-      projectionVersion: SESSION_PROJECTION_VERSION,
       id: syncId,
       sequence: 0, // Server assigns sequence
       createdAt: message.createdAt instanceof Date
@@ -66,6 +71,8 @@ export async function encryptSessionMessage(
           : Date.now(),
       source: message.source as EncryptedMessage['source'],
       direction: message.direction as EncryptedMessage['direction'],
+      encryptedContent: encrypted,
+      iv,
       metadata: {},
     };
   }

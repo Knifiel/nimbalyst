@@ -9,6 +9,9 @@
  * through unchanged and the widget shows its own load-failure message.
  */
 
+import { utf8ByteLen } from '../utils/contentBytes';
+import { MAX_SYNC_ROW_CONTENT_BYTES } from './syncContentTruncator';
+
 export type SyncLocalImageLoader = (
   absolutePath: string,
 ) => Promise<{ data: string; mimeType: string } | null>;
@@ -20,11 +23,12 @@ export function setSyncLocalImageLoader(loader: SyncLocalImageLoader | null): vo
 }
 
 /**
- * Ceiling on base64 bytes inlined into one synced row. A gallery of large
- * screenshots past this keeps its remaining items path-only rather than
- * pushing the row past what a SessionRoom should store per message.
+ * Inlined bytes share the row's inline limit with the rest of the row. A
+ * gallery of large screenshots past it keeps its remaining items path-only
+ * rather than pushing the row into the whole-row clamp or a server refusal.
+ * Base64 needs no JSON escaping; the reserve covers each item's added keys.
  */
-const MAX_INLINED_BASE64_BYTES_PER_ROW = 600 * 1024;
+const PER_ITEM_RESERVE_BYTES = 256;
 
 const DISPLAY_TOOL_NAME = /(^|__)display_to_user$/;
 
@@ -64,16 +68,21 @@ function collectDisplayToolArguments(parsed: unknown): ToolArguments[] {
 
 /**
  * Attach image bytes to display_to_user items in a sync-bound row. Returns the
- * input string unchanged when there is nothing to inline.
+ * input string unchanged when there is nothing to inline. `maxContentBytes`
+ * bounds the result as JSON-escaped into the encrypted envelope; the caller
+ * passes what the envelope leaves after the row's metadata.
  */
-export async function inlineDisplayImagesForSync(content: string): Promise<string> {
+export async function inlineDisplayImagesForSync(
+  content: string,
+  maxContentBytes: number = MAX_SYNC_ROW_CONTENT_BYTES,
+): Promise<string> {
   if (!localImageLoader || !content.includes('display_to_user')) return content;
 
   let parsed: unknown;
   try { parsed = JSON.parse(content); }
   catch { return content; }
 
-  let budget = MAX_INLINED_BASE64_BYTES_PER_ROW;
+  let budget = maxContentBytes - utf8ByteLen(JSON.stringify(content));
   let modified = false;
   for (const args of collectDisplayToolArguments(parsed)) {
     if (!Array.isArray(args.items)) continue;
@@ -90,10 +99,11 @@ export async function inlineDisplayImagesForSync(content: string): Promise<strin
         // message on the phone; it must not block the rest of the row.
         console.warn('[SyncDisplayImages] Failed to load display image for sync:', image.path, error);
       }
-      if (!loaded || loaded.data.length > budget) continue;
+      const cost = loaded ? loaded.data.length + PER_ITEM_RESERVE_BYTES : 0;
+      if (!loaded || cost > budget) continue;
       image.data = loaded.data;
       image.mimeType = loaded.mimeType;
-      budget -= loaded.data.length;
+      budget -= cost;
       modified = true;
     }
   }

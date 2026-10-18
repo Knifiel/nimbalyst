@@ -190,7 +190,7 @@ function moveTool(context: LocalWikiContext, options: TeamToolOptions): McpTool 
             : undefined;
         const opened = await context.open();
         const report = await moveLocalWikiToTeam(opened, { project: pin, dryRun: args.dryRun === true }, options.moveDeps);
-        return textResult(report, report.verified === false);
+        return textResult({ wikiFolder: opened.dir, ...report }, report.verified === false);
       } catch (err) {
         if (err instanceof NoLocalWikiError) return noLocalWikiResult(err);
         if (err instanceof MoveRefusal) return textResult({ error: err.message, ...(err.next ? { next: err.next } : {}) }, true);

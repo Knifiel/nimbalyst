@@ -50,6 +50,8 @@ export const PAGES_VERBS = {
   invite: 'team_invite',
   'invite-link': 'team_invite_link_create',
   import: 'pages_import',
+  // The move's own credential: like `import`, only `nim wiki move-to-team` uses it.
+  'import-token': 'pages_import_token',
 } as const;
 
 /** Team verbs that name their team with --org (and --project) and act on no repository's project. */
@@ -268,6 +270,9 @@ const BUILDERS: Record<ToolVerb, (args: ParsedArgs) => Record<string, unknown>> 
   import: () => {
     throw usageError(MOVE_TO_TEAM_HINT);
   },
+  'import-token': () => {
+    throw usageError(MOVE_TO_TEAM_HINT);
+  },
   comments: (args) => {
     const pages = flagList(args, 'page');
     if (pages.length === 0) throw usageError(`'nim wiki comments' requires --page <uri> (repeatable).`);
@@ -355,7 +360,7 @@ function renderResult(ctx: PagesCtx, toolName: string, result: any): string {
 }
 
 export async function runPages(args: ParsedArgs): Promise<number> {
-  if (args.verb === 'import') throw usageError(MOVE_TO_TEAM_HINT);
+  if (args.verb === 'import' || args.verb === 'import-token') throw usageError(MOVE_TO_TEAM_HINT);
   const startDir = flagStr(args, 'workspace') ?? process.cwd();
   const ctx = teamsCtx(args, resolveServer(), startDir);
   switch (args.verb) {

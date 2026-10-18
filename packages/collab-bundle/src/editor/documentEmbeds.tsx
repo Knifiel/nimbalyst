@@ -84,7 +84,7 @@ function BrowserDocumentEmbed({ src, label, nodeKey, attrs }: EmbedFrameProps): 
     return target.kind === 'type' ? <PlacedViewResizeFrame attrs={attrs} onAttrsChange={onAttrsChange}>{view}</PlacedViewResizeFrame> : <>{view}</>;
   }
   const artifact = sharedArtifact(src);
-  const preview = artifact ? render?.(nodeKey, artifact) : isFilePath(src) ? renderFile?.({ src, label, attrs }) ?? null : null;
+  const preview = artifact ? render?.(nodeKey, artifact, { label, attrs }) : isFilePath(src) ? renderFile?.({ src, label, attrs }) ?? null : null;
   return <div className="collab-bundle-document-embed" contentEditable={false}>
     {preview ?? <div className="collab-bundle-document-embed-unavailable">{label || 'Shared document'}: preview unavailable in this view.</div>}
   </div>;

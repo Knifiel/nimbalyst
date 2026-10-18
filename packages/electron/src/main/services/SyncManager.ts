@@ -26,8 +26,9 @@ import { createProjectConfigSync } from './sync/projectConfigSync';
 import { projectConfigSources } from './sync/projectConfigSources';
 import { nextMobileSettingsVersion } from './sync/mobileSettingsVersion';
 import { createMobileJoinDetector } from './sync/mobileJoinDetector';
-import { createEnabledProjectFilter, createLiveSessionSyncFilter, isSessionMidTurn } from './sync/projectSyncFilter';
-import { selectSessionsForIndexSync } from './sync/selectSessionsForIndexSync';
+import { createEnabledProjectFilter, createLiveSessionSyncFilter, createTranscriptSyncDisabledPredicate, isSessionMidTurn } from './sync/projectSyncFilter';
+import { transcriptBackfill } from './sync/transcriptBackfill';
+import { reconcileSessionIndex } from './sync/indexReconciliation';
 import { setSleepPreventionMode, setSyncConnected, shutdownSleepPrevention, type PreventSleepMode } from './PowerSaveService';
 import { reconnectAllTrackerSyncs } from './TrackerSyncManager';
 import { BrowserWindow } from 'electron';
@@ -67,6 +68,15 @@ const state: SyncManagerState = {
 // Guard against overlapping incremental syncs (initial + triggered) and enforce minimum interval
 let incrementalSyncInFlight = false;
 let lastIncrementalSyncAt = 0;
+/** A forced pass (project selection changed) arrived while another was running; run it after. */
+let incrementalSyncRerun = false;
+
+function finishIncrementalSync(): void {
+  incrementalSyncInFlight = false;
+  if (!incrementalSyncRerun) return;
+  incrementalSyncRerun = false;
+  void triggerIncrementalSync({ force: true });
+}
 const MIN_INCREMENTAL_SYNC_INTERVAL = 5000; // 5 seconds minimum between syncs
 
 
@@ -497,6 +507,8 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
       encryptionKey,
       // Use callback for dynamic presence updates (called every 30s)
       getDeviceInfo: () => getDeviceInfo(personalUserId),
+      // Opted-out projects stay listed on the phone, marked as not syncing their transcript (NIM-7545).
+      isTranscriptSyncDisabled: createTranscriptSyncDisabledPredicate(),
     });
     logger.main.info('[SyncManager] Created CollabV3 sync provider with device:', initialDeviceInfo.name);
 
@@ -589,86 +601,52 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
           return;
         }
         const tombstonedSessionIds = new Set(serverIndex.deletedSessionIds ?? []);
-        // Build a map of server sessions for quick lookup
-        const serverSessionMap = new Map(
-          serverIndex.sessions.map(s => [s.sessionId, s])
-        );
+        const serverSessionMap = new Map(serverIndex.sessions.map(s => [s.sessionId, s]));
 
-        // Step 2: Get local sessions (without messages first for comparison)
-        const localStart = performance.now();
-        const { getAllSessionsForSync } = await import('./PGLiteSessionStore');
-        const allLocalSessions = await timeStartupPhase(
-          'SyncManager.getAllSessionsForSync',
-          // No messages yet, and only the projects the user enabled -- the
-          // filter is applied in SQL rather than over every row in the database.
-          () => getAllSessionsForSync(false, { isProjectEnabled: createEnabledProjectFilter() }),
-        );
-        const localTime = performance.now() - localStart;
-        // logger.main.info(`[SyncManager] Local has ${allLocalSessions.length} sessions (query took ${localTime.toFixed(1)}ms)`);
+        // Clear stale isExecuting flags: on startup, no sessions are running yet.
+        // If the app crashed or the WebSocket disconnected before isExecuting:false
+        // was pushed, the server retains the stale flag permanently. Clear the
+        // provider's cache first so every row this pass builds says false, then
+        // force those rows into the pass.
+        const staleExecutingIds = new Set(serverIndex.sessions.filter(s => s.isExecuting).map(s => s.sessionId));
+        if (staleExecutingIds.size > 0) {
+          logger.main.info(`[SyncManager] Clearing stale isExecuting for ${staleExecutingIds.size} sessions`);
+          provider.clearAllExecutingState?.();
+        }
 
-        const { sessionsNeedingIndexUpdate, sessionsNeedingMessageSync } = selectSessionsForIndexSync(allLocalSessions, serverIndex, Date.now(), isSessionMidTurn);
+        const { getAllSessionsForSync, getSessionMessagesForSyncBatch } = await import('./PGLiteSessionStore');
+        const result = await reconcileSessionIndex({
+          syncSessionsToIndex: provider.syncSessionsToIndex.bind(provider),
+          serverIndex,
+          // No messages yet, and only the requested projects -- the filter is
+          // applied in SQL rather than over every row in the database.
+          loadLocalSessions: isProjectEnabled => timeStartupPhase(
+            'SyncManager.getAllSessionsForSync',
+            () => getAllSessionsForSync(false, { isProjectEnabled }),
+          ),
+          getMessagesForSync: getSessionMessagesForSyncBatch,
+          isProjectEnabled: createEnabledProjectFilter(),
+          isMidTurn: isSessionMidTurn,
+          forceIndexOnlySessionIds: staleExecutingIds,
+          backfill: transcriptBackfill,
+          warn: (message, error) => logger.main.warn(message, error),
+        });
 
+        const { sessionsNeedingIndexUpdate, sessionsNeedingMessageSync } = result;
         const archiveMismatches = sessionsNeedingIndexUpdate.filter(s => {
           const server = serverSessionMap.get(s.id);
           return server && Boolean(s.isArchived) !== Boolean(server.isArchived);
         }).length;
         const missingFromServer = sessionsNeedingIndexUpdate.filter(s => !serverSessionMap.has(s.id)).length;
-        logger.main.info(`[SyncManager] startup sync: ${sessionsNeedingIndexUpdate.length} need index update (${archiveMismatches} archive mismatches, ${missingFromServer} missing from server), ${sessionsNeedingMessageSync.length} need message sync, local=${allLocalSessions.length}, server=${serverIndex.sessions.length}, protocol=v${serverIndex.indexProtocolVersion ?? 1}, tombstones=${tombstonedSessionIds.size}`);
-
-        // Sync sessions that need it
-        if (sessionsNeedingIndexUpdate.length === 0 && sessionsNeedingMessageSync.length === 0) {
-          // logger.main.info('[SyncManager] All sessions up to date, no sync needed');
-        } else {
-          // Build per-session sinceTimestamp requests for lazy message loading.
-          // Messages are NOT loaded here -- the provider loads them in small batches
-          // to avoid blocking PGLite's single-threaded worker for 30+ seconds.
-          const messageSyncRequests = sessionsNeedingMessageSync.length > 0
-            ? sessionsNeedingIndexUpdate
-                .filter(s => sessionsNeedingMessageSync.includes(s.id))
-                .map(session => {
-                  const serverSession = serverSessionMap.get(session.id);
-                  return { sessionId: session.id, sinceTimestamp: serverSession?.lastMessageAt || 0 };
-                })
-            : undefined;
-
-          const { getSessionMessagesForSyncBatch } = await import('./PGLiteSessionStore');
-
-          // Reconciliation runs in the background so index publication does not delay startup.
-          void provider.syncSessionsToIndex(sessionsNeedingIndexUpdate, {
-            syncMessages: sessionsNeedingMessageSync.length > 0,
-            messageSyncRequests,
-            getMessagesForSync: getSessionMessagesForSyncBatch,
-          });
-        }
-        // Clear stale isExecuting flags: on startup, no sessions are running yet.
-        // If the app crashed or the WebSocket disconnected before isExecuting:false
-        // was pushed, the server retains the stale flag permanently.
-        // Clear the local cache and re-sync affected sessions to push isExecuting:false.
-        const staleExecutingSessions = serverIndex.sessions.filter(s => s.isExecuting);
-        if (staleExecutingSessions.length > 0) {
-          logger.main.info(`[SyncManager] Clearing stale isExecuting for ${staleExecutingSessions.length} sessions`);
-          // Clear isExecuting in the provider's local cache so syncSessionsToIndex
-          // builds entries with isExecuting:false
-          if (provider.clearAllExecutingState) {
-            provider.clearAllExecutingState();
-          }
-          // Re-sync these sessions to push the cleared flag to the server
-          const staleLocalSessions = staleExecutingSessions
-            .map(s => allLocalSessions.find(ls => ls.id === s.sessionId))
-            .filter((s): s is NonNullable<typeof s> => s != null);
-          if (staleLocalSessions.length > 0) {
-            // Clearing stale flags is background reconciliation and must not delay startup.
-            void provider.syncSessionsToIndex(staleLocalSessions, { syncMessages: false });
-          }
-        }
+        logger.main.info(`[SyncManager] startup sync: ${sessionsNeedingIndexUpdate.length} need index update (${archiveMismatches} archive mismatches, ${missingFromServer} missing from server), ${sessionsNeedingMessageSync.length} need message sync, ${result.indexOnlySessions.length} index-only (opted-out marks + stale execution), local=${result.allLocalSessions.length}, server=${serverIndex.sessions.length}, protocol=v${serverIndex.indexProtocolVersion ?? 1}, tombstones=${tombstonedSessionIds.size}`);
 
         // const totalSyncTime = performance.now() - syncStart;
         // logger.main.info(`[SyncManager] Incremental sync completed in ${totalSyncTime.toFixed(1)}ms`);
       } catch (error) {
         logger.main.warn('[SyncManager] Failed to sync sessions:', error);
       } finally {
-        incrementalSyncInFlight = false;
         lastIncrementalSyncAt = Date.now();
+        finishIncrementalSync();
       }
     }, 2000); // Wait for index connection
 
@@ -884,9 +862,12 @@ export async function reinitializeSync(baseStore: SessionStore): Promise<Session
 
 /**
  * Trigger an incremental sync to push local sessions to the server.
- * Useful when a new project is enabled for sync.
+ * Useful when a new project is enabled for sync. `force` (a project-selection
+ * change) skips the minimum interval and, if a pass is running, queues one
+ * more rather than being dropped: the running pass may have read the old
+ * selection.
  */
-export async function triggerIncrementalSync(): Promise<void> {
+export async function triggerIncrementalSync(options: { force?: boolean } = {}): Promise<void> {
   const provider = state.provider;
   if (!provider) {
     logger.main.warn('[SyncManager] Cannot trigger sync - provider not initialized');
@@ -900,13 +881,14 @@ export async function triggerIncrementalSync(): Promise<void> {
 
   // Skip if a sync is already in flight
   if (incrementalSyncInFlight) {
+    if (options.force) incrementalSyncRerun = true;
     logger.main.debug('[SyncManager] Incremental sync already in flight, skipping');
     return;
   }
 
   // Enforce minimum interval between syncs
   const now = Date.now();
-  if (now - lastIncrementalSyncAt < MIN_INCREMENTAL_SYNC_INTERVAL) {
+  if (!options.force && now - lastIncrementalSyncAt < MIN_INCREMENTAL_SYNC_INTERVAL) {
     logger.main.debug('[SyncManager] Incremental sync too soon after last sync, skipping');
     return;
   }
@@ -943,44 +925,19 @@ export async function triggerIncrementalSync(): Promise<void> {
       logger.main.warn('[SyncManager] Server index coverage is incomplete; skipping incremental sync this cycle');
       return;
     }
-    // Build a map of server sessions for quick lookup
-    const serverSessionMap = new Map(
-      serverIndex.sessions.map(s => [s.sessionId, s])
-    );
-
-    // Get local sessions
-    const localStart = performance.now();
-    const { getAllSessionsForSync } = await import('./PGLiteSessionStore');
-    const allLocalSessions = await getAllSessionsForSync(false, {
+    const { getAllSessionsForSync, getSessionMessagesForSyncBatch } = await import('./PGLiteSessionStore');
+    const result = await reconcileSessionIndex({
+      syncSessionsToIndex: provider.syncSessionsToIndex.bind(provider),
+      serverIndex,
+      loadLocalSessions: isProjectEnabled => getAllSessionsForSync(false, { isProjectEnabled }),
+      getMessagesForSync: getSessionMessagesForSyncBatch,
       isProjectEnabled: createEnabledProjectFilter(),
+      isMidTurn: isSessionMidTurn,
+      backfill: transcriptBackfill,
+      warn: (message, error) => logger.main.warn(message, error),
     });
-    const localTime = performance.now() - localStart;
-    // logger.main.info(`[SyncManager] Triggered sync: local has ${allLocalSessions.length} sessions (query took ${localTime.toFixed(1)}ms)`);
-
-    const { sessionsNeedingIndexUpdate, sessionsNeedingMessageSync } = selectSessionsForIndexSync(allLocalSessions, serverIndex, Date.now(), isSessionMidTurn);
-
-    // logger.main.info(`[SyncManager] Triggered sync: ${sessionsNeedingIndexUpdate.length}/${allLocalSessions.length} sessions need update, ${sessionsNeedingMessageSync.length} need message sync (server has ${serverIndex.sessions.length})`);
-
-    if (sessionsNeedingIndexUpdate.length === 0 && sessionsNeedingMessageSync.length === 0) {
-      // logger.main.info('[SyncManager] Triggered sync: all sessions up to date');
-    } else {
-      const messageSyncRequests = sessionsNeedingMessageSync.length > 0
-        ? sessionsNeedingIndexUpdate
-            .filter(s => sessionsNeedingMessageSync.includes(s.id))
-            .map(session => {
-              const serverSession = serverSessionMap.get(session.id);
-              return { sessionId: session.id, sinceTimestamp: serverSession?.lastMessageAt || 0 };
-            })
-        : undefined;
-
-      const { getSessionMessagesForSyncBatch } = await import('./PGLiteSessionStore');
-
-      // Reconciliation publishes in the background so reconnect work can continue independently.
-      void provider.syncSessionsToIndex(sessionsNeedingIndexUpdate, {
-        syncMessages: sessionsNeedingMessageSync.length > 0,
-        messageSyncRequests,
-        getMessagesForSync: getSessionMessagesForSyncBatch,
-      });
+    if (result.indexOnlySessions.length > 0 || result.sessionsNeedingMessageSync.length > 0) {
+      logger.main.info(`[SyncManager] triggered sync: ${result.sessionsNeedingIndexUpdate.length} need index update, ${result.sessionsNeedingMessageSync.length} need message sync, ${result.indexOnlySessions.length} index-only`);
     }
 
     // const totalSyncTime = performance.now() - syncStart;
@@ -988,7 +945,7 @@ export async function triggerIncrementalSync(): Promise<void> {
   } catch (error) {
     logger.main.error('[SyncManager] Triggered sync failed:', error);
   } finally {
-    incrementalSyncInFlight = false;
+    finishIncrementalSync();
   }
 }
 

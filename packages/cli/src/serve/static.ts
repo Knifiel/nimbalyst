@@ -3,7 +3,25 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import * as path from 'node:path';
 import type { ServerResponse } from 'node:http';
+import { HTML_EMBED_SHELL_CSP, HTML_EMBED_SHELL_HTML } from '@nimbalyst/collab-protocol';
 import { BASE_HEADERS } from './http.js';
+
+/** Where the browser app frames the HTML embed sandbox shell. */
+export const HTML_EMBED_SHELL_PATH = '/html-embed/shell';
+
+/**
+ * The HTML embed sandbox shell. Its CSP keeps whatever HTML a page embeds in
+ * an opaque origin, so it cannot read this server's session cookie or call
+ * its API, and blocks fetch/XHR/WebSocket.
+ */
+export function serveHtmlEmbedShell(res: ServerResponse): void {
+  res.writeHead(200, {
+    ...BASE_HEADERS,
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Security-Policy': HTML_EMBED_SHELL_CSP,
+  });
+  res.end(HTML_EMBED_SHELL_HTML);
+}
 
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',

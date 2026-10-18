@@ -9,7 +9,7 @@
 import type React from 'react';
 import type { EditorAPIOwnerToken, EditorHost } from '@nimbalyst/runtime';
 import { store, themeIdAtom } from '@nimbalyst/runtime/store';
-import { customEditorRegistry } from '../components/CustomEditors';
+import { findPageEditorRegistration } from '../components/HtmlPage/htmlPageRegistration';
 import { resolveCollabEditorAvailability } from '../components/TabEditor/collabEditorAvailability';
 import { createCollabExtensionHost, hasContentFlush } from '../components/TabEditor/collabExtensionHost';
 import { acquireHeadlessCollabDocument, assertDecodable } from './HeadlessCollabDocument';
@@ -39,7 +39,7 @@ export async function prepareHiddenCollabEditor(
       fileExtension,
       title: document.title,
       editorId: document.editorId ?? undefined,
-      findRegistration: (name) => customEditorRegistry.findRegistrationForFile(name),
+      findRegistration: (name) => findPageEditorRegistration(name, { documentType, editorId: document.editorId }),
     });
     if (availability.kind !== 'ready') {
       throw new Error(availability.kind === 'extension-missing'

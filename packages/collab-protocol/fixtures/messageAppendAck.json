@@ -1,5 +1,0 @@
-{
-  "type": "messageAppendAck",
-  "messageId": "message-fixture-id",
-  "revision": 32
-}

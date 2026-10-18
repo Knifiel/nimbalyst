@@ -81,6 +81,7 @@ import { setWindowModeAtom } from '../../store/atoms/windowMode';
 import { openSharedDocumentInTab as openSharedDocument } from '../../utils/openSharedDocumentInTab';
 import { getCollaborativeDocumentTypeCatalog } from '../../services/CollaborativeDocumentTypeCatalog';
 import { isCollabUri, parseCollabUri } from '@nimbalyst/collab-protocol';
+import { HTML_PAGE_EDITOR_ID } from '../HtmlPage/htmlPageEditorId';
 
 import './EmbedFrame.css';
 
@@ -511,6 +512,7 @@ export const EmbedFrame: React.FC<EmbedFrameProps> = (props) => {
         onOpen={() => openSharedDocumentInTab(request.documentId)}
         markers={{ 'data-embed-extension': registration.extensionId ?? '', 'data-embed-collaborative': 'true' }}
         loadingText="Loading shared embed..."
+        interactive={registration.extensionId === HTML_PAGE_EDITOR_ID}
       >
         <CollaborativeEmbedEditor editor={{ kind: 'extension', registration }} request={request} />
       </EmbedFrameShell>

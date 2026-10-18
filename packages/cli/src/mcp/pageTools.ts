@@ -5,7 +5,7 @@
  * localTools.ts for the plumbing.
  */
 import type { LocalPage, LocalWiki } from '@nimbalyst/local-wiki';
-import { orderBetween } from '@nimbalyst/local-wiki';
+import { DEFAULT_EDITOR_TYPES, orderBetween } from '@nimbalyst/local-wiki';
 import { usageError } from '../cli/exitCodes.js';
 import { buildTree, findPage, livePages, localPageUri, positionBeside, type TreeNode } from '../localWiki/tree.js';
 import { applyReplacements, ensureFolderPath, type Replacement } from '../localWiki/writes.js';
@@ -14,7 +14,35 @@ import type { McpTool } from './toolMap.js';
 
 const PAGE_REFS = ['filePath', 'itemId', 'pageId', 'parentFolderId', 'newParentFolderId', 'before', 'after', 'root'];
 
-const stripNodePrefix = (ref: string) => ref.replace(/^(document|item|page):/, '');
+const LOCAL_DOCUMENT_TYPES = ['markdown', ...Object.values(DEFAULT_EDITOR_TYPES)];
+
+const LOCAL_CREATE_DOC_ARGS = {
+  documentType: {
+    type: 'string',
+    enum: LOCAL_DOCUMENT_TYPES,
+    description: `The page's editor: ${LOCAL_DOCUMENT_TYPES.map((type) => `'${type}'`).join(', ')}. Defaults to 'markdown'.`,
+  },
+  initialContent: {
+    type: 'string',
+    description: "The page's whole file text in its editor's format: markdown for a markdown page, the .excalidraw JSON for a drawing, the Prisma schema for a data model, and so on. Empty gives that editor's empty file.",
+  },
+};
+
+/** The contract's setPageFields schema plus `paths`, a local page's covered code (localWiki/coverage.ts). */
+function withPathsField(definition: ReturnType<typeof contractDefinition>): ReturnType<typeof contractDefinition> {
+  const properties = definition.inputSchema.properties as Record<string, { properties?: Record<string, unknown> }>;
+  const fields = properties.fields ?? {};
+  properties.fields = {
+    ...fields,
+    properties: {
+      ...fields.properties,
+      paths: { type: ['array', 'null'], items: { type: 'string' }, description: 'Repository-relative globs of the code the page explains, coarse (a folder, not a file list): ["src/sync/**"]. A glob starting with ! takes back files earlier ones matched: ["src/**", "!src/generated/**"].' },
+    },
+  };
+  return definition;
+}
+
+const stripNodePrefix =(ref: string) => ref.replace(/^(document|item|page):/, '');
 
 async function resolveParent(wiki: LocalWiki, args: Args, idKey: string): Promise<string | null> {
   const folderPath = str(args, 'folderPath');
@@ -140,6 +168,8 @@ export function pageTools(context: LocalWikiContext): McpTool[] {
       contractDefinition(
         'createSharedDoc',
         'Create a local wiki page, at the top of the wiki, under a page (parentFolderId), under a path of titles (folderPath, missing pages are created), or beside a sibling (before/after). A markdown page by default; documentType (excalidraw, mindmap, datamodel, mockup.html, csv...) makes an editor file, whose initialContent is the whole file. Returns documentId, uri and path.',
+        // The contract's wording is the remote server's, which creates markdown only.
+        { extra: LOCAL_CREATE_DOC_ARGS },
       ),
       context,
       async ({ wiki }, args) => {
@@ -240,10 +270,10 @@ export function pageTools(context: LocalWikiContext): McpTool[] {
       { refKeys: PAGE_REFS },
     ),
     localTool(
-      contractDefinition(
+      withPathsField(contractDefinition(
         'setPageFields',
-        "Set a local wiki page's own fields: owner, status (draft, current or outdated), summary (one line, at most 280 characters) and tags. Only the fields you pass change; null clears one. A value that does not fit is ignored, and the reply names the fields the page has now. A typed page's fields are set with tracker_update.",
-      ),
+        "Set a local wiki page's own fields: owner, status (draft, current or outdated), summary (one line, at most 280 characters), tags, and paths (the repository-relative globs of the code the page explains, such as src/sync/**; pagesForFiles reads them). Only the fields you pass change; null clears one. A value that does not fit is ignored, and the reply names the fields the page has now. A typed page's fields are set with tracker_update.",
+      )),
       context,
       async ({ wiki }, args) => {
         const page = findPage(await wiki.snapshot(), stripNodePrefix(requireStr(args, 'itemId')));
@@ -256,8 +286,9 @@ export function pageTools(context: LocalWikiContext): McpTool[] {
             (key === 'owner' && typeof value === 'string') ||
             (key === 'status' && ['draft', 'current', 'outdated'].includes(value as string)) ||
             (key === 'summary' && typeof value === 'string' && value.length <= 280 && !value.includes('\n')) ||
-            (key === 'tags' && Array.isArray(value) && value.every((t) => typeof t === 'string'));
-          if (fits && ['owner', 'status', 'summary', 'tags'].includes(key)) patch[key] = value;
+            (key === 'tags' && Array.isArray(value) && value.every((t) => typeof t === 'string')) ||
+            (key === 'paths' && Array.isArray(value) && value.every((glob) => typeof glob === 'string' && glob.trim() !== '' && !glob.includes('\n')));
+          if (fits && ['owner', 'status', 'summary', 'tags', 'paths'].includes(key)) patch[key] = value;
           else ignored.push(key);
         }
         if (Object.keys(patch).length) await wiki.command({ type: 'set-document-fields', documentId: page.id, fields: patch });

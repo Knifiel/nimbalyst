@@ -211,6 +211,7 @@ export function mountCollabEditor(options: CollabEditorMountOptions): CollabEdit
     hasPendingWrites: () => session.networkProvider?.hasPendingWrites() ?? false,
     getPresence: () => presenceSurface.getPresence(),
     setPresenceActive: (active) => { presenceSurface.setActive(active); },
+    setUser: (user) => { presenceSurface.setDisplayName(resolveCollabEditorUser(user).displayName); },
     flush: (flushOptions) => session.flush(flushOptions),
     setReadOnly(nextReadOnly) {
       if (destroyed) return;
@@ -293,18 +294,24 @@ export function mountCollabEditor(options: CollabEditorMountOptions): CollabEdit
           hostCanComment: hostCanComment(),
         }).capabilities,
       } : undefined,
-      decisions: {
+      // With no room (the local wiki browser view, the public wiki) there is no
+      // one to collect answers from or vote with, so a decision runs as on a
+      // local file: answering seals straight into the markdown.
+      decisions: session.networkProvider ? {
         renderArtifact: options.renderDecisionArtifact,
         getYDoc: () => sharedDocument,
         currentUser: options.comments?.currentUser ?? { id: resolvedUser.memberId, name: resolvedUser.displayName },
         getMembers: () => decisionMembersFromComments(options.comments?.getMembers() ?? []),
-        isHydrated: () => !session.networkProvider || session.hasConnectedOnce(),
-        canVote: () => !session.getState().readOnly && (session.networkProvider ? session.canComment() : hostCanComment()),
-        ...(session.networkProvider ? {
-          requestDecision: (command) => session.networkProvider!.requestDecision(command),
-          getDecisionState: session.networkProvider.getDecisionState,
-          onDecisionState: session.networkProvider.onDecisionState,
-        } : {}),
+        isHydrated: () => session.hasConnectedOnce(),
+        canVote: () => !session.getState().readOnly && session.canComment(),
+        requestDecision: (command) => session.networkProvider!.requestDecision(command),
+        getDecisionState: session.networkProvider.getDecisionState,
+        onDecisionState: session.networkProvider.onDecisionState,
+      } : {
+        renderArtifact: options.renderDecisionArtifact,
+        getYDoc: () => null,
+        currentUser: options.comments?.currentUser ?? { id: resolvedUser.memberId, name: resolvedUser.displayName },
+        canVote: () => !session.getState().readOnly && hostCanComment(),
       },
       onDirtyChange: (dirty) => {
         if (dirty) session.markDirty();

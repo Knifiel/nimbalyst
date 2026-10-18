@@ -847,11 +847,18 @@ export class TrayManager {
     }
     this.menuRebuildTimer = setTimeout(() => {
       this.menuRebuildTimer = null;
-      // Ahead of `rebuildMenu`, which returns early when the tray icon is
-      // hidden. The phone's card has nothing to do with whether there is an icon
-      // in this machine's menu bar.
-      this.publishFleetActivity();
-      this.refreshMenuBar();
+      // A throw from a bare timer callback is an Uncaught Exception dialog. When
+      // the process is out of file descriptors the settings reads in here fail
+      // (#1748); keep the last menu and let the next rebuild try again.
+      try {
+        // Ahead of `rebuildMenu`, which returns early when the tray icon is
+        // hidden. The phone's card has nothing to do with whether there is an icon
+        // in this machine's menu bar.
+        this.publishFleetActivity();
+        this.refreshMenuBar();
+      } catch (error) {
+        logger.main.error('[TrayManager] menu rebuild failed:', error);
+      }
     }, MENU_REBUILD_DEBOUNCE_MS);
   }
 
@@ -1130,7 +1137,14 @@ export class TrayManager {
         sendFleetActivity(payload, this.isStripEnabled() && isShowTrayIcon()),
     });
     this.publishFleetActivity();
-    this.fleetActivityTimer = setInterval(() => this.publishFleetActivity(), STRIP_AGE_TICK_MS);
+    // Same containment as the menu rebuild: the send reads settings from disk.
+    this.fleetActivityTimer = setInterval(() => {
+      try {
+        this.publishFleetActivity();
+      } catch (error) {
+        logger.main.error('[TrayManager] fleet activity tick failed:', error);
+      }
+    }, STRIP_AGE_TICK_MS);
     this.fleetActivityTimer.unref?.();
   }
 

@@ -42,6 +42,12 @@ internal class IndexReplicationClient(
     /** The server predates v2: fall back to the legacy full index. */
     private val onLegacyServer: () -> Unit,
     private val onTimeout: () -> Unit = {},
+    /**
+     * Index catch-up finished for this connection. Parked draft pushes replay
+     * from here: their blob replaces the server's whole client metadata, so it
+     * must be built after the desktop's current fields have been applied.
+     */
+    private val onCaughtUp: suspend () -> Unit = {},
     private val timeoutMs: Long = REQUEST_TIMEOUT_MS,
 ) {
     private data class InFlight(
@@ -78,7 +84,7 @@ internal class IndexReplicationClient(
         if (cancelled) return
         seedApplied = false
         hasChosenCoverageWork = false
-        coverage.update { it.copy(hasError = false) }
+        coverage.update { it.copy(hasError = false, caughtUp = false) }
         store.pendingFinalization()?.let { pending ->
             // An interrupted bootstrap owes reconciliation before anything new.
             coverage.update { it.copy(isBackfilling = true) }
@@ -220,6 +226,7 @@ internal class IndexReplicationClient(
                     bootstrapRunId = null
                     bootstrapContinuation = null
                     requestDeltaIfNeeded()
+                    if (inFlight == null) caughtUp()
                 }
                 page.nextPageToken != null -> {
                     // Held, not sent: a lookup takes this slot, and backgrounding pauses here.
@@ -232,6 +239,7 @@ internal class IndexReplicationClient(
                 if (!page.complete && page.nextPageToken != null) {
                     request(IndexReplicationMode.DELTA, pageToken = page.nextPageToken)
                 } else {
+                    caughtUp()
                     pumpNextRequest()
                 }
             IndexReplicationMode.LOOKUP -> {
@@ -252,6 +260,11 @@ internal class IndexReplicationClient(
                 }
             }
         }
+    }
+
+    private suspend fun caughtUp() {
+        coverage.update { it.copy(caughtUp = true) }
+        onCaughtUp()
     }
 
     private suspend fun loadCoverage() {

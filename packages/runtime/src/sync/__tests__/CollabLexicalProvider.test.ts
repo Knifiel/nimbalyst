@@ -96,6 +96,26 @@ describe('CollabLexicalProvider', () => {
     }
   });
 
+  it('labels a remote cursor by name, never by the member id a peer sent as its name', async () => {
+    const syncProvider = createSyncProviderStub('connected');
+    let emit: (states: Map<string, { user: { name: string; color: string } }>) => void = () => {};
+    syncProvider.onAwarenessChange.mockImplementation(((listener: typeof emit) => {
+      emit = listener;
+      return () => {};
+    }) as any);
+    const provider = new CollabLexicalProvider(syncProvider as any);
+    await provider.connect();
+
+    emit(new Map([
+      ['member-live-abc', { user: { name: 'member-live-abc', color: '#E05555' } }],
+      ['member-live-def', { user: { name: 'Rowan Petrie', color: '#2BA89A' } }],
+    ]));
+
+    expect([...provider.awareness.getStates().values()].map((state) => state.name))
+      .toEqual(['Teammate', 'Rowan Petrie']);
+    provider.destroy();
+  });
+
   // Lexical's CollaborationPlugin only paints content it OBSERVES as Y.Doc
   // events after its binding mounts -- a doc that is already populated at
   // binding time renders blank (NIM-1764: warm replica-cache reopen, and any

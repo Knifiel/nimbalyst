@@ -15,6 +15,8 @@ import { MaterialSymbol } from '../../icons/MaterialSymbol';
 import { formatToolDisplayName } from '../utils/toolNameFormatter';
 import { isCommitRequestMessage, parseCommitRequest, CommitRequestCard } from './CommitRequestCard';
 import { localAssetUrl } from '../../../utils/localAssetUrl';
+import { useTranscriptImageGallery } from './transcriptImageGalleryContext';
+import { attachmentImageKey, attachmentImageSrc } from '../utils/transcriptImages';
 
 interface MessageSegmentProps {
   message: TranscriptViewMessage;
@@ -59,6 +61,7 @@ export const MessageSegment = React.memo(function MessageSegment({
   workspacePath
 }: MessageSegmentProps) {
   const [isDiffExpanded, setDiffExpanded] = useState(false);
+  const gallery = useTranscriptImageGallery();
   const [enlargedImage, setEnlargedImage] = useState<ChatAttachment | null>(null);
   const [enlargedText, setEnlargedText] = useState<ChatAttachment | null>(null);
   const [textContent, setTextContent] = useState<string | null>(null);
@@ -447,7 +450,7 @@ export const MessageSegment = React.memo(function MessageSegment({
 
     const handleAttachmentClick = (attachment: ChatAttachment) => {
       if (attachment.type === 'image') {
-        setEnlargedImage(attachment);
+        if (!gallery?.openImage(attachmentImageKey(message.id, attachment.id))) setEnlargedImage(attachment);
       } else {
         setEnlargedText(attachment);
       }
@@ -485,25 +488,6 @@ export const MessageSegment = React.memo(function MessageSegment({
 
   // Render image lightbox modal
   const renderImageModal = () => {
-    // For enlarged view, use the full file path (not thumbnail).
-    // Local file paths are routed through `localAssetUrl` so Electron can
-    // serve them via `nim-asset://` (the main window has `webSecurity: true`
-    // and cannot load `file://` directly).
-    const getEnlargedSrc = () => {
-      if (!enlargedImage) return '';
-      if (enlargedImage.filepath) {
-        if (enlargedImage.filepath.startsWith('data:')) {
-          return enlargedImage.filepath;
-        }
-        if (enlargedImage.filepath.startsWith('file://')) {
-          return localAssetUrl(enlargedImage.filepath.replace(/^file:\/\//, ''));
-        }
-        return localAssetUrl(enlargedImage.filepath);
-      }
-      // Fallback to thumbnail if no filepath
-      return enlargedImage.thumbnail || '';
-    };
-
     return (
       <FullscreenModal
         isOpen={!!enlargedImage}
@@ -521,7 +505,7 @@ export const MessageSegment = React.memo(function MessageSegment({
         {enlargedImage && (
           <>
             <img
-              src={getEnlargedSrc()}
+              src={attachmentImageSrc(enlargedImage)}
               alt={enlargedImage.filename}
               className="message-attachment-modal-image max-w-full max-h-[calc(90vh-60px)] object-contain rounded-lg shadow-[0_4px_24px_rgba(0,0,0,0.3)]"
             />

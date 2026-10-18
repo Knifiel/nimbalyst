@@ -57,6 +57,7 @@ import { buildCollabUri } from '@nimbalyst/collab-protocol';
 
 import { CollabHistoryClient } from '@nimbalyst/runtime/sync/collabHistoryClient';
 import type { CollaborativeEmbedProviderResource } from '../../services/CollaborativeEmbedProviderCache';
+import { collabPresenceName } from '../../utils/collabPresenceName';
 import { useCollabBodyHistory } from '../HistoryDialog/useCollabBodyHistory';
 import { LexicalDiffHeaderAdapter } from '../UnifiedDiffHeader';
 
@@ -123,9 +124,9 @@ export const CollaborativeMarkdownEmbed: React.FC<
       providerFactory,
       // Never. See the header: an embed points at a document that exists.
       shouldBootstrap: false,
-      username: config.userName || config.teamMemberId,
+      username: collabPresenceName(config),
     }),
-    [providerFactory, config.userName, config.teamMemberId]
+    [providerFactory, config.userName, config.userEmail, config.teamMemberId]
   );
 
   const editorConfig = useMemo(

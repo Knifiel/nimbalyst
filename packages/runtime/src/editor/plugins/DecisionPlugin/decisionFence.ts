@@ -248,6 +248,24 @@ export function createDecisionId(): string {
 }
 
 /**
+ * The fence with `id` written in as its first line, leaving the rest as the
+ * author wrote it. Null when the fence already names an id, or when a first
+ * line would not read back as that id (a flow mapping, a document marker).
+ */
+export function withDecisionId(body: string, id: string): string | null {
+  let loaded: unknown;
+  try {
+    loaded = yaml.load(body);
+  } catch {
+    return null;
+  }
+  const raw = asRecord(loaded);
+  if (!raw || asString(raw.id) !== undefined) return null;
+  const next = `id: ${id}\n${body}`;
+  return parseDecisionFence(next)?.id === id ? next : null;
+}
+
+/**
  * Parses a fence body.
  *
  * Returns `null` only when the body is not a YAML mapping at all -- a fence

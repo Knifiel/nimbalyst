@@ -1,0 +1,114 @@
+/* Gantt charts mapped to --nim-* so they follow every light and dark theme.
+   Mermaid's own gantt styles are scoped by the SVG id and some use !important,
+   so these need !important too. Font sizes for task and section labels come
+   from the gantt config in mermaidRender.ts, because mermaid measures them to
+   place labels; only the axis labels are sized here. */
+.mermaid-render-container svg[aria-roledescription='gantt'] {
+  & text {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif !important;
+  }
+
+  /* Alternating section bands */
+  & .section0,
+  & .section2 {
+    fill: var(--nim-bg-tertiary) !important;
+    opacity: 0.6 !important;
+  }
+
+  & .section1,
+  & .section3 {
+    fill: transparent !important;
+  }
+
+  & .sectionTitle {
+    fill: var(--nim-text-muted) !important;
+    font-weight: 600;
+  }
+
+  /* Axis and grid */
+  & .grid .tick line {
+    stroke: var(--nim-border) !important;
+    opacity: 1 !important;
+  }
+
+  & .grid .tick text {
+    fill: var(--nim-text-muted) !important;
+    font-size: 12px !important;
+  }
+
+  & .today {
+    stroke: var(--nim-error) !important;
+    stroke-width: 1.5px !important;
+  }
+
+  & .titleText {
+    fill: var(--nim-text) !important;
+  }
+
+  /* Bars */
+  & .task0,
+  & .task1,
+  & .task2,
+  & .task3 {
+    fill: color-mix(in srgb, var(--nim-primary) 22%, var(--nim-bg)) !important;
+    stroke: var(--nim-primary) !important;
+  }
+
+  & .active0,
+  & .active1,
+  & .active2,
+  & .active3 {
+    fill: color-mix(in srgb, var(--nim-primary) 40%, var(--nim-bg)) !important;
+    stroke: var(--nim-primary) !important;
+  }
+
+  & .done0,
+  & .done1,
+  & .done2,
+  & .done3 {
+    fill: color-mix(in srgb, var(--nim-text-faint) 25%, var(--nim-bg)) !important;
+    stroke: var(--nim-text-faint) !important;
+  }
+
+  & .crit0,
+  & .crit1,
+  & .crit2,
+  & .crit3,
+  & .activeCrit0,
+  & .activeCrit1,
+  & .activeCrit2,
+  & .activeCrit3,
+  & .doneCrit0,
+  & .doneCrit1,
+  & .doneCrit2,
+  & .doneCrit3 {
+    fill: color-mix(in srgb, var(--nim-error) 20%, var(--nim-bg)) !important;
+    stroke: var(--nim-error) !important;
+  }
+
+  & .task {
+    stroke-width: 1px !important;
+    rx: 4px;
+  }
+
+  /* Every bar fill above is a light tint of the page background, so the
+     page's text color reads on it inside and outside the bar. */
+  & .taskText,
+  & .taskTextOutsideLeft,
+  & .taskTextOutsideRight,
+  & [class*='taskText'],
+  & [class*='activeText'],
+  & [class*='doneText'],
+  & [class*='critText'],
+  & [class*='CritText'] {
+    fill: var(--nim-text) !important;
+  }
+
+  & .vert {
+    stroke: var(--nim-text-muted) !important;
+  }
+
+  & .vertText {
+    fill: var(--nim-text-muted) !important;
+  }
+}

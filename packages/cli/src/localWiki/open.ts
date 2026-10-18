@@ -70,7 +70,37 @@ export async function openLocalWiki(
   }
 }
 
-const HOME_BODY = `This is the project's local wiki. Its pages are markdown files in this folder; Nimbalyst, \`nim\` and agents read and edit them.\n`;
+/**
+ * Starter text. The setup skill finds it by its first line and replaces it
+ * with the project's dashboard, so keep that line in step with
+ * skills-source/setup/SKILL.md. It links nothing: no other page exists yet.
+ */
+const HOME_BODY = `This is the project's local wiki, a folder of markdown pages that Nimbalyst, \`nim\` and agents read and edit.
+
+> [!TIP] Make this the project's home
+> Ask your agent to set up the wiki. After a few questions about the project, it turns this page into a dashboard and writes the pages behind it.
+
+<div data-columns="1fr 1fr">
+<div data-column>
+
+**The big picture**
+
+- What the project is and who it serves
+- A map of the product, one box per module
+- The initiatives under way, with their status and health
+
+</div>
+<div data-column>
+
+**Where to drill in**
+
+- Open questions and recent decisions
+- Who owns what, and how the team works
+- Goals, bets and competitors
+
+</div>
+</div>
+`;
 
 export interface InitResult extends OpenedWiki {
   created: boolean;

@@ -172,6 +172,15 @@ describe('definition and journal files', () => {
     expect(reparsed.ok && reparsed.definition).toEqual({ ...ada, name: 'Ada L.' });
   });
 
+  it('tells the user to remove quotes from a quoted budget number', () => {
+    const withBudget = (shifts: string) => ADA.replace('  role: Architect\n', `  role: Architect\n  budget:\n    shiftsPerDay: ${shifts}\n`);
+    const quoted = parseCrewMemberFile('ada', '/ws/ada.md', withBudget('"40"'));
+    expect(quoted.ok).toBe(false);
+    expect(JSON.stringify(quoted)).toContain('remove the quotes');
+    expect(JSON.stringify(parseCrewMemberFile('ada', '/ws/ada.md', withBudget('"lots"')))).not.toContain('remove the quotes');
+    expect(JSON.stringify(parseCrewMemberFile('ada', '/ws/ada.md', withBudget('"0"')))).not.toContain('remove the quotes');
+  });
+
   it('round-trips structured journal entries into the feed, including "--" in text, and skips hand-written sections', () => {
     const entry = formatJournalEntry({
       kind: 'flag', level: 'page', title: 'Main is red -- again', body: 'CI failed.', atMs: utc('2026-09-28T16:00:00Z'),

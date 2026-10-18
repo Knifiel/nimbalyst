@@ -191,7 +191,9 @@ public struct SessionDetailView: View {
                     }
                 )
 
-                if !isTranscriptReady {
+                if displaySession.transcriptSyncDisabled {
+                    TranscriptNotSyncedView()
+                } else if !isTranscriptReady {
                     if let error = loadError {
                         errorBanner(error: error)
                     } else {
@@ -689,7 +691,8 @@ public struct SessionDetailView: View {
     private func startLoadTimeout() {
         timeoutWorkItem?.cancel()
         let item = DispatchWorkItem { [self] in
-            guard !isTranscriptReady else { return }
+            // A withheld transcript never loads; that is not a failure.
+            guard !isTranscriptReady, !displaySession.transcriptSyncDisabled else { return }
             // Fire the timeout regardless of whether we're still "waiting for
             // initial messages". Previously the guard
             //   guard !shouldWaitForInitialTranscriptMessages else { return }

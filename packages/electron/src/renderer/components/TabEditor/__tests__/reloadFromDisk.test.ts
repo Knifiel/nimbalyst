@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, vi } from 'vitest';
-import { reloadFromDisk, type ReloadDeps, type ReloadState } from '../reloadFromDisk';
+import { editorReloadKind, reloadFromDisk, type ReloadDeps, type ReloadState } from '../reloadFromDisk';
 import { resolveSaveAttempt } from '../resolveSaveAttempt';
 
 /**
@@ -187,5 +187,20 @@ describe('reloadFromDisk: the baseline may not advance past the buffer', () => {
       expect(outcome.verified).toBe(false);
       expect(outcome.verified === false && outcome.failure).toBe(expected);
     }
+  });
+});
+
+describe('editorReloadKind (#1672)', () => {
+  it('routes a markdown tab in source mode to the content reload, not Lexical', () => {
+    const monacoWrapper = { setContent: vi.fn(), getContent: vi.fn(), exitDiffMode: vi.fn() };
+    expect(editorReloadKind(monacoWrapper)).toBe('content');
+  });
+
+  it('routes a Lexical editor to the Lexical reload', () => {
+    expect(editorReloadKind({ update: vi.fn(), getEditorState: vi.fn() })).toBe('lexical');
+  });
+
+  it('reports no editor when nothing is mounted', () => {
+    expect(editorReloadKind(null)).toBe('none');
   });
 });

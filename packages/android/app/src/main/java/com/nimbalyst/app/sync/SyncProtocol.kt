@@ -159,7 +159,6 @@ data class CreateWorktreeResponse(
 )
 
 data class SessionSyncRequest(
-    val sinceRevision: Long? = null,
     val type: String = "syncRequest",
     val sinceSeq: Int? = null,
     /** Message id cursor; the server accepts either this or [sinceSeq]. */
@@ -365,6 +364,11 @@ data class ClientMetadata(
     val draftInput: String? = null,
     val draftUpdatedAt: Long? = null,
     val hasBeenNamed: Boolean? = null,
+    /**
+     * The desktop lists the session but withholds its transcript because its
+     * project is not enabled for sync. Absent means false.
+     */
+    val transcriptSyncDisabled: Boolean? = null,
 )
 
 data class ContextInfo(
@@ -490,7 +494,6 @@ data class ServerErrorMessage(
 )
 
 data class SessionSyncResponse(
-    val revisionCursor: Long? = null,
     val type: String,
     val messages: List<ServerMessageEntry> = emptyList(),
     val metadata: SessionRoomMetadata? = null,
@@ -499,9 +502,6 @@ data class SessionSyncResponse(
 )
 
 data class ServerMessageEntry(
-    val projectionVersion: Int? = null,
-    val revision: Long? = null,
-    val payload: SessionPayloadReference? = null,
     val id: String,
     val sequence: Int,
     val createdAt: Long,
@@ -513,7 +513,6 @@ data class ServerMessageEntry(
 )
 
 data class AppendMessageRequest(
-    val expectedRevision: Long? = null,
     val type: String = "appendMessage",
     val message: ServerMessageEntry,
 )

@@ -51,6 +51,8 @@ import com.nimbalyst.app.R
 import com.nimbalyst.app.documents.DocumentFileSheet
 import com.nimbalyst.app.transcript.TranscriptPrompt
 import com.nimbalyst.app.transcript.TranscriptWebView
+import com.nimbalyst.app.data.transcriptSyncDisabled
+import com.nimbalyst.app.ui.sessiondetail.TranscriptNotSynced
 import com.nimbalyst.app.transcript.rememberTranscriptController
 import com.nimbalyst.app.ui.navigation.DocumentSurfaceMarker
 import com.nimbalyst.app.ui.sessiondetail.ActionPickerSheet
@@ -345,7 +347,8 @@ fun SessionDetailScreen(
 
         session?.let { SessionStatusBar(session = it) }
 
-        TranscriptWebView(
+        if (session?.transcriptSyncDisabled == true) TranscriptNotSynced(Modifier.weight(1f).fillMaxWidth())
+        else TranscriptWebView(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),

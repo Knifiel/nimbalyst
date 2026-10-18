@@ -7,6 +7,25 @@ import type {
   ExternalChangeCallback,
   DiffState,
 } from '../types';
+import {
+  lexicalReviewResolution,
+  resolveLexicalReview,
+  captureRenderedReview,
+} from '../../../components/TabEditor/lexicalReviewResolution';
+import { $createParagraphNode, $createTextNode, $getRoot, type LexicalEditor } from 'lexical';
+import {
+  createTestHeadlessEditor,
+  MARKDOWN_TEST_TRANSFORMERS,
+} from '@nimbalyst/runtime/editor/plugins/DiffPlugin/__tests__/utils/testConfig';
+import {
+  applyMarkdownReplace,
+  $approveDiffs,
+  $rejectDiffs,
+} from '@nimbalyst/runtime/editor/plugins/DiffPlugin/core/exports';
+import {
+  $convertFromEnhancedMarkdownString,
+  $convertToEnhancedMarkdownString,
+} from '@nimbalyst/runtime/editor/markdown';
 
 // -- Mock BackingStore -------------------------------------------------------
 
@@ -1670,6 +1689,146 @@ describe('DocumentModel diff lifecycle (NIM-5359)', () => {
       expect(harness.saveBaselines).toEqual(['C1']);
       expect(harness.tagUpdates).toEqual([{ tagId: 'tag-1', status: 'reviewed' }]);
       expect(harness.model.getDiffState()).toBeNull();
+    });
+
+    /**
+     * #1734: Keep All / Revert All on an open Markdown file wrote the editor's
+     * re-export instead of the reviewed bytes. Lexical does not round-trip front
+     * matter, math or table separators, so every untouched line around the
+     * agent's one-line edit changed on disk. A buffer that is exactly what one
+     * side loads as writes that side's bytes as they are.
+     */
+    describe('whole-review decisions on markdown (#1734)', () => {
+      const PRE_EDIT = [
+        '---',
+        'title: Lab report',
+        'date:',
+        'header-right: "\\\\includegraphics[height=1cm]{logo.png}"',
+        '---',
+        '',
+        '# Results',
+        '',
+        '$$',
+        'Q = \\dot{m} c_p \\Delta T \\tag{1}',
+        '$$',
+        '',
+        'Duration: *$\\approx$ 15 min*, inline $x^2$ and `$\\unit{\\pascal}$`.',
+        '',
+        '|a|b|',
+        '|---|---|',
+        '|1|2|',
+        '',
+      ].join('\n');
+      const AGENT_WROTE = `${PRE_EDIT}One more sentence.\n`;
+      const TYPED = 'Typed during review.';
+
+      function lexicalExport(editor: LexicalEditor): string {
+        return editor.getEditorState().read(() => $convertToEnhancedMarkdownString(MARKDOWN_TEST_TRANSFORMERS));
+      }
+      function type(editor: LexicalEditor) {
+        editor.update(() => {
+          $getRoot().append($createParagraphNode().append($createTextNode(TYPED)));
+        }, { discrete: true });
+      }
+
+      /** The agent's write rendered as a Lexical diff, as TabEditor renders it. */
+      async function renderLexicalReview() {
+        harness = createLifecycleHarness({ baseline: PRE_EDIT });
+        const a = harness.attachPresenter();
+        harness.emit(AGENT_WROTE);
+        await settle();
+        const editor = createTestHeadlessEditor();
+        editor.update(() => {
+          $getRoot().clear();
+          $convertFromEnhancedMarkdownString(PRE_EDIT, MARKDOWN_TEST_TRANSFORMERS);
+        }, { discrete: true });
+        applyMarkdownReplace(editor, PRE_EDIT, [{ oldText: PRE_EDIT, newText: AGENT_WROTE }], MARKDOWN_TEST_TRANSFORMERS);
+        const generation = lastGeneration(a.diffCb);
+        // Where TabEditor captures it: synchronously after the diff command.
+        const rendered = captureRenderedReview(editor, generation);
+        a.handle.completeDiffApply({ generation, outcome: 'applied' });
+        await settle();
+        return { a, editor, generation, rendered };
+      }
+
+      /** TabEditor's CLEAR_DIFF_TAG_COMMAND resolution. */
+      async function resolve({ a, editor, generation, rendered }: Awaited<ReturnType<typeof renderLexicalReview>>) {
+        const { accepted, request } = resolveLexicalReview(
+          editor, MARKDOWN_TEST_TRANSFORMERS, harness.model.getDiffState(), generation, rendered,
+        );
+        await a.handle.resolveDiff(accepted, request);
+      }
+
+      it('the editor export does not reproduce the file', async () => {
+        const { editor } = await renderLexicalReview();
+        editor.update(() => $approveDiffs(), { discrete: true });
+        expect(lexicalExport(editor)).not.toBe(AGENT_WROTE);
+      });
+
+      it('Keep All leaves disk byte-identical to what the agent wrote', async () => {
+        const review = await renderLexicalReview();
+        review.editor.update(() => $approveDiffs(), { discrete: true });
+        await resolve(review);
+
+        expect(harness.saved).toEqual([AGENT_WROTE]);
+        expect(harness.tagUpdates).toEqual([{ tagId: 'tag-1', status: 'reviewed' }]);
+      });
+
+      it('Revert All restores the pre-edit bytes', async () => {
+        const review = await renderLexicalReview();
+        review.editor.update(() => $rejectDiffs(), { discrete: true });
+        await resolve(review);
+
+        expect(harness.saved).toEqual([PRE_EDIT]);
+        expect(harness.tagUpdates).toEqual([{ tagId: 'tag-1', status: 'reviewed' }]);
+      });
+
+      it('keeps text typed during the post-apply wait', async () => {
+        const review = await renderLexicalReview();
+        type(review.editor);
+        review.editor.update(() => $approveDiffs(), { discrete: true });
+        await resolve(review);
+
+        expect(harness.disk()).toContain(TYPED);
+      });
+
+      it('keeps text typed between Keep All and the resolution', async () => {
+        const review = await renderLexicalReview();
+        review.editor.update(() => $approveDiffs(), { discrete: true });
+        type(review.editor);
+        await resolve(review);
+
+        expect(harness.disk()).toContain(TYPED);
+      });
+
+      it('keeps text typed between Revert All and the resolution', async () => {
+        const review = await renderLexicalReview();
+        review.editor.update(() => $rejectDiffs(), { discrete: true });
+        type(review.editor);
+        await resolve(review);
+
+        expect(harness.disk()).toContain(TYPED);
+      });
+
+      it('refuses the raw bytes when the agent has written again', async () => {
+        const { a, editor, generation, rendered } = await renderLexicalReview();
+        editor.update(() => $approveDiffs(), { discrete: true });
+        harness.emit(`${AGENT_WROTE}A second write.\n`);
+        await settle();
+
+        const { accepted, request } = resolveLexicalReview(
+          editor, MARKDOWN_TEST_TRANSFORMERS, harness.model.getDiffState(), generation, rendered,
+        );
+        await expect(a.handle.resolveDiff(accepted, request)).rejects.toThrow(/generation/i);
+        expect(harness.saved).toEqual([]);
+      });
+
+      it('writes the editor export when the two sides load the same', () => {
+        const plan = lexicalReviewResolution({
+          editorContent: 'same', decidedGeneration: 1, acceptedExports: ['same', null], baselineBytesExport: 'same',
+        });
+        expect(plan).toEqual({ accepted: true, request: { finalContent: 'same', generation: 1 } });
+      });
     });
 
     /**

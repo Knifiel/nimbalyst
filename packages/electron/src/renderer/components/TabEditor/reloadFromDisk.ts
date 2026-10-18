@@ -144,3 +144,14 @@ export function reloadFromDisk(
     normalized: true,
   };
 }
+
+/**
+ * Which reload a tab's editor handle can take. A markdown tab in source mode
+ * holds the Monaco wrapper, so the file type alone does not say the editor is
+ * Lexical; calling `update` on that wrapper threw after Keep All (#1672).
+ */
+export function editorReloadKind(editor: unknown): 'lexical' | 'content' | 'none' {
+  if (!editor || typeof editor !== 'object') return 'none';
+  if (typeof (editor as { update?: unknown }).update === 'function') return 'lexical';
+  return 'content';
+}

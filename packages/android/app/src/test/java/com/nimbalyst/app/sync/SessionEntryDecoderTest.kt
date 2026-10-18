@@ -5,7 +5,10 @@ import com.google.gson.JsonParser
 import com.nimbalyst.app.crypto.CryptoManager
 import com.nimbalyst.app.data.PendingExecution
 import com.nimbalyst.app.data.SessionEntity
+import com.nimbalyst.app.data.transcriptSyncDisabled
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -106,5 +109,19 @@ class SessionEntryDecoderTest {
         assertEquals("typing", decode(entryJson(blob("old", 20)), existing).draftInput)
         assertEquals("typing", decode(entryJson(blob("older", 10)), existing).draftInput)
         assertEquals("desktop", decode(entryJson(blob("desktop", 30)), existing).draftInput)
+    }
+
+    @Test
+    fun `transcript sync disabled follows the latest client metadata blob`() {
+        val blob = { json: String ->
+            crypto.encrypt(json).let { ",\"encryptedClientMetadata\":\"${it.encrypted}\",\"clientMetadataIv\":\"${it.iv}\"" }
+        }
+        val withheld = decode(entryJson(blob("""{"phase":"planning","transcriptSyncDisabled":true}""")))
+        assertTrue(withheld.transcriptSyncDisabled)
+        // No blob says nothing about the flag.
+        assertTrue(decode(entryJson(), withheld).transcriptSyncDisabled)
+        // A blob that omits it, or sets it false, clears it.
+        assertFalse(decode(entryJson(blob("""{"phase":"planning"}""")), withheld).transcriptSyncDisabled)
+        assertFalse(decode(entryJson(blob("""{"transcriptSyncDisabled":false}""")), withheld).transcriptSyncDisabled)
     }
 }

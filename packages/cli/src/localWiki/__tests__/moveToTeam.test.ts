@@ -44,6 +44,8 @@ interface FakeServer {
   failOnce: Set<string>;
   /** Answer 429 to this many pages_import calls first. */
   rateLimits: number;
+  /** Map these localIds but refuse them as another document type, as the server does. */
+  typeMismatch: Set<string>;
 }
 
 function fakeServer(): FakeServer {
@@ -52,6 +54,7 @@ function fakeServer(): FakeServer {
     pages: new Map(),
     failOnce: new Set(),
     rateLimits: 0,
+    typeMismatch: new Set(),
     call: async (name, args) => {
       server.calls.push({ name, args: structuredClone(args) });
       if (name === 'pages_status') {
@@ -72,11 +75,14 @@ function fakeServer(): FakeServer {
           errors.push({ localId: page.localId, code: 'internal', message: 'boom' });
           continue;
         }
-        if (server.pages.has(page.localId)) updated++;
+        const typed = page.kind === 'typedPage';
+        if (server.typeMismatch.has(page.localId)) {
+          errors.push({ localId: page.localId, code: 'document_type_mismatch', message: 'another type' });
+        } else if (server.pages.has(page.localId)) updated++;
         else created++;
         server.pages.set(page.localId, page);
         idMap[page.localId] = {
-          nodeId: `document:t-${page.localId}`,
+          nodeId: `${typed ? 'item' : 'document'}:t-${page.localId}`,
           id: `t-${page.localId}`,
           link: `https://console.nimbalyst.com/org/org_1/project/proj_1/document/t-${page.localId}`,
           uri: `collab://org:org_1:doc:t-${page.localId}`,
@@ -225,6 +231,133 @@ describe('moveLocalWikiToTeam', () => {
     // The editor page's child moves up to the nearest imported page.
     expect([...server.pages.values()].find((p) => p.title === 'Under flow')).toMatchObject({ parentLocalId: ops });
     expect(report).toMatchObject({ verified: true, counts: { pages: 3, typedPages: 2, types: 2, skipped: 1 }, skipped: [{ title: 'Flow' }] });
+  });
+
+  it('moves editor pages and linked images: registers each, writes its content, uploads the file and rewrites links to both', async () => {
+    const opened = await makeWiki();
+    const flow = (await opened.wiki.command({ type: 'register-document', title: 'Flow', parentFolderId: null, documentType: 'excalidraw', body: '{"elements":[]}' })).id!;
+    await opened.wiki.command({ type: 'register-document', title: 'Under flow', parentFolderId: flow, body: 'x\n' });
+    const notes = (await opened.wiki.command({
+      type: 'register-document',
+      title: 'Notes',
+      parentFolderId: null,
+      body: `See [the flow](Flow.excalidraw "id=${flow}"), [again](Flow.excalidraw), ![chart](Notes/.assets/chart.png) and ![gone](Notes/.assets/gone.png).\n`,
+    })).id!;
+    mkdirSync(path.join(opened.dir, 'Notes', '.assets'), { recursive: true });
+    writeFileSync(path.join(opened.dir, 'Notes', '.assets', 'chart.png'), 'png-bytes');
+    // Cards by the desktop's path rule: `./` from the canvas, otherwise from the project root.
+    const wikiPrefix = path.relative(opened.projectRoot, opened.dir).split(path.sep).join('/');
+    const canvasText = JSON.stringify({
+      nodes: [
+        { id: 'a', type: 'file', file: './Notes.md', x: 0, y: 0, width: 10, height: 10 },
+        { id: 'b', type: 'file', file: `${wikiPrefix}/Flow.excalidraw`, x: 0, y: 0, width: 10, height: 10 },
+        { id: 'c', type: 'file', file: 'elsewhere/readme.md', x: 0, y: 0, width: 10, height: 10 },
+        { id: 'd', type: 'file', file: path.join(opened.dir, 'Notes.md'), x: 0, y: 0, width: 10, height: 10 },
+        { id: 'e', type: 'file', file: `file://${path.join(opened.dir, 'Flow.excalidraw')}`, x: 0, y: 0, width: 10, height: 10 },
+      ],
+    });
+    const board = (await opened.wiki.command({ type: 'register-document', title: 'Board', parentFolderId: null, documentType: 'canvas', body: canvasText })).id!;
+    const server = fakeServer();
+    const written: Array<{ documentId: string; documentType: string; text: string }> = [];
+    const uploaded: Array<{ documentId: string; abs: string }> = [];
+    const content = {
+      writeEditorPage: async (page: { localId: string; documentId: string; documentType: string; text: string }) => {
+        written.push({ documentId: page.documentId, documentType: page.documentType, text: page.text });
+        return { ok: true as const, outcome: 'seeded' as const };
+      },
+      uploadFile: async (file: { documentId: string; abs: string }) => {
+        uploaded.push(file);
+        return { ok: true as const, uri: `collab-asset://doc/${file.documentId}/asset/a1` };
+      },
+    };
+    const loadEditorModels = async () => ({ editorCodecs: { documentTypes: ['excalidraw', 'canvas'] } }) as never;
+
+    const report = await moveLocalWikiToTeam(opened, {}, { call: server.call, ...noWait, loadEditorModels, content });
+
+    const boardWrite = written.find((w) => w.documentType === 'canvas')!;
+    expect(boardWrite.documentId).toBe(`t-${board}`);
+    expect(JSON.parse(boardWrite.text).nodes.map((n: any) => n['x-nimbalyst']?.reference)).toEqual([
+      { kind: 'file', path: './Notes.md', sharedAs: { uri: `nimbalyst://doc/org_1/t-${notes}` } },
+      { kind: 'file', path: `${wikiPrefix}/Flow.excalidraw`, sharedAs: { uri: `nimbalyst://doc/org_1/t-${flow}` } },
+      undefined,
+      { kind: 'file', path: path.join(opened.dir, 'Notes.md'), sharedAs: { uri: `nimbalyst://doc/org_1/t-${notes}` } },
+      { kind: 'file', path: `file://${path.join(opened.dir, 'Flow.excalidraw')}`, sharedAs: { uri: `nimbalyst://doc/org_1/t-${flow}` } },
+    ]);
+    written.splice(written.indexOf(boardWrite), 1);
+    const link = (id: string) => `https://console.nimbalyst.com/org/org_1/project/proj_1/document/t-${id}`;
+    expect(server.pages.get(flow)).toMatchObject({ kind: 'editorPage', documentType: 'excalidraw', fileExtension: '.excalidraw', editorId: 'com.nimbalyst.excalidraw', body: '' });
+    // Its child stays under it now that it moves.
+    expect([...server.pages.values()].find((p) => p.title === 'Under flow')).toMatchObject({ parentLocalId: flow });
+    expect(written).toEqual([{ documentId: `t-${flow}`, documentType: 'excalidraw', text: '{"elements":[]}' }]);
+    expect(uploaded).toEqual([{ documentId: `t-${notes}`, abs: path.join(opened.dir, 'Notes', '.assets', 'chart.png') }]);
+    expect(server.pages.get(notes).body).toBe(
+      `See [the flow](${link(flow)}), [again](${link(flow)}), ![chart](collab-asset://doc/t-${notes}/asset/a1) and ![gone](Notes/.assets/gone.png).\n`,
+    );
+    // A missing image is left as written without holding the move back.
+    expect(report).toMatchObject({
+      verified: true,
+      counts: { pages: 3, editorPages: 2, files: 1, skipped: 0 },
+      editorPagesWritten: 2,
+      filesUploaded: 1,
+      warnings: [expect.objectContaining({ localId: notes, code: 'linked_file_missing', title: 'Notes' })],
+    });
+  });
+
+  it("uploads a typed page's images into its body document, and writes nothing into a page the server refused as another type", async () => {
+    const opened = await makeWiki();
+    const trackers = path.join(opened.projectRoot, '.nimbalyst', 'trackers');
+    mkdirSync(trackers, { recursive: true });
+    writeFileSync(path.join(trackers, 'competitor.yaml'), 'type: competitor\ndisplayName: Competitor\ndisplayNamePlural: Competitors\nstorage: pages\nfields:\n  - name: title\n    type: string\n');
+    await opened.wiki.rescan();
+    const acme = (await opened.wiki.trackerCommand('competitor', { type: 'create-item', item: { title: 'Acme', body: '![logo](Acme/.assets/logo.png)\n' } })).id!;
+    const acmePage = (await opened.wiki.snapshot()).pages.find((page) => page.id === acme)!;
+    mkdirSync(path.join(opened.dir, acmePage.dir, '.assets'), { recursive: true });
+    writeFileSync(path.join(opened.dir, acmePage.dir, '.assets', 'logo.png'), 'png');
+    const flow = (await opened.wiki.command({ type: 'register-document', title: 'Flow', parentFolderId: null, documentType: 'excalidraw', body: '{}' })).id!;
+    const server = fakeServer();
+    server.typeMismatch.add(flow);
+    const written: string[] = [];
+    const uploads: string[] = [];
+    const content = {
+      writeEditorPage: async (page: { documentId: string }) => (written.push(page.documentId), { ok: true as const, outcome: 'seeded' as const }),
+      uploadFile: async (file: { documentId: string }) => (uploads.push(file.documentId), { ok: true as const, uri: `collab-asset://doc/${encodeURIComponent(file.documentId)}/asset/a1` }),
+    };
+    const loadEditorModels = async () => ({ editorCodecs: { documentTypes: ['excalidraw'] } }) as never;
+
+    const report = await moveLocalWikiToTeam(opened, {}, { call: server.call, ...noWait, loadEditorModels, content });
+
+    expect(uploads).toEqual([`tracker-content/t-${acme}`]);
+    expect(server.pages.get(acme).body).toBe(`![logo](collab-asset://doc/tracker-content%2Ft-${acme}/asset/a1)\n`);
+    expect(written).toEqual([]);
+    expect(report).toMatchObject({ verified: false, errors: [expect.objectContaining({ localId: flow, code: 'document_type_mismatch' })] });
+  });
+
+  it('leaves an editor page someone edited in the team, reporting body_edited, and does not mark the wiki moved', async () => {
+    const opened = await makeWiki();
+    const flow = (await opened.wiki.command({ type: 'register-document', title: 'Flow', parentFolderId: null, documentType: 'excalidraw', body: '{}' })).id!;
+    const server = fakeServer();
+    const content = {
+      writeEditorPage: async () => ({ ok: false as const, code: 'body_edited', message: 'edited in the team' }),
+      uploadFile: async () => ({ ok: false as const, code: 'unused', message: 'unused' }),
+    };
+    const loadEditorModels = async () => ({ editorCodecs: { documentTypes: ['excalidraw'] } }) as never;
+
+    const report = await moveLocalWikiToTeam(opened, {}, { call: server.call, ...noWait, loadEditorModels, content });
+
+    expect(report).toMatchObject({ verified: false, errors: [expect.objectContaining({ localId: flow, title: 'Flow', code: 'body_edited' })] });
+    expect(readMigratedTo(opened.projectRoot)).toBeUndefined();
+  });
+
+  it("lists editor pages as not moved, with the loader's reason, when the editors' document code is missing", async () => {
+    const opened = await makeWiki();
+    await opened.wiki.command({ type: 'register-document', title: 'Flow', parentFolderId: null, documentType: 'excalidraw', body: '{}' });
+    const loadEditorModels = async () => {
+      throw new Error('install @nimbalyst/wiki-web');
+    };
+
+    const report = await moveLocalWikiToTeam(opened, { dryRun: true }, { call: fakeServer().call, ...noWait, loadEditorModels });
+
+    expect(report).toMatchObject({ counts: { editorPages: 0, skipped: 1 }, skipped: [{ title: 'Flow', reason: 'excalidraw page (install @nimbalyst/wiki-web)' }] });
   });
 
   it('keeps every request under 900 KB and reports a page too large for any request as an error for that page', async () => {

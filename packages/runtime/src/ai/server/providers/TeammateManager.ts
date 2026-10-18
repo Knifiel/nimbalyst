@@ -83,6 +83,8 @@ export interface TeammateManagerDeps {
     workspacePath: string,
     permissionsPath: string | undefined,
     teammateName?: string,
+    /** The teammate query's own SDK permission mode; it does not follow the lead's */
+    queryPermissionMode?: 'plan' | 'auto' | 'default',
   ): (toolName: string, input: any, options: { signal: AbortSignal; toolUseID?: string }) =>
     Promise<{ behavior: 'allow' | 'deny'; updatedInput?: any; message?: string }>;
 }
@@ -1428,10 +1430,11 @@ export class TeammateManager {
     // otherwise fall back to process.env (development mode)
     const baseEnv = this.packagedBuildOptions?.env ?? process.env;
 
+    const permissionMode = 'default' as const;
     const options: any = {
       model: model || 'haiku',
       maxTurns: 20,
-      permissionMode: 'default',
+      permissionMode,
       persistSession: true,
       // SECURITY: Use empty settingSources so the subprocess cannot load
       // allow-rules from settings files and auto-approve tools internally.
@@ -1462,7 +1465,7 @@ export class TeammateManager {
         'PreToolUse': [{ hooks: [this.deps.createPreToolUseHook(cwd, sessionId, permissionsPath, { isTeammateSession: true })] }],
         'PostToolUse': [{ hooks: [this.deps.createPostToolUseHook(cwd, sessionId)] }],
       },
-      canUseTool: this.deps.createCanUseToolHandler(sessionId, cwd, permissionsPath, name),
+      canUseTool: this.deps.createCanUseToolHandler(sessionId, cwd, permissionsPath, name, permissionMode),
       additionalDirectories: teammateAdditionalDirectories,
     };
 

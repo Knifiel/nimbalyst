@@ -95,6 +95,7 @@ import { onWorkspaceWindowAvailable } from '../../window/workspaceWindowAvailabi
 import { dispatchQueuedPromptToClaudeCli } from './claudeCliQueueDispatch';
 import { publishQueuedPromptClaim } from './queuedPromptClaimEvents';
 import { canDispatchIntoDrain, isLeadTurnPending } from './drainFollowUp';
+import { hasLiveInteractivePrompt } from '../../mcp/tools/interactivePromptLiveness';
 import { ensureClaudeCliSession } from './claudeCliLauncherSingleton';
 import {
   resolveProviderWorkflowCatalog,
@@ -446,6 +447,9 @@ export class AIService {
           return !!liveState && (liveState.status === 'running' || liveState.isStreaming);
         },
         canDispatchIntoDrain,
+        isAwaitingUserInput: (id) =>
+          getSessionStateManager().getSessionState(id)?.status === 'waiting_for_input'
+          || hasLiveInteractivePrompt(id),
         resolveWindow: (path, allowAutoOpen) =>
           this.queueWindowResolver.resolve(path, { allowAutoOpen }),
         failAllPending: async (id, errorMessage) => {

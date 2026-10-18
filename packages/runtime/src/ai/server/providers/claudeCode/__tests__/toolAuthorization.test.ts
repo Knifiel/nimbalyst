@@ -46,6 +46,12 @@ describe('handleToolPermissionWithService', () => {
       expect(deps.requestToolPermission).toHaveBeenCalledWith(expect.objectContaining(hints));
     });
 
+    it('tells the permission service when the user must decide (#1740)', async () => {
+      const deps = createDeps();
+      await handleToolPermissionWithService(deps, createParams({ requiresUserDecision: true }));
+      expect(deps.requestToolPermission).toHaveBeenCalledWith(expect.objectContaining({ requiresUserDecision: true }));
+    });
+
     it('allow decision includes updatedInput', async () => {
       const deps = createDeps();
       const result = await handleToolPermissionWithService(deps, createParams());

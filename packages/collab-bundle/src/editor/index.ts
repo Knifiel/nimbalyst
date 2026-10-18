@@ -11,6 +11,7 @@ export const loadPlacedViewEmbed = () => import('@nimbalyst/collab-client/tracke
 export { setPageMarkAuthorProvider, type PageMarkAuthor } from '@nimbalyst/runtime/editor/plugins/PageMarkPlugin/pageMarkHost';
 export { setCitationHost, type CitationHost } from '@nimbalyst/runtime/editor/plugins/CitationPlugin/citationHost';
 export {
+  openConsoleLink,
   setConsoleLinkOpener,
   setPageReferenceOpener,
   type ConsoleLinkOpener,

@@ -43,20 +43,26 @@ Read only; change nothing in this step.
 
 For a new wiki or a substantial setup repair, have a short discovery conversation before writing. Use what the person already said and what the project contains; ask about the remaining choices that would change the result. Do not treat a repository's contents as proof of the person's intended audience or purpose. Skip this step for a narrow type/relation change or a check-only request unless a missing answer blocks that task.
 
-Use the host's interactive question tool. Prefer one prompt with a few fields, suggested answers based on the project, and an escape hatch for the person's own answer. Pre-fill known preferences. Cover the useful gaps among:
+The default is a **strategic project wiki** (`references/strategic-wiki.md`): Home as a dashboard of the big picture that a reader drills into, with Product and its Modules, Initiatives, Decisions, Team, and Strategy behind it. Propose it unless the brief or the answers call for something else; a research notebook or a personal reference may need only Home and a few pages.
 
-- **Purpose and audience:** who will read it, and what should it help them do? Onboard teammates, guide coding agents, preserve product intent, or compare research are different starting points.
-- **First useful result:** which questions should the wiki answer immediately, and which areas matter most? Let the person adjust a suggested page list instead of asking them to invent a hierarchy.
-- **Sources and boundaries:** which existing docs, sessions, or other material should inform it, and what should stay outside the wiki? Ask about missing or ambiguous sources, not files you can locate yourself.
-- **Depth and upkeep:** a concise orientation or a deeper reference; what should agents keep current as work happens? Discuss types in terms of things the person wants to browse or compare, not schema terminology.
+Use the host's interactive question tool, in one prompt with a few fields. Pre-fill every field from what you found in step 1, so the person corrects a draft instead of inventing one; where the tool cannot edit a draft, show it and offer "use as drafted" with room for corrections. Cover:
 
-Wait for the answers before making dependent choices. Ask a follow-up only when an answer leaves a consequential ambiguity; do not turn setup into a questionnaire or repeatedly confirm settled choices. If the brief already answers these questions, proceed. If the person explicitly delegates the choices, use project-grounded defaults and state the assumptions.
+- **Purpose and audience:** who reads it and what it should help them do. Suggest the strategic wiki for the team first; onboarding, a reference for coding agents, and research are the usual alternatives.
+- **Sections:** Product and Modules, Initiatives, Decisions, Team, and Strategy, chosen by default; Meetings and Glossary offered, not chosen. The person may drop any.
+- **Modules:** the parts of the product you found in the code and docs, one per line with a one-line purpose and its layer (Clients, Server, Data). The Module pages and the product map come from this list.
+- **Initiatives:** the bodies of work under way or planned that you found in plans, trackers and docs, one per line, with status, owner, start and target dates where the source says them. Ask for health, impact and effort (1 to 5); never fill them in yourself.
+- **Owners:** who owns which module and initiative, with emails only as the person or the team member list gives them.
+- **Strategy:** goals, the bets the team is making, its main competitors, and the two axes it positions itself on. Blank is a fine answer; the page then says what is still to be written.
 
-Use the answers to choose the pages, their depth, and any types. Reflect the intended audience and purpose in Home. A research wiki need not inherit a software project's Product/Design structure. Once the direction is clear, build the wiki; do not require a separate approval for each ordinary page creation.
+Ask about sources and boundaries (which material should inform it, what stays out) and depth only when they are unclear.
+
+Wait for the answers before making dependent choices. Ask a follow-up only when an answer leaves a consequential ambiguity; do not turn setup into a questionnaire or repeatedly confirm settled choices. If the brief already answers these questions, proceed. If the person explicitly delegates the choices, use project-grounded defaults, leave unknown owners, health and positions empty, and state the assumptions.
+
+Use the answers to choose the pages, their depth, and the types. Reflect the intended audience and purpose in Home. A research wiki need not inherit a software project's sections. Once the direction is clear, build the wiki; do not require a separate approval for each ordinary page creation.
 
 ## 3. Guide page
 
-- **Base version:** 5. The base text is `references/wiki-guide.md`, unchanged; its last line names the version.
+- **Base version:** 8. The base text is `references/wiki-guide.md`, unchanged; its last line names the version.
 <!-- desktop-only -->
 - **Find it.** `listPages` for the section, then look for a page titled "How we write this wiki" and read it with `readCollabDoc` at its `uri`.
 <!-- /desktop-only -->
@@ -68,29 +74,31 @@ Use the answers to choose the pages, their depth, and any types. Reflect the int
 
 If the guide page exists, **never overwrite it**. Compare it with the base, ignoring whitespace:
 
-- Same text: "already present, matches base version 5".
-- Different text, version line 5: the team edited it. Report "already present, edited by the team".
+- Same text: "already present, matches base version 8".
+- Different text, version line 8: the team edited it. Report "already present, edited by the team".
 - Different text, older or missing version line: the base changed since it was installed, and the team may also have edited it. Report both.
 
-When it differs, offer a diff and a merge that keeps every team edit and proposes only the base changes that do not conflict. Write it with `applyCollabDocEdit` only after the person approves the merged text. A team that rewrote the guide on purpose may decline; that is final until they ask again.
+When it differs, offer a diff and a merge that keeps every team edit and proposes only the base changes that do not conflict. A section or table the base added (version 7 added "Our visual defaults") does not conflict: propose it whole, at the base's position. If the team already wrote a section on the same subject, keep theirs and propose only the rows or points it lacks; a row the team changed stays as they wrote it. Update the version line only as part of the approved merge. Write it with `applyCollabDocEdit` only after the person approves the merged text. A team that rewrote the guide on purpose may decline; that is final until they ask again.
 
-## 4. Home and starter pages
+## 4. Home and the sections
 
-Do this as part of setup, without handing the person a second command to run.
+Do this as part of setup, without handing the person a second command to run. Read `references/strategic-wiki.md` first: it has the page tree, the skeleton of every page, the three types, and what changes on each kind of wiki. Draw each visual with what the guide's "Our visual defaults" table names for that need (the update skill's "Choosing a visual" says what to do when the guide has no table, or picks something this host cannot make). For the syntax of each block, read its entry in the update skill's `../update/references/components.md` and `../update/references/editor-pages.md`; do not write a component from memory.
 
-- **Home:** reuse the section's existing Home. If none exists after lookup, create a root page titled Home with `createSharedDoc`. Write a short project introduction and an annotated list of links that helps a newcomer find their way. Use the returned page `link` in content and its `uri` for body edits; never guess identifiers. A new section's Home holds starter text that Nimbalyst wrote ("This is your personal home page..." or the team Home's welcome and how-to-add-a-page lines); replace that starter text with your introduction rather than adding below it. Keep anything a person wrote.
-- **Titles and page fields:** every page shows its title above the body, so start each body with text, never with the title (or the project name) as a heading. Give each overview page a one-line `summary`, a `status` (`current` for what is true now, `draft` while it is thin), and an `owner` when the person told you who keeps it current, with `setPageFields`.
-- **Starter pages:** follow the user's requested structure; otherwise choose a small set suited to the project. For a software project, start with Product (who it serves and why), Design (principles, constraints, and key choices), and Decisions and open questions (an index linking to the pages that own them). Add Initiatives or other sections when the brief or existing material supports them. Use plain pages for these overviews; do not create a type for each section.
-- **Real content:** write a few useful, source-backed paragraphs on each overview. Preserve attribution and put decision marks in the page they affect; the index links to those pages or places a marks view rather than copying decisions. Link to plans and trackers instead of copying task lists. If information is missing, say specifically what is unknown; never invent a product direction, decision, owner, or status. With too little context to write even a project introduction, ask one focused question through the host's question tool.
-- **Placement and navigation:** create pages with `initialContent` and the appropriate `parentFolderId`; use the existing layout, or a shallow root structure for a new wiki. Add links from Home to the guide and every starter page, with a short explanation of each. Link related pages in their prose. Do not leave empty section shells or disconnected pages and call setup complete.
+- **Order:** the section pages first (empty, so types and typed pages have a parent), then the types (step 5), the Module, Initiative and Competitor pages, the product map, the section bodies, and Home last, which embeds and links all of them. Use the `link`, `viewLink`, `uri` and ids the tools return; never guess identifiers.
+- **Home:** reuse the section's existing Home. If none exists after lookup, create a root page titled Home with `createSharedDoc`. Make it the dashboard from the reference: what the project is and who it serves, the product map, the initiatives with their status and health, open questions and recent decisions, and start-here links. A new Home holds starter text that Nimbalyst wrote ("This is your personal home page...", the team Home's welcome and how-to-add-a-page lines, or "This is the project's local wiki, a folder of markdown pages that Nimbalyst, `nim` and agents read and edit." with its tip and two lists); replace that starter text rather than adding below it. A Home a person wrote keeps its wording and layout: add the dashboard parts it lacks below what they wrote, or propose the dashboard and ask before rearranging it.
+- **Sections:** build the ones agreed in step 2 from their skeletons. The sections are plain pages; the only types are Module, Initiative and Competitor.
+- **Titles and page fields:** every page shows its title above the body, so start each body with text, never with the title (or the project name) as a heading. Give each section page a one-line `summary`, a `status` (`current` for what is true now, `draft` while it is thin), and an `owner` when the person told you who keeps it current, with `setPageFields`.
+- **Real data only:** write a few useful, source-backed paragraphs on each section. Preserve attribution and put decision marks in the page they affect; Decisions gathers them with marks views (or an index on a local wiki) rather than copies. Link to plans and trackers instead of copying task lists. Every point on a map, chart, roadmap or 2x2 is an item someone named with values someone gave. Where something is unknown, write the reference's "Not filled in yet" note saying what is missing; never invent a product direction, decision, owner, email, status, health, impact, effort or position. With too little context to write even a project introduction, ask one focused question through the host's question tool.
+- **Placement and navigation:** create pages with `initialContent` and the appropriate `parentFolderId`, in the reference's tree, or the existing layout when there is one. Home links the guide and every section. Link related pages in their prose: modules to the modules they depend on, initiatives to the modules they touch, owners to what they own. Do not leave empty section shells or disconnected pages and call setup complete.
 - **Existing pages:** read before editing with `applyCollabDocEdit`. Fill empty pages and add only missing material; leave established wording and custom navigation intact. If a change would replace them, ask first. A failed or ambiguous write needs a read-back before retrying creation.
+- **Re-running setup** finds every page, type and view already in place and adds only what is missing, such as the product map on a wiki first set up from a terminal.
 
 ## 5. Types (when useful)
 
-Define types only when the person asks or agrees, including during discovery; do not ask again about an agreed type. If still unclear, ask what the team keeps several of and would want in a table. Suggest from what the project already discusses (module, technology, competitor, person are common); the team decides. A type for a single page is not a type.
+Define types only when the person asks or agrees, including during discovery; do not ask again about an agreed type. Agreeing to the default sections agrees to the types they use: Module (Product), Initiative (Initiatives) and Competitor (Strategy), as `references/strategic-wiki.md` defines them. Beyond those, ask what the team keeps several of and would want in a table. Suggest from what the project already discusses (technology, customer, person are common); the team decides. A type for a single page is not a type.
 
 - **Reuse first.** Match on id and display name in `tracker_list_types`. If the project already has a fitting type (for example a `competitor` type), use it.
-- **Define** with `tracker_define_type` and `schema`. Keep it small: `title` plus two to four single-valued fields (select, string, boolean, user, date). Only single-valued fields show in a page header. No `labels`, `kind` or qualifier fields. Do not name a field `activity`, `comments`, `source`, `content`, `origin`, `created`, `updated`, `type` or `id`: Nimbalyst keeps these for an item's own data, so such a field saves but never shows. Pick a more specific name (`activityLevel`, `sourceUrl`).
+- **Define** with `tracker_define_type` and `schema`. Keep it small: `title` plus two to four single-valued fields (select, string, number, boolean, user, date); Initiative is the one exception, for its status line. Only single-valued fields show in a page header. No `labels`, `kind` or qualifier fields. Do not name a field `activity`, `comments`, `source`, `content`, `origin`, `created`, `updated`, `type` or `id`: Nimbalyst keeps these for an item's own data, so such a field saves but never shows. Pick a more specific name (`activityLevel`, `sourceUrl`).
 - **List the table columns** in `tableView.defaultColumns`: the fields the team wants to scan in the type's table, in order. A field that is not listed there is not a column until someone adds it.
 
   ```json
@@ -141,9 +149,9 @@ Copy the shape from `../update/references/relations.yaml`, renamed to the projec
 
 ## 7. Verify and report
 
-Read back every created or edited page and check its content, tree placement, and links against the person's intended use. Setup is complete only when Home introduces the project, links to the guide and useful starter pages, and those pages address the agreed priorities with grounded content or clearly stated gaps. Report blocked writes or missing context as incomplete; successful type creation is not a substitute.
+Read back every created or edited page and check its content, tree placement, and links against the person's intended use. Setup is complete only when Home introduces the project and shows its dashboard parts (or their "Not filled in yet" notes), links to the guide and every section, and those pages address the agreed priorities with grounded content or clearly stated gaps. Open Home and one section where the host can show them, and check that every embed, view and block renders rather than showing as text or a link. Report blocked writes or missing context as incomplete; successful type creation is not a substitute.
 
-Lead the report with a link to Home and the pages created or filled. Briefly note any types or relations added, earlier-model content left in place, conflicts, and information still needed. For a check-only request, report these findings without making changes.
+Lead the report with a link to Home and the pages created or filled. Briefly note any types or relations added, earlier-model content left in place, conflicts, and the parts left "Not filled in yet" with what would fill them. When a part could not be built here (the product map, from a terminal), say where it can be. Tell the person that the guide's "Our visual defaults" table is where the team changes which visual the wiki uses for each need. For a check-only request, report these findings without making changes.
 <!-- local-only -->
 
 ## On a local wiki
@@ -154,6 +162,15 @@ When the `connect` skill chose the local wiki (or the person asked for one), set
 - **No project or `pages_status`.** Find the guide and Home with `listPages`.
 - **Links** in Home and every page are relative paths carrying the target's id, as the update skill's "On a local wiki" says, never console links.
 - **Types** are files, not a tool call: there is no `tracker_define_type` here. Write `.nimbalyst/trackers/<type>.yaml` with the same fields as the JSON above, in YAML, plus `storage: pages` (one markdown page per item, with a body and child pages). Use `storage: table` (one CSV of rows: fields only, no body, no children) only when the person asks for a table; a list that later needs notes has to be converted. To convert a table type, call `convertTypeStorage` (`storage: pages`); it keeps item ids and field values, so never move the CSV or edit `storage:` by hand. Leave out `sharing`. If `tracker_list_types` reports `problems` for a type, fix the type file. Check `tracker_list_types` first and never overwrite an existing type file without the person's approval. Place a table type under a page with `moveSharedItem` (`kind: type`).
-- **Relations** are a team-wiki feature; skip step 6 on a local wiki.
+- **Relations, placed views and marks lists** are team-wiki features; skip step 6 on a local wiki. The reference's "Local wiki" part says what stands in for each view on Home and the sections.
+- **Paths.** When you draft a page from sources, a Module from its folder or a section from part of the code, record the folders it summarized in its `paths` field: `setPageFields` for a plain page, `tracker_update` `fields` for a typed one. Keep the globs coarse, a folder (`src/sync/**`) rather than a list of files. `pagesForFiles` then finds the page when that code changes. A page drawn from people's answers, not code, has no `paths`.
+- **The instruction file**, once: offer to add these lines to the repository's `CLAUDE.md`, or `AGENTS.md` when that is the file the repository uses, with the wiki folder filled in. Those files are the person's and teammates without the plugin read them too, so write only on a yes, and leave a file that already mentions the wiki alone. For a wiki under the gitignored `nimbalyst-local/`, teammates do not have the folder: offer `CLAUDE.local.md` (Claude Code's uncommitted personal file) instead, and with only `AGENTS.md`, say the lines would point teammates at a folder they lack.
+
+  ```markdown
+  ## Project wiki
+
+  Decisions and context for this project are in the wiki at `<wiki folder>/` (start at `Home.md`). Before changing an area, read the pages that cover it; a page's `paths` field names the code it explains.
+  After deciding something, record it in the page it affects with the nimbalyst-wiki plugin's `/nimbalyst-wiki:capture` skill.
+  ```
 - **When you finish**, offer to open the wiki in the browser with `openWikiInBrowser`.
 <!-- /local-only -->

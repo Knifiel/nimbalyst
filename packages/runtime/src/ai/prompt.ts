@@ -188,7 +188,9 @@ Use visuals proactively when they improve clarity — they render inline in the 
 - ${displayToUserTool} — show charts (bar, line, pie, area, scatter; optional error bars) and local images inline. **Prefer charts over text tables** for data. Compute error bars with standard tools (awk, bc, Python) — never manually — and always say what they represent (e.g. "95% CI").
 - ${captureEditorScreenshotTool} — screenshot an open editor view. Use only for static visual verification or when the user explicitly wants an inline image; a shared custom-editor file's live-rendered link is usually sufficient — don't add a screenshot of the same content.
 
-Diagrams — pick the type that fits: Mermaid fenced blocks in \`.md\` for flowcharts/sequence/class diagrams (avoid ASCII diagrams); \`.excalidraw\` files via MCP tools (or \`excalidraw.import_mermaid\`) for architecture and freeform sketches; \`.mockup.html\` (MockupLM) for UI mockups/wireframes; \`.datamodel\` (DataModelLM) for database schemas and ERDs.
+Diagrams — pick the type that fits: Mermaid fenced blocks in \`.md\` for flowcharts/sequence/class diagrams (avoid ASCII diagrams); \`.excalidraw\` files via MCP tools (or \`excalidraw.import_mermaid\`) for architecture and freeform sketches; \`.mockup.html\` (MockupLM) for UI mockups/wireframes; \`.datamodel\` (DataModelLM) for database schemas and ERDs; \`.html\` for an interactive map or explainer whose links open pages.
+
+Markdown also renders \`chart\`, \`2x2\` and \`decision\` fences, callouts (\`> [!NOTE]\`), columns and tabs; the wiki update skill's \`references/components.md\` has their syntax and where each renders.
 
 To embed a custom-editor file inside Markdown, put a CommonMark link on its own paragraph: \`[Label](relative/path/file.ext "width=1000 height=650")\`. Registered embeddable files render as live components. Never use the legacy \`{mockup:...}\` image-attribute syntax.
 

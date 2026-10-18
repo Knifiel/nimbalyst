@@ -1,0 +1,28 @@
+{
+  "name": "nimbalyst-wiki-team",
+  "version": "0.10.0",
+  "description": "The team wiki server for Nimbalyst Wiki: your team's pages on Nimbalyst Teams. Install it with nimbalyst-wiki; its team skill installs this for you when you move a wiki to a team.",
+  "author": {
+    "name": "Nimbalyst",
+    "url": "https://nimbalyst.com"
+  },
+  "homepage": "https://nimbalyst.com",
+  "repository": "https://github.com/nimbalyst/nimbalyst-wiki",
+  "license": "MIT",
+  "keywords": [
+    "wiki",
+    "team"
+  ],
+  "mcpServers": "./.codex-mcp.json",
+  "interface": {
+    "displayName": "Nimbalyst Wiki Team",
+    "shortDescription": "Your team's wiki on Nimbalyst Teams",
+    "developerName": "Nimbalyst",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://nimbalyst.com"
+  }
+}

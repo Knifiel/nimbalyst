@@ -505,7 +505,7 @@ export class ProjectFileSyncService {
     if (workspacePath && await this.wikiRules.applyRemoteDelete(_projectId, workspacePath, _syncId, filePath)) return;
     // Keep the baseline and file-map entry: the file is still on disk, so the
     // conflict guard must keep working and the next sweep must still see it.
-    logger.main.warn(
+    logger.main.debug(
       `[ProjectFileSync] Ignoring remote delete for ${path.relative(this.workspacePathFor(_projectId) ?? '', filePath) || path.basename(filePath)} -- project sync does not remove local files`,
     );
   }

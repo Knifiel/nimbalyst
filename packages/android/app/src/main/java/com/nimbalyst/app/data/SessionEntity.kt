@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.google.gson.JsonParser
 
 @Entity(
     tableName = "sessions",
@@ -68,3 +69,19 @@ data class SessionEntity(
     val clientMetadataJson: String? = null,
 )
 
+
+/**
+ * The desktop lists this session but withholds its transcript because its
+ * project is not enabled for sync. Read from [SessionEntity.clientMetadataJson]
+ * rather than a column: that blob is replaced whole on every update, so a blob
+ * without the flag reads false, and a republished blob carries it unchanged.
+ */
+val SessionEntity.transcriptSyncDisabled: Boolean
+    get() {
+        val json = clientMetadataJson ?: return false
+        // Most blobs never carry the key; skip the parse for them.
+        if (!json.contains("transcriptSyncDisabled")) return false
+        return runCatching {
+            JsonParser.parseString(json).asJsonObject.get("transcriptSyncDisabled")?.takeIf { it.isJsonPrimitive }?.asBoolean
+        }.getOrNull() ?: false
+    }

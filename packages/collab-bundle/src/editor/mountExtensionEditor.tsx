@@ -156,6 +156,8 @@ export interface ExtensionEditorHandle {
   getEditorAPI(): unknown | null;
   getMenuItems(): readonly EditorMenuItem[];
   setPresenceActive(active: boolean): void;
+  /** Relabel this participant once the host resolves a name; see `CollabEditorHandle.setUser`. */
+  setUser(user: CollabEditorUser): void;
   setTheme(theme: string): void;
   setVisible(visible: boolean): void;
   setReadOnly(readOnly: boolean): void;
@@ -413,6 +415,7 @@ export function mountExtensionEditor(
     getEditorAPI: () => browserHost.getEditorAPI(),
     getMenuItems: () => browserHost.getMenuItems(),
     setPresenceActive: (active) => { session.presence.setActive(active); },
+    setUser: (user) => { session.presence.setDisplayName(resolveCollabEditorUser(user).displayName); },
     setTheme: (nextTheme) => {
       if (destroyed || theme === nextTheme) return;
       theme = nextTheme;

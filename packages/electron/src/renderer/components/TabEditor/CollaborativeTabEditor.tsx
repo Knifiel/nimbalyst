@@ -61,6 +61,7 @@ import { $getRoot, $setSelection, type LexicalEditor } from 'lexical';
 import type { EditorHost, ExtensionStorage } from '@nimbalyst/runtime';
 import type { CollabDocumentConfig } from '../../utils/collabDocumentOpener';
 import { resolveCollabConfigForUri } from '../../utils/collabDocumentOpener';
+import { collabPresenceName } from '../../utils/collabPresenceName';
 import { store, editorDirtyAtom, makeEditorKey, themeIdAtom } from '@nimbalyst/runtime/store';
 import type { Doc } from 'yjs';
 import type { Provider } from '@lexical/yjs';
@@ -91,7 +92,7 @@ import { closeActiveTabRequestAtom } from '../../store/atoms/appCommands';
 // React root (one per tab), so the app-root DialogProvider context is not
 // reachable through the tree. The module-level ref is the cross-root path.
 import { dialogRef } from '../../contexts/DialogContext';
-import { customEditorRegistry } from '../CustomEditors';
+import { findPageEditorRegistration } from '../HtmlPage/htmlPageRegistration';
 import type { CustomEditorRegistration } from '../CustomEditors/types';
 import {
   resolveCollabEditorAvailability,
@@ -966,10 +967,10 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
     providerFactory,
     shouldBootstrap: !!activeConfig.initialContent,
     initialContent: activeConfig.initialContent,
-    username: activeConfig.userName || activeConfig.teamMemberId,
+    username: collabPresenceName(activeConfig),
     cursorColor,
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [providerFactory, activeConfig.initialContent, activeConfig.userName, activeConfig.teamMemberId, cursorColor]);
+  }), [providerFactory, activeConfig.initialContent, activeConfig.userName, activeConfig.userEmail, activeConfig.teamMemberId, cursorColor]);
 
   // Document comments config for the markdown collab branch. Comments live in
   // the same shared Y.Doc (top-level `comments` array); `onMention` / `onReply`
@@ -1261,7 +1262,7 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
       fileExtension: activeConfig.fileExtension,
       title: activeConfig.title,
       editorId: activeConfig.editorId,
-      findRegistration: (name) => customEditorRegistry.findRegistrationForFile(name),
+      findRegistration: (name) => findPageEditorRegistration(name, { documentType, editorId: activeConfig.editorId }),
     });
   }, [documentType, fileName, activeConfig.editorId, activeConfig.fileExtension, activeConfig.title]);
 
@@ -1677,7 +1678,7 @@ const MonacoCollabBranch: React.FC<MonacoCollabBranchProps> = ({
       yDoc: syncProvider.getYDoc(),
       user: {
         id: activeConfig.teamMemberId,
-        name: activeConfig.userName ?? activeConfig.teamMemberId,
+        name: collabPresenceName(activeConfig),
         color: '#3A8FD6',
       },
     });
@@ -1885,7 +1886,7 @@ const ExtensionCollabBranch: React.FC<ExtensionCollabBranchProps> = ({
       yDoc: syncProvider.getYDoc(),
       user: {
         id: activeConfig.teamMemberId,
-        name: activeConfig.userName ?? activeConfig.teamMemberId,
+        name: collabPresenceName(activeConfig),
         color: '#3A8FD6',
       },
     });

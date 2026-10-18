@@ -66,10 +66,12 @@ import { loadTrackerTeamMembers } from '../TrackerMode/useTrackerTeamMembers';
 import { assertFileSaveSucceeded, getSaveFailureMessage, resolveSaveFailureType, type FileSaveResult } from '../../utils/fileSaveResult';
 import { customEditorSaveBaseline, resolveSaveAttempt } from './resolveSaveAttempt';
 import { requestConfirmation } from '../../dialogs/requestConfirmation';
-import { reloadFromDisk, type ReloadOutcome } from './reloadFromDisk';
+import { editorReloadKind, reloadFromDisk, type ReloadOutcome } from './reloadFromDisk';
 import { resolveDiffResolutionSave } from './resolveDiffResolutionSave';
+import { captureRenderedReview, readResolvedContent, resolveLexicalReview, type RenderedLexicalReview } from './lexicalReviewResolution';
 import { resolveCustomEditorReview } from './resolveCustomEditorReview';
 import { localWikiUploadAssetFor } from '../../services/localWikiAttachments';
+import { findTabEditorRegistration } from './tabEditorRegistration';
 import {
   decideLexicalDiffByBytes,
   decideLexicalDiffByRootNodes,
@@ -214,9 +216,9 @@ export const TabEditor: React.FC<TabEditorProps> = ({
   // Re-computed when registry changes (registryVersion dependency)
   const fileType = useMemo(() => {
     const checkCustomEditor = (): boolean =>
-      customEditorRegistry.findRegistrationForFile(filePath) !== undefined;
+      findTabEditorRegistration(filePath, workspaceId) !== undefined;
     return getFileType(filePath, checkCustomEditor);
-  }, [filePath, registryVersion]);
+  }, [filePath, workspaceId, registryVersion]);
 
   const isMarkdown = fileType === 'markdown';
   const isImage = fileType === 'image';
@@ -225,8 +227,8 @@ export const TabEditor: React.FC<TabEditorProps> = ({
   // Get the custom editor registration for this file (used for source mode and storage)
   const customEditorRegistration = useMemo(() => {
     if (!isCustom) return null;
-    return customEditorRegistry.findRegistrationForFile(filePath) ?? null;
-  }, [isCustom, filePath, registryVersion]);
+    return findTabEditorRegistration(filePath, workspaceId) ?? null;
+  }, [isCustom, filePath, workspaceId, registryVersion]);
 
   // Check if the custom editor supports source mode (from registry)
   const customEditorSupportsSourceMode = customEditorRegistration?.supportsSourceMode || false;
@@ -398,6 +400,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
   // The autosave gate reads it: zero diff nodes only means "resolved by hand"
   // for a generation that verifiably rendered inline (NIM-5359, defect A).
   const presentedGenerationRef = useRef<{ generation: number; mode: DiffPresentationMode } | null>(null);
+  const renderedReviewRef = useRef<RenderedLexicalReview | null>(null); // #1734, see lexicalReviewResolution
   const isApplyingDiffRef = useRef<boolean>(false); // Track programmatic diff application
   // #3684: set when a reload could not be verified, i.e. the buffer is not a
   // trustworthy picture of anything. Writes are blocked while it is set --
@@ -1862,6 +1865,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
                 replacements: [{ newText: newContent }],
                 onResult: (result: LexicalDiffApplyResult) => { applyResult = result; },
               });
+              renderedReviewRef.current = captureRenderedReview(editorRef.current, generation); // before any await
               const tooLarge = lexicalDiffTooLargeReason(applyResult);
               if (tooLarge) { presentWithoutInline(tooLarge); return; }
               fetchDiffSessionInfo(sessionId, createdAt);
@@ -2090,10 +2094,12 @@ export const TabEditor: React.FC<TabEditorProps> = ({
             isDirtyRef.current = false;
             onDirtyChange?.(false);
 
-            if (isMarkdown && editorRef.current) {
+            const editor = editorRef.current;
+            const reloadKind = editorReloadKind(editor); // Not isMarkdown alone: source mode is Monaco (#1672).
+            if (isMarkdown && reloadKind === 'lexical') {
               // For Lexical (markdown), we need to clear diff nodes and reload content
               const transformers = getEditorTransformers();
-              editorRef.current?.update(() => {
+              editor.update(() => {
                 // Clearing a selected node without moving selection first makes
                 // Lexical throw "selection has been lost ..." (NIM-2005).
                 $setSelection(null);
@@ -2101,18 +2107,18 @@ export const TabEditor: React.FC<TabEditorProps> = ({
                 root.clear();
                 $convertFromEnhancedMarkdownString(newContent, transformers);
               }, { tag: SKIP_SCROLL_INTO_VIEW_TAG });
-            } else if (!isMarkdown && editorRef.current) {
+            } else if (reloadKind !== 'none') {
               // For Monaco, exit diff mode and update content
-              if (editorRef.current.exitDiffMode) {
-                editorRef.current.exitDiffMode();
+              if (editor.exitDiffMode) {
+                editor.exitDiffMode();
               }
               // Update Monaco editor content to match what's on disk
-              if (editorRef.current.setContent) {
-                editorRef.current.setContent(newContent, { force: true });
+              if (editor.setContent) {
+                editor.setContent(newContent, { force: true });
               }
             }
           }
-        });
+        }).catch((err) => logger.ui.error('[TabEditor] Reload after pending tag cleared failed:', err));
       }
     });
 
@@ -2352,34 +2358,28 @@ export const TabEditor: React.FC<TabEditorProps> = ({
         // the expected disk content and this buffer overwrote it clean
         // (NIM-5359, finding 1).
         if (editorRef.current) {
-            const transformers = getEditorTransformers();
-
-            const currentContent = editorRef.current.getEditorState().read(() => {
-              return $convertToEnhancedMarkdownString(transformers);
-            });
-
-            if (!(await resolveReviewThroughModel(true, {
-              finalContent: currentContent,
-              generation: decidedGeneration,
-            }))) return;
+            // The reviewed bytes when the buffer is exactly one side, else its export (#1734).
+            const resolution = resolveLexicalReview(editorRef.current, getEditorTransformers(), documentModel?.getDiffState(), decidedGeneration, renderedReviewRef.current);
+            if (!(await resolveReviewThroughModel(resolution.accepted, resolution.request))) return;
 
             // Clear the pending tag reference so the file watcher won't re-enter
             // diff mode. After the resolution, so the model's own
             // notifyFileChanged is still suppressed locally.
             setPendingAIEditTag(null);
 
+            const writtenContent = await readResolvedContent(resolution, () => window.electronAPI.readFileContent(filePath));
             // Create history snapshot
-            await window.electronAPI.invoke('history:create-snapshot', filePath, currentContent, 'manual', 'Incremental diff acceptance');
+            await window.electronAPI.invoke('history:create-snapshot', filePath, writtenContent, 'manual', 'Incremental diff acceptance');
 
             // Advance the Codex cache so subsequent AI edits diff against post-review state
             if (clearSessionId) {
-              window.electronAPI.invoke('ai:advance-diff-baseline', clearSessionId, filePath, currentContent);
+              window.electronAPI.invoke('ai:advance-diff-baseline', clearSessionId, filePath, writtenContent);
             }
 
             // Update our state
-            contentRef.current = currentContent;
-            initialContentRef.current = currentContent;
-            lastSavedContentRef.current = currentContent;
+            contentRef.current = writtenContent;
+            initialContentRef.current = writtenContent;
+            lastSavedContentRef.current = writtenContent;
           } else {
             // No editor to serialize: the model resolves from the session's own
             // accepted content, and siblings still leave diff mode.
@@ -3366,7 +3366,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
             // Render custom editor if one is registered for this file's
             // extension. Supports compound extensions of any depth via
             // longest-suffix match (e.g. .mockup.html, .reddit.watch.json).
-            const registration = customEditorRegistry.findRegistrationForFile(filePath) ?? null;
+            const registration = findTabEditorRegistration(filePath, workspaceId) ?? null;
 
             if (registration) {
               // Mark editor as ready when custom editor mounts

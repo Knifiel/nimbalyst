@@ -67,6 +67,17 @@ export class LocalWiki extends WikiTables {
     return this.exclusive(async () => this.project());
   }
 
+  /** Each live page's resolved page links: the ids its body links to, once each. Unresolved links are left out. */
+  async outboundLinks(): Promise<Map<string, string[]>> {
+    return this.exclusive(async () => {
+      const out = new Map<string, string[]>();
+      for (const page of this.state.pages.values()) {
+        out.set(page.id, [...new Set(page.linkTargets.filter((id): id is string => id !== null))]);
+      }
+      return out;
+    });
+  }
+
   typeDefs(): WikiTypeDef[] {
     return [...this.types.values()];
   }

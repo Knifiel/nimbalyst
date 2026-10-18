@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "nimbalyst-team": {
+      "type": "http",
+      "url": "https://sync.nimbalyst.com/mcp"
+    }
+  }
+}

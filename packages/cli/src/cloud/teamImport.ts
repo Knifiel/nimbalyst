@@ -1,13 +1,16 @@
 /**
  * Pushes a local wiki export to a team project with `pages_import`: batches
  * paced under the server's per-user budget (40 calls / 10 s), a wait and retry
- * on 429, then a second pass that re-sends only the bodies whose links changed
- * once every page has its team link. The server upserts on
- * (project, source.wikiId, localId), so an interrupted run re-run resumes.
+ * on 429. Between the passes, each editor page's content is written into the
+ * team document pass 1 registered, and the files pages link to are uploaded.
+ * Then a second pass re-sends only the bodies whose links changed once every
+ * page has its team link. The server upserts on (project, source.wikiId,
+ * localId), so an interrupted run re-run resumes.
  */
 import { ExitCode } from '../cli/exitCodes.js';
 import { PagesToolError } from './pagesClient.js';
-import { pathIndex, rewriteWikiLinks, type ImportPage, type ImportType, type LocalWikiExport } from '../localWiki/teamExport.js';
+import type { TeamContentWriter } from './teamContent.js';
+import { pathIndex, rewriteFileLinksForTeam, rewriteWikiLinks, shareCanvasCards, type ImportPage, type ImportType, type LocalWikiExport } from '../localWiki/teamExport.js';
 
 export interface ImportedEntry {
   nodeId: string;
@@ -161,8 +164,14 @@ export interface ImportOutcome {
   created: number;
   updated: number;
   linksRewritten: number;
+  /** Editor pages whose team document now reads as the local file. */
+  editorPagesWritten: number;
+  /** Files uploaded into the team documents of the pages that link to them. */
+  filesUploaded: number;
   idMap: Record<string, ImportedEntry>;
   errors: ImportError[];
+  /** Left as they are without failing the move: a link to a file that is not there, a file over the upload limit. */
+  warnings: ImportError[];
   /** Every page sent was reported created or updated, with no errors and an id for each. */
   complete: boolean;
 }
@@ -176,8 +185,20 @@ function asResult(value: any): PagesImportResult {
   };
 }
 
-/** `call` should come from `pacedCaller`, shared with the move's other calls so they are paced together. */
-export async function importToTeam(exported: LocalWikiExport, target: ImportTarget, call: ToolCaller): Promise<ImportOutcome> {
+/**
+ * The document holding a page's body, where its attachments go: a plain or
+ * editor page's own document, or a typed page's `tracker-content/<itemId>`.
+ */
+export function bodyDocumentId(entry: ImportedEntry): string {
+  return entry.nodeId.startsWith('item:') ? `tracker-content/${entry.id}` : entry.id;
+}
+
+/**
+ * `call` should come from `pacedCaller`, shared with the move's other calls so
+ * they are paced together. `content` writes editor pages and uploads files; an
+ * export with editor pages or linked files needs one.
+ */
+export async function importToTeam(exported: LocalWikiExport, target: ImportTarget, call: ToolCaller, content?: TeamContentWriter): Promise<ImportOutcome> {
   const base = {
     ...(target.repo ? { repo: target.repo } : {}),
     project: target.project,
@@ -185,6 +206,7 @@ export async function importToTeam(exported: LocalWikiExport, target: ImportTarg
   };
   const idMap: Record<string, ImportedEntry> = {};
   const errors: ImportError[] = [];
+  const warnings: ImportError[] = [];
   let created = 0;
   let updated = 0;
   let batches = 0;
@@ -236,8 +258,52 @@ export async function importToTeam(exported: LocalWikiExport, target: ImportTarg
     for (const page of batch) if (!result.idMap[page.localId]) notImported.add(page.localId);
   }
 
-  // Pass 2: links between pages point at their team pages, and relationship fields at team ids.
+  // Between the passes: editor pages' content, then the files pages link to, each into its page's team document.
+  let editorPagesWritten = 0;
+  let filesUploaded = 0;
+  const assetUris = new Map<string, Map<string, string>>();
+  if ((exported.editorFiles.size || exported.linkedFiles.size) && !content) {
+    throw new Error('importToTeam: editor pages and linked files need a TeamContentWriter');
+  }
   const byPath = pathIndex(exported.locations);
+  const teamDocument = (localId: string) => {
+    const entry = idMap[localId];
+    return entry?.nodeId.startsWith('document:') ? { orgId: target.project.orgId, documentId: entry.id } : undefined;
+  };
+  // A page the server mapped but refused as another document type keeps its links, never a write in another editor's format.
+  const typeMismatch = new Set(errors.filter((error) => error.code === 'document_type_mismatch').map((error) => error.localId));
+  for (const [localId, file] of exported.editorFiles) {
+    const entry = idMap[localId];
+    if (!entry || typeMismatch.has(localId)) continue;
+    const canvasPath = file.documentType === 'canvas' ? exported.locations.get(localId)?.path : undefined;
+    const text = canvasPath ? shareCanvasCards(file.text, canvasPath, { prefix: exported.wikiPrefix, dir: exported.wikiDir }, byPath, teamDocument).text : file.text;
+    const written = await content!.writeEditorPage({ localId, documentId: entry.id, documentType: file.documentType, text });
+    if (written.ok) editorPagesWritten++;
+    else errors.push({ localId, code: written.code, message: written.message });
+  }
+  for (const [localId, files] of exported.linkedFiles) {
+    const entry = idMap[localId];
+    if (!entry) continue;
+    const uris = new Map<string, string>();
+    for (const file of files) {
+      if (!file.abs) {
+        warnings.push({ localId, code: 'linked_file_missing', message: `${file.linkPath} is not a file in the wiki, so the link is left as written.` });
+        continue;
+      }
+      const uploaded = await content!.uploadFile({ documentId: bodyDocumentId(entry), abs: file.abs });
+      if (uploaded.ok) {
+        uris.set(file.linkPath, uploaded.uri);
+        filesUploaded++;
+      } else if (uploaded.code === 'file_too_large') {
+        warnings.push({ localId, code: uploaded.code, message: `${file.linkPath}: ${uploaded.message}` });
+      } else {
+        errors.push({ localId, code: uploaded.code, message: `${file.linkPath}: ${uploaded.message}` });
+      }
+    }
+    if (uris.size) assetUris.set(localId, uris);
+  }
+
+  // Pass 2: links between pages point at their team pages, files at their uploads, and relationship fields at team ids.
   const linkFor = (localId: string) => idMap[localId]?.link;
   const teamId = (localId: string) => idMap[localId]?.id;
   const changed: ImportPage[] = [];
@@ -245,7 +311,12 @@ export async function importToTeam(exported: LocalWikiExport, target: ImportTarg
   for (const page of exported.pages) {
     if (!idMap[page.localId]) continue;
     const location = exported.locations.get(page.localId);
-    const next = location && page.body ? rewriteWikiLinks(page.body, location, byPath, linkFor) : { body: page.body, rewritten: 0 };
+    const pageLinks = location && page.body ? rewriteWikiLinks(page.body, location, byPath, linkFor) : { body: page.body, rewritten: 0 };
+    const uris = assetUris.get(page.localId);
+    const fileLinks = location && pageLinks.body
+      ? rewriteFileLinksForTeam(pageLinks.body, location, byPath, linkFor, (linkPath) => uris?.get(linkPath))
+      : { body: pageLinks.body, rewritten: 0 };
+    const next = { body: fileLinks.body, rewritten: pageLinks.rewritten + fileLinks.rewritten };
     const relations = exported.relations.get(page.localId);
     const remapped: Record<string, string | string[]> = {};
     const missing: string[] = [];
@@ -277,5 +348,5 @@ export async function importToTeam(exported: LocalWikiExport, target: ImportTarg
     errors.length === 0 &&
     created + updated === exported.pages.length &&
     exported.pages.every((page) => idMap[page.localId]);
-  return { batches, created, updated, linksRewritten, idMap, errors, complete };
+  return { batches, created, updated, linksRewritten, editorPagesWritten, filesUploaded, idMap, errors, warnings, complete };
 }

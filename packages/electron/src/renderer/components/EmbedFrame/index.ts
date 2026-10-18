@@ -27,6 +27,7 @@ import {
 import { setCanvasCallbacks } from '@nimbalyst/runtime/canvas';
 
 import { customEditorRegistry } from '../CustomEditors/registry';
+import { HTML_PAGE_FILE_EXTENSION } from '@nimbalyst/runtime/ui/htmlEmbed/htmlPageCodec';
 import { DesktopEmbedRenderer } from './DesktopEmbedRenderer';
 import { registerPlacedViewCommands } from './placedViewCommands';
 import { CanvasCardHost } from './CanvasCardHost';
@@ -43,7 +44,9 @@ export { createEmbeddedFileHost } from './createEmbeddedFileHost';
 export { CanvasCardHost } from './CanvasCardHost';
 
 function syncEmbeddableExtensions(): void {
-  setEmbeddableExtensions(customEditorRegistry.getRegisteredExtensions());
+  // `.html` renders in the HTML embed sandbox whether or not an extension
+  // claims the suffix for tabs.
+  setEmbeddableExtensions([...customEditorRegistry.getRegisteredExtensions(), HTML_PAGE_FILE_EXTENSION]);
 }
 
 export function registerEmbedFrame(): void {

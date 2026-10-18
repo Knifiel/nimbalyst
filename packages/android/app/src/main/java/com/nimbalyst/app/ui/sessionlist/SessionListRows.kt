@@ -39,6 +39,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nimbalyst.app.R
 import com.nimbalyst.app.data.SessionEntity
+import com.nimbalyst.app.data.transcriptSyncDisabled
 import com.nimbalyst.app.ui.components.ContextUsageBadge
 import com.nimbalyst.app.ui.components.PhaseBadge
 import com.nimbalyst.app.ui.components.ProviderBadge
@@ -123,6 +124,13 @@ internal fun SessionRow(
                 ProviderBadge(provider = session.provider, model = session.model)
                 session.phase?.takeIf { it.isNotBlank() }?.let { PhaseBadge(phase = it) }
                 session.contextUsagePercent?.let { ContextUsageBadge(percent = it) }
+                if (session.transcriptSyncDisabled) {
+                    Text(
+                        text = stringResource(R.string.session_list_not_synced),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 Spacer(modifier = Modifier.weight(1f))
                 Text(
                     text = RelativeTimestamp.format(session.updatedAt),

@@ -20,6 +20,11 @@ public struct IndexCoverage: Equatable, Sendable {
     /// failed while continuing to show what it has.
     public var hasError: Bool = false
     public var skippedRowCount: Int = 0
+    /// This connection has applied everything the server had when it caught up:
+    /// the delta after a proven baseline, or a completed bootstrap with no delta
+    /// owed. Writes parked across a disconnect wait for this, because their
+    /// client-metadata blob must carry the desktop's current fields.
+    public var caughtUp: Bool = false
 
     public enum Compatibility: Sendable, Equatable {
         case unknown
@@ -181,6 +186,7 @@ final class IndexReplicationClient {
         hasChosenCoverageWork = false
         coverageLoaded = false
         coverage.hasError = false
+        coverage.caughtUp = false
         requestMaintenance(.loadCoverage)
         request(mode: .recent, isProbe: true)
     }
@@ -273,6 +279,7 @@ final class IndexReplicationClient {
 
         case .failed(let reason):
             logger.error("Index page failed (\(current.mode.rawValue)): \(reason)")
+            SyncDiagnosticsFile.shared.log("indexPageFailed", ["mode": .label(current.mode.rawValue), "reason": .text("\(reason)")])
             coverage.isBackfilling = false
             coverage.hasError = true
             // Nothing advanced, so the next hint or reconnect retries the same
@@ -299,6 +306,7 @@ final class IndexReplicationClient {
                     bootstrapRunId = nil
                     bootstrapContinuation = nil
                     requestDeltaIfNeeded()
+                    if inFlight == nil { coverage.caughtUp = true }
                 } else if let nextPageToken {
                     // Held, not sent: a pending lookup takes this slot, and
                     // backgrounding pauses here without losing our place.
@@ -311,6 +319,7 @@ final class IndexReplicationClient {
                 if !complete, let nextPageToken {
                     request(mode: .delta, pageToken: nextPageToken)
                 } else {
+                    coverage.caughtUp = true
                     pumpNextRequest()
                 }
             case .lookup:
@@ -358,6 +367,7 @@ final class IndexReplicationClient {
         }
 
         logger.error("Index page request failed with \(errorCode)")
+        SyncDiagnosticsFile.shared.log("indexPageRequestFailed", ["code": .label(errorCode)])
         inFlight = nil
         clearTimeout()
         coverage.isBackfilling = false
@@ -560,6 +570,7 @@ final class IndexReplicationClient {
                 guard let self, self.inFlight?.requestId == requestId else { return }
                 // A silent server is a failure, never evidence of an old one.
                 self.logger.error("Index page request timed out")
+                SyncDiagnosticsFile.shared.log("requestTimeout", ["kind": .label("indexPage")])
                 self.inFlight = nil
                 self.coverage.isBackfilling = false
                 self.coverage.hasError = true

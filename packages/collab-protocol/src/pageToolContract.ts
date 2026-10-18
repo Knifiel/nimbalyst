@@ -65,6 +65,7 @@ export const PAGE_TOOL_NAMES = [
   'pages_bind_repo',
   'pages_create_project',
   'pages_import',
+  'pages_import_token',
   'team_create',
   'team_invite',
   'team_invite_link_create',
@@ -153,6 +154,11 @@ const stringArray = (description: string) => ({ type: 'array', items: { type: 's
 export const PAGES_IMPORT_MAX_PAGES = 50;
 export const PAGES_IMPORT_MAX_BODY_BYTES = 900 * 1024;
 export const PAGES_IMPORT_MAX_TYPES = 20;
+/** How long a `pages_import_token` credential lasts. A longer move asks again. */
+export const PAGES_IMPORT_TOKEN_TTL_SECONDS = 15 * 60;
+/** `pages_import` page kinds. An editorPage carries documentType, fileExtension and editorId, and no body. */
+export const PAGES_IMPORT_PAGE_KINDS = ['page', 'typedPage', 'editorPage'] as const;
+export type PagesImportPageKind = (typeof PAGES_IMPORT_PAGE_KINDS)[number];
 /** `team_invite`: emails per call. */
 export const TEAM_INVITE_MAX_EMAILS = 20;
 
@@ -214,7 +220,7 @@ export const PAGE_TOOL_CONTRACT: readonly PageToolContract[] = [
     availability: 'remoteOnly',
     readOnly: false,
     description:
-      `Import a local wiki into the bound team project in batches: pages, typed pages and their types in one call. Editors and above. Upserts by (project, source.wikiId, localId): a re-run updates the pages it already created and an interrupted move resumes, never duplicates. A parentLocalId may name a page imported in an earlier batch. Types are ensured before typed pages. At most ${PAGES_IMPORT_MAX_PAGES} pages and ${PAGES_IMPORT_MAX_BODY_BYTES} bytes of bodies per call; send parents before children. Bodies are stored verbatim (decision marks included); to rewrite links, call again with the rewritten bodies for the same localIds. A body a person has edited since the import wrote it is not overwritten (error body_edited). Returns idMap (localId to nodeId, id, issueKey, link, uri), created, updated and per-page errors.`,
+      `Import a local wiki into the bound team project in batches: pages, typed pages and their types in one call. Editors and above. Upserts by (project, source.wikiId, localId): a re-run updates the pages it already created and an interrupted move resumes, never duplicates. A parentLocalId may name a page imported in an earlier batch. Types are ensured before typed pages. At most ${PAGES_IMPORT_MAX_PAGES} pages and ${PAGES_IMPORT_MAX_BODY_BYTES} bytes of bodies per call; send parents before children. Bodies are stored verbatim (decision marks included); to rewrite links, call again with the rewritten bodies for the same localIds. A body a person has edited since the import wrote it is not overwritten (error body_edited). An editorPage (drawing, spreadsheet, data model, ...) is registered with its documentType, fileExtension and editorId and an empty room; the move client writes its content into the room itself with a pages_import_token credential. Returns idMap (localId to nodeId, id, issueKey, link, uri), created, updated and per-page errors.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -244,10 +250,13 @@ export const PAGE_TOOL_CONTRACT: readonly PageToolContract[] = [
               parentLocalId: { type: ['string', 'null'], description: 'Parent localId, or null for the top of the wiki.' },
               title: { type: 'string' },
               order: { type: 'number', description: 'Sort order among its siblings.' },
-              kind: { type: 'string', enum: ['page', 'typedPage'] },
+              kind: { type: 'string', enum: [...PAGES_IMPORT_PAGE_KINDS] },
               typeId: { type: 'string', description: 'The type, for a typed page.' },
+              documentType: { type: 'string', description: "The editor page's document type (e.g. 'excalidraw'), for an editorPage." },
+              fileExtension: { type: 'string', description: "The editor page's file extension with its leading dot (e.g. '.excalidraw'), for an editorPage." },
+              editorId: { type: 'string', description: "The extension id of the editor that opens it (e.g. 'com.nimbalyst.excalidraw'), for an editorPage." },
               fields: { type: 'object', description: "A page's fields, or a typed page's field values." },
-              body: { type: 'string', description: 'Markdown body, verbatim.' },
+              body: { type: 'string', description: 'Markdown body, verbatim. Empty for an editorPage.' },
             },
             required: ['localId', 'parentLocalId', 'title', 'kind', 'body'],
           },
@@ -255,6 +264,14 @@ export const PAGE_TOOL_CONTRACT: readonly PageToolContract[] = [
       },
       required: ['source', 'pages'],
     },
+  },
+  {
+    name: 'pages_import_token',
+    availability: 'remoteOnly',
+    readOnly: false,
+    description:
+      `For the local client's wiki move only. A credential, good for ${PAGES_IMPORT_TOKEN_TTL_SECONDS / 60} minutes, that opens the sync channel of this project's documents and uploads images into them, so the move client can write the editor pages and attachments pages_import registered. Editors and above. Returns token, expiresAt (epoch ms), orgId, projectId and memberId.`,
+    inputSchema: { type: 'object', properties: { repo: PAGE_TOOL_REPO_ARG } },
   },
   {
     name: 'team_create',
@@ -865,6 +882,17 @@ export interface PagesImportIdMapEntry {
   link: string;
   /** Where readCollabDoc reads the body. */
   uri?: string;
+}
+
+export interface PagesImportTokenResult {
+  /** Presented as `?token=` on `/sync/` and as a bearer token on the document asset route. */
+  token: string;
+  /** Epoch milliseconds. */
+  expiresAt: number;
+  orgId: string;
+  projectId: string;
+  /** The caller's team member id: the `teamMemberId` a DocumentSyncProvider identifies as. */
+  memberId: string;
 }
 
 export interface PagesImportResult {

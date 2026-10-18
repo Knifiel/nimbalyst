@@ -191,6 +191,25 @@ class SyncManagerLifecycleTest {
 
         val index = indexSockets().last().also { it.open() }
         manager.awaitIngestionIdle()
+        assertTrue("parked writes wait for index catch-up", index.sentOfType("indexClientMetadataPatch").isEmpty())
+
+        // Catch-up on a legacy server: the probe is refused, then the full index applies.
+        index.message("""{"type":"error","code":"unknown_message_type","message":"Unknown message type"}""")
+        manager.awaitIngestionIdle()
+        index.message(JsonObject().apply {
+            addProperty("type", "indexSyncResponse")
+            add("projects", com.google.gson.JsonArray())
+            add("sessions", com.google.gson.JsonArray().apply {
+                add(JsonObject().apply {
+                    addProperty("sessionId", "s1")
+                    addProperty("encryptedProjectId", crypto.encryptProjectId("/p"))
+                    addProperty("projectIdIv", CryptoManager.projectIdIvBase64)
+                    addProperty("createdAt", 1L)
+                    addProperty("updatedAt", 2L)
+                })
+            })
+        }.toString())
+        manager.awaitIngestionIdle()
 
         val receipt = index.sentOfType("indexClientMetadataPatch").single().getAsJsonObject("patch")
         assertEquals("s1", receipt.get("sessionId").asString)

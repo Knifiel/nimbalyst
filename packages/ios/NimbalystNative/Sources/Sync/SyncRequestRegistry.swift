@@ -8,7 +8,7 @@ import os
 /// used to log and return. `retry` is present only where retrying is actually
 /// meaningful; the banner that renders this lives outside the sync layer.
 public struct SyncError: Identifiable {
-    public enum Kind: String, Sendable {
+    public enum Kind: String, Sendable, CaseIterable {
         /// The frame never reached the socket, or the socket went away first.
         case transport
         /// A payload arrived but could not be read with this device's key.
@@ -24,7 +24,7 @@ public struct SyncError: Identifiable {
     public let id: UUID
     public let kind: Kind
     public let message: String
-    /// Short stable identifier for analytics (e.g. `payloadIncomplete`); never prose.
+    /// Short stable identifier for analytics; never prose.
     public let code: String?
     /// Technical cause for "Copy diagnostics"; never shown in the banner.
     public let detail: String?
@@ -68,7 +68,7 @@ extension SyncError.Kind {
 /// The copy lives here rather than at each call site so a new send has to say
 /// what the user loses when it fails, and so two sends of the same kind cannot
 /// describe the same failure two different ways.
-enum SyncRequestKind: String {
+enum SyncRequestKind: String, CaseIterable {
     case indexRequest
     case sessionSyncPage
     case draftPush
@@ -287,6 +287,7 @@ final class SyncRequestRegistry {
     private func fail(_ id: String, errorKind: SyncError.Kind, detail: String, userMessage: String? = nil) {
         guard let entry = finish(id) else { return }
         logger.error("\(entry.kind.rawValue) failed (\(errorKind.rawValue)): \(detail)")
+        SyncDiagnosticsFile.shared.log("requestFailed", ["kind": .label(entry.kind.rawValue), "error": .label(errorKind.rawValue)])
 
         var retry: (@MainActor () -> Void)?
         if entry.rebuild != nil {

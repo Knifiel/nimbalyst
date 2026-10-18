@@ -21,6 +21,7 @@ function fakeHandle(state: CollabEditorState): CollabEditorHandle {
     getPresence: vi.fn(() => ({ participants: [] })),
     flush: vi.fn(async (): Promise<CollabEditorFlushResult> => ({ status: 'acknowledged' })),
     setPresenceActive: vi.fn(),
+    setUser: vi.fn(),
     setReadOnly: vi.fn(),
     refreshCommentAccess: vi.fn(),
     markClean: vi.fn(),

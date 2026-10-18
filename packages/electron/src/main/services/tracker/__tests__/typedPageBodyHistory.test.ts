@@ -59,6 +59,7 @@ describe('recordTypedPageBodySnapshot', () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nim-typed-page-history-'));
   });
   afterEach(async () => {
+    vi.restoreAllMocks();
     await db.current?.close();
     db.current = null;
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -83,6 +84,8 @@ describe('recordTypedPageBodySnapshot', () => {
   it('keeps the body an agent replaced when that text was never snapshotted', async () => {
     await launch();
     const history = new HistoryManager();
+    // Both snapshots land in the same millisecond; each must still load its own body.
+    vi.spyOn(Date, 'now').mockReturnValue(1_760_000_000_000);
     // An MCP write stores `content` as JSON-encoded markdown; SQLite hands it back still encoded.
     await recordTypedPageBodySnapshot('item-1', 'module', '# Agent body', { history, replaced: JSON.stringify('# Hand-written body') });
 

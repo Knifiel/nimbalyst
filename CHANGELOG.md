@@ -22,15 +22,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- With "Allow everything" and Agent-verified checks on, a hook that asks for approval now waits for your answer instead of letting the tool run
+- A file watcher hitting the open-file limit no longer opens a blocking error dialog, which could keep the app from starting with many projects restored
+- The tray menu no longer throws an error dialog when a settings read fails, and projects without a `.mcp.json` no longer leak a folder watcher each time they start
+- Keep All and Revert All on an open Markdown file now write the agent's or the original bytes exactly when you haven't edited during the review, instead of re-saving the whole file through the editor, which broke front matter and `$` math
+- Reloading a Markdown file open in source mode after reviewing agent changes no longer throws an error
+- Commit proposals from Codex sessions no longer fail with "Cannot identify this exact commit proposal"
+- A Claude Code session no longer keeps showing "Waiting for your response" after you answer its question while it carries on working.
+- A prompt whose send failed, or a retried copy of it, no longer stays at the bottom of the transcript below later replies
 - A worktree of a repository cloned inside the project is created next to the project instead of inside it, and the new-worktree dialog names the repository it branches from.
 - Archiving or deleting a worktree no longer deletes another repository's checkout of the same project that sits inside the worktree's folder
 - Archiving or deleting a worktree no longer deletes a folder or branch its repository does not own (another repository's worktree, or a moved, copied, locked or nested checkout), and no longer prunes the repository's other worktrees.
 - Edits inside a repository cloned in the project and ignored by its `.gitignore` now reach the file tree and open editors, following that clone's own ignore rules.
 - Git repositories cloned inside a project and ignored by its `.gitignore` now get status badges and appear in the Git panel's repo picker and the title-bar branch menu.
 - The pull request panel no longer reports the GitHub CLI as signed out when `gh auth status` is slow to answer.
-- A Claude Code session no longer keeps showing "Waiting for your response" after you answer its question while it carries on working.
 - After you start a new session to implement a plan, the planning session's plan card says "Deferred to new session" instead of "Denied"
-- A prompt left at the bottom of the transcript (for example after a failed or retried send, such as `/compact`) no longer stays below later replies
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.81.7] - 2026-10-16
+
+
+### Added
+<!-- New features go here -->
+- After enlarging an image in an AI session transcript, the Left and Right arrow keys (or Prev and Next) step through the session's other images: your attachments, editor screenshots and images the agent displayed.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+- Charts whose x column holds plain dates such as 2026-08-31 show one label per row, like "Aug 31", instead of weekday ticks that missed the rows.
+- Decision blocks in the local wiki browser view no longer stay on "Loading answer status...", and votes on a decision block typed by hand into a team page are kept after a reload.
+- In shared documents, a collaborator's cursor label shows their name, or their email when no name is set, instead of an internal member ID such as `member-live-...`.
+- On iOS and Android, a session from a desktop project that isn't synced to mobile shows "Transcript not synced" and where to turn it on, instead of "Thinking..." over an empty transcript. Adding the project under Settings > Mobile App on the desktop uploads that session's earlier transcript.
+- A session that finished while the desktop's sync connection was down no longer stays marked as running on the phone; the desktop sends the update once the connection is back.
+- Following external Claude Code and Codex sessions watches each session folder instead of keeping every transcript file open, which had reached over 2,000 open files on one machine.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.81.6] - 2026-10-15
+
+
+### Added
+<!-- New features go here -->
+- In the Nimbalyst Wiki plugin for Claude Code and Codex, local wiki pages can name the code they cover, the agent is told at session start what the local wiki covers and which pages cover uncommitted changes (Claude Code), and capture starts from the pages a session's changes touched. New `wikiDoctor` and `listMarks` tools report broken links, orphan and stale pages and list recorded decisions and open questions, and a new `recall` skill answers what the wiki says or decided.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- The Nimbalyst Wiki plugin's team server moved to a separate `nimbalyst-wiki-team` add-on that the team skill offers to install, so people who only use a local wiki are no longer shown a team sign-in. Team wiki users install the add-on once after updating.
+- The wiki update skill now applies to requests for architecture or product maps, diagrams and HTML pages, keeps a map to one screen with every box linked to a page, and checks those links before finishing.
+- Mobile sync sends each transcript message in one piece instead of splitting large ones into chunks; desktop, iOS and Android all updated.
+- Updated Claude Agent SDK to 0.3.300 and Codex SDK to 0.162.1.
+
+### Fixed
+<!-- Bug fixes go here -->
+- Local wiki HTML pages opened from the Pages tree now open in the HTML page editor instead of the browser, and their links open the linked wiki pages.
+- HTML pages in `nim wiki serve` no longer render blank in browser panels that withhold the sign-in cookie from embedded frames.
+- The wiki plugin's local wiki tools can now switch to another project's wiki with `useLocalWiki` when a session moves to a different folder, and every result names the wiki folder in use.
+- In a narrow Pages Search view, such as the web console on a phone, page names are visible again; type, status and author show on a line under each name instead of in their own columns.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.81.5] - 2026-10-14
+
+
+### Added
+<!-- New features go here -->
+- Interactive HTML pages: a link to an `.html` file or HTML page on its own line embeds it live in a document, sandboxed from the app, and its links open wiki pages, tracker items and files in Nimbalyst. HTML is also a Team, Personal and local wiki page type with a preview and a source view.
+- Wiki setup now builds a project wiki by default, with a dashboard Home, a product map, initiatives, decisions, team and strategy pages, and wiki agents use charts, 2x2s, decision blocks and every editor page type where they fit. A team sets its preferred visuals in its "How we write this wiki" page.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+- Mermaid timeline (gantt) charts now fit the page width with readable labels in light and dark themes.
+- Columns in a document no longer show a dashed outline while you read it.
+- A message queued during a Claude Code agent turn no longer cancels a question the agent asks; it waits until you answer and the turn finishes.
+- Enlarging an image an agent showed in the transcript no longer shows a broken image when the file is outside the project folder.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.81.4] - 2026-10-14
+
+
+### Added
+<!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+- A local wiki created outside the app now shows up in Pages mode without reloading the project.
+- The local wiki browser view now says when its server has stopped.
+- Moving a local wiki to a team now also brings editor pages and the images they link to.
 
 ### Removed
 <!-- Removed features go here -->

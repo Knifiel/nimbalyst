@@ -21,7 +21,9 @@
  *   - Keep inline image blocks (screenshots), downscaling instead of eliding.
  *     They are the one large payload whose whole point is being looked at on
  *     the phone, and there is no other channel that can deliver them.
- *   - Unknown providers remain lossless; overflow belongs to the transport.
+ *   - Plain-text and unknown-provider rows stay whole up to the inline row
+ *     limit. Any row still above MAX_SYNC_ROW_CONTENT_BYTES after all of the
+ *     above becomes a short elision marker, never a server refusal.
  *
  * Stats: a singleton tracker accumulates byte-savings across the process so we
  * can validate the impact locally before deploying. It self-logs periodically
@@ -39,6 +41,20 @@ import {
 
 const TRUNCATE_THRESHOLD_BYTES = 4 * 1024;
 const MAX_SYNC_MESSAGE_BYTES = 16 * 1024;
+// The server (SessionRoom.MAX_ENCRYPTED_CONTENT_BYTES) refuses a row whose
+// base64 ciphertext exceeds 512 KiB: 393,216 raw bytes, less the 16-byte
+// AES-GCM tag, is the largest plaintext envelope
+// `{"content":...,"metadata":...,"hidden":...}` that fits. encryptSessionMessage
+// enforces it on the whole envelope. The content clamp below reserves 32 KiB
+// for the rest of the envelope, so a row with ordinary metadata is elided here
+// and counted in the stats. Semantic projection keeps real rows far below both;
+// a row still above them becomes the elision marker instead of a refusal.
+const SERVER_MAX_ENCRYPTED_CONTENT_CHARS = 512 * 1024;
+const AES_GCM_TAG_BYTES = 16;
+const ENVELOPE_RESERVE_BYTES = 32 * 1024;
+export const MAX_SYNC_ROW_PLAINTEXT_BYTES = (SERVER_MAX_ENCRYPTED_CONTENT_CHARS / 4) * 3 - AES_GCM_TAG_BYTES;
+/** Measured on the content as JSON-escaped into the envelope, quotes included. */
+export const MAX_SYNC_ROW_CONTENT_BYTES = MAX_SYNC_ROW_PLAINTEXT_BYTES - ENVELOPE_RESERVE_BYTES;
 /** tool_use_result keys that hold the user's answers, never disposable output. */
 const TOOL_USE_RESULT_PROTECTED_KEYS = new Set(['answers', 'questions']);
 
@@ -49,8 +65,8 @@ const TOOL_USE_RESULT_PROTECTED_KEYS = new Set(['answers', 'questions']);
 // "trim" the message, it deletes the screenshot the user wanted to look at on
 // their phone.
 //
-// This is an image-quality/storage policy, not a logical message ceiling.
-// Oversized protected text uses the lossless payload transport.
+// Stays well under MAX_SYNC_ROW_CONTENT_BYTES: base64 needs no JSON escaping,
+// so 256 KB here lands near 350 KB on the wire.
 const MAX_SYNC_MESSAGE_WITH_IMAGE_BYTES = 256 * 1024;
 
 // Largest single image block we will put on the wire, after the downscale pass
@@ -561,6 +577,31 @@ function stripImageBlocksInPlace(parsed: unknown): boolean {
   return modified;
 }
 
+/**
+ * Replace a row that would still exceed the server's inline limit with the
+ * pre-#1711 marker, which phones already render. Sets `stats.bytesAfter`.
+ */
+/** The pre-#1711 whole-row marker, which phones already render. */
+export function wholeRowElisionMarker(source: string, rawBytes: number): string {
+  return `[Full ${source || 'unknown'} message elided from mobile sync: ${formatBytes(rawBytes)} raw. View on desktop for the full content.]`;
+}
+
+function clampWholeRow(content: string, source: string, stats: PerMessageTruncationStats): string {
+  const bytes = utf8ByteLen(content);
+  // Escaping at most sextuples a byte (\u00XX), so short rows skip the stringify.
+  if (bytes * 6 + 2 <= MAX_SYNC_ROW_CONTENT_BYTES || utf8ByteLen(JSON.stringify(content)) <= MAX_SYNC_ROW_CONTENT_BYTES) {
+    stats.bytesAfter = bytes;
+    return content;
+  }
+  const marker = wholeRowElisionMarker(source, stats.bytesBefore);
+  const elided = bytes - utf8ByteLen(marker);
+  stats.bytesAfter = utf8ByteLen(marker);
+  stats.blocksTruncated++;
+  stats.elidedBytes += elided;
+  if (elided > stats.largestBlockElidedBytes) stats.largestBlockElidedBytes = elided;
+  return marker;
+}
+
 class SyncTruncationTracker {
   private stats: CumulativeSyncTruncationStats = {
     totalMessages: 0,
@@ -892,14 +933,15 @@ export function truncateContentForSync(
 
   const sourceKey = source || 'unknown';
   const isCodex = sourceKey.startsWith('openai-codex') || sourceKey.startsWith('opencode');
-  // Plain-text content is conversation and stays lossless; the transport
-  // handles overflow. JSON rows from any source get the shape-based output
-  // bounds below, so an unrecognized provider cannot ship raw tool output.
+  // Plain-text content is conversation and stays whole up to the row clamp.
+  // JSON rows from any source get the shape-based output bounds below, so an
+  // unrecognized provider cannot ship raw tool output.
   let parsed: unknown;
   try { parsed = JSON.parse(rawContent); }
   catch {
+    const content = clampWholeRow(rawContent, sourceKey, stats);
     syncTruncationTracker.record(stats, [], sourceKey);
-    return { content: rawContent, stats };
+    return { content, stats };
   }
 
   const blockBytesBefore: number[] = [];
@@ -930,7 +972,7 @@ export function truncateContentForSync(
     }
   }
 
-  stats.bytesAfter = utf8ByteLen(providerContent);
+  providerContent = clampWholeRow(providerContent, sourceKey, stats);
 
   syncTruncationTracker.record(stats, blockBytesBefore, sourceKey);
 

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-14T06:06:37.440Z",
+  "generatedAt": "2026-10-16T04:20:42.026Z",
   "extensions": [
     {
       "id": "com.nimbalyst.animation",
@@ -173,7 +173,7 @@
       "id": "com.nimbalyst.calc-sheets",
       "name": "Calc Sheets",
       "description": "Line-oriented calculation worksheets with units, formulas, and live result gutters",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "author": "Nimbalyst",
       "categories": [
         "data"
@@ -194,10 +194,10 @@
         "filesystem"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.calc-sheets/1.0.3",
-      "checksum": "7a8821b6531fd65a845faf08592d39bb47a5b537f0ade0e03abe303f6bf25a60",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.calc-sheets/1.0.4",
+      "checksum": "23b57ec178bdc9726fd7bf26a6195c77ab87cf6778e0a25db5f5db5f3cb39336",
       "repositoryUrl": "",
-      "changelog": "1.0.3: Mix prose with formulas in a sheet, plus dependency security updates.\n1.0.2: The results column in a shared calc sheet stays in sync with the document.",
+      "changelog": "1.0.4: Calc sheets come along when a local wiki moves to a team.\n1.0.3: Mix prose with formulas in a sheet, plus dependency security updates.\n1.0.2: The results column in a shared calc sheet stays in sync with the document.",
       "tagline": "Reusable business-model worksheets with live results",
       "longDescription": "Open .calc.md files in a dedicated editor built for line-oriented assumptions, formulas, units, assertions, and quick business modeling. Mix calculations with narrative markdown source while live results stay focused in a calculator-style gutter.",
       "highlights": [
@@ -263,7 +263,7 @@
       "id": "com.nimbalyst.csv-spreadsheet",
       "name": "CSV Spreadsheet",
       "description": "Edit CSV files with a spreadsheet interface and formula support",
-      "version": "1.3.0",
+      "version": "1.4.0",
       "author": "Nimbalyst",
       "categories": [
         "data"
@@ -290,10 +290,10 @@
         "filesystem"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.csv-spreadsheet/1.3.0",
-      "checksum": "203b1f3984df2d9905f3b531880f490cc643cc15df2b0887f73cd1ff956f1362",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.csv-spreadsheet/1.4.0",
+      "checksum": "cd50cd91eb200fea286f1a5544ab17463548383ae25d57a96fd16a59b58c720c",
       "repositoryUrl": "",
-      "changelog": "1.3.0: Style any range of cells with bold, italic, underline, colors, and alignment; date formulas now do arithmetic; and formatting a shared sheet no longer overwrites a collaborator's.\n1.2.0: Date and time, checkbox, link, and tracker-item columns, more number and date formats, type detection, and type-aware sorting and filtering.\n1.1.3: Editing a shared spreadsheet in a browser no longer reports a save it did not make.\n1.1.2: A collaborator editing a cell stays visible while they type.\n1.1.1: Shared spreadsheets keep every edit.\n1.1.0: Formulas now compute live and survive a save, plus find and replace, per-column filters, selections that cross frozen columns, right-aligned numbers, and AI tools for analyzing data and applying formulas.\n1.0.2: See collaborator presence in shared spreadsheets, share selected cells with AI, and reopen shared documents more reliably.\n1.0.1: Collaborative editing support, currency/percent/number cell formatting, and full ISO date rendering.",
+      "changelog": "1.4.0: Borders, wrap, freeze and hide rows or columns, conditional formatting and data validation, formula autocomplete with click-to-insert references and named ranges, spreadsheet keyboard shortcuts and paste from other spreadsheet apps; undo is restored and shared sheets keep every row and concurrent edit.\n1.3.0: Style any range of cells with bold, italic, underline, colors, and alignment; date formulas now do arithmetic; and formatting a shared sheet no longer overwrites a collaborator's.\n1.2.0: Date and time, checkbox, link, and tracker-item columns, more number and date formats, type detection, and type-aware sorting and filtering.\n1.1.3: Editing a shared spreadsheet in a browser no longer reports a save it did not make.\n1.1.2: A collaborator editing a cell stays visible while they type.\n1.1.1: Shared spreadsheets keep every edit.\n1.1.0: Formulas now compute live and survive a save, plus find and replace, per-column filters, selections that cross frozen columns, right-aligned numbers, and AI tools for analyzing data and applying formulas.\n1.0.2: See collaborator presence in shared spreadsheets, share selected cells with AI, and reopen shared documents more reliably.\n1.0.1: Collaborative editing support, currency/percent/number cell formatting, and full ISO date rendering.",
       "tagline": "Visual CSV editing with formulas and column formatting",
       "longDescription": "Open CSV and TSV files in a full spreadsheet interface with formula support, column resizing, frozen rows/columns, and sortable headers. Edit data visually while the underlying CSV stays clean and git-friendly. Toggle to source mode to see and edit the raw text.",
       "highlights": [
@@ -717,7 +717,7 @@
       "id": "com.nimbalyst.mindmap",
       "name": "Nimbalyst Mindmap",
       "description": "A freeform spatial mindmap editor with AI-assisted editing",
-      "version": "1.0.5",
+      "version": "1.0.6",
       "author": "Nimbalyst",
       "categories": [
         "diagrams"
@@ -738,8 +738,8 @@
         "filesystem"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.mindmap/1.0.5",
-      "checksum": "a43d53b5bedba517ab2832f99e2230a62d59c2abc7e6a703220a71ab7303826f",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.mindmap/1.0.6",
+      "checksum": "ad09e8a057ce2137f4f4f172f89333da567648532a9dc5ae138f9dc8164a1e2a",
       "repositoryUrl": "",
       "changelog": "",
       "tagline": "Freeform spatial mindmap editor with AI-assisted editing",
@@ -892,7 +892,7 @@
       "id": "com.nimbalyst.planning",
       "name": "Planning",
       "description": "Structured planning and tracking with YAML frontmatter",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "author": "Nimbalyst",
       "categories": [
         "ai-tools"
@@ -913,10 +913,10 @@
         "ai"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.planning/1.0.2",
-      "checksum": "e9e8651ab27808e6e6bab49c83c710b305ac733eb2ae875da4937c67d9b2d47c",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.planning/1.0.3",
+      "checksum": "4483fc3dd5a0086dd50081d27f8d6e32886cbb444715dfdce0c3128c55ba8ed3",
       "repositoryUrl": "",
-      "changelog": "1.0.2: New /planning:nimbalyst-coach command reviews your project and recent sessions and suggests extensions, features, and agent-instruction changes.",
+      "changelog": "1.0.3: /implement keeps the plan checklist current as phases land, and the skill refers to the Wiki section by its new name.\n1.0.2: New /planning:nimbalyst-coach command reviews your project and recent sessions and suggests extensions, features, and agent-instruction changes.",
       "tagline": "Structured plan, implement, and tracker workflows for AI sessions",
       "longDescription": "Planning adds the structured workflows behind Nimbalyst's design, implementation, and tracker commands. Use it to create plan documents, execute them with progress tracking, and manage bugs, tasks, and decisions with consistent YAML-backed structure.",
       "highlights": [

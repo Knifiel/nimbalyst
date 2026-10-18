@@ -548,28 +548,6 @@ class NimbalystDaoTest {
     // ---------------------------------------------------------------------
 
     @Test
-    fun `projection repair replaces one row below the watermark and ignores stale duplicates and moved identities`() = runTest {
-        val repository = NimbalystRepository(db)
-        projectDao.upsertAll(listOf(project()))
-        sessionDao.upsertAll(listOf(session("s1")))
-        val old = message("m1", "s1", 1).copy(contentDecrypted = "elided")
-        repository.persistSessionMessages("s1", listOf(old, message("m10", "s1", 10)), "r:10", 10, 1L)
-        val repaired = old.copy(contentDecrypted = "complete schema", projectionJson = "{\"version\":1,\"revision\":11}")
-        repository.persistSessionMessages("s1", listOf(repaired), "r:11", null, 2L)
-        repository.persistSessionMessages("s1", listOf(old), "r:10", null, 3L)
-        assertEquals(repaired, messageDao.getByIds(listOf("m1")).single())
-        val newer = repaired.copy(contentDecrypted = "newer schema", projectionJson = "{\"version\":1,\"revision\":12}")
-        repository.persistSessionMessages("s1", listOf(newer, repaired), "r:12", null, 4L)
-        assertEquals(newer, messageDao.getByIds(listOf("m1")).single())
-        // A moved identity is skipped without rolling back the rest of the page.
-        val invalid = newer.copy(sequence = 2, projectionJson = "{\"version\":1,\"revision\":13}")
-        repository.persistSessionMessages("s1", listOf(invalid, message("m11", "s1", 11)), "r:13", null, 5L)
-        assertEquals(newer, messageDao.getByIds(listOf("m1")).single())
-        assertEquals(3, messageDao.countForSession("s1"))
-        assertEquals("r:13", syncStateDao.getByRoomId("s1")!!.lastCursor)
-    }
-
-    @Test
     fun `persistSessionMessages never moves the room watermark backwards`() = runTest {
         val repository = NimbalystRepository(db)
         projectDao.upsertAll(listOf(project()))

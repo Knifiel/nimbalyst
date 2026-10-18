@@ -57,6 +57,7 @@ tags: [ai-ide, cli]
 - `id`, `title`, `type` and `order` are reserved. Every other key is a field: a plain page's own fields (`status`, `owner`, `summary`, `tags`), or a typed page's fields as defined by its type.
 - `type` makes the page a typed page (a tracker item of that type). Without it the page is a plain page.
 - Unknown keys are kept on every write.
+- `paths` is a conventional field, not a reserved one: the code a page explains, as a list of repository-relative globs with `.gitignore` rules (`paths: [src/sync/**, packages/cli/src/mcp/*.ts, "!src/sync/generated/**"]`; `*`, `?`, `**` and `[...]` classes such as `[a-z]` or `[!ab]`; a glob with no slash matches at any depth, a leading `/` anchors it at the root, and a glob naming a folder covers everything in it). A glob starting with `!` takes back files earlier globs matched; the last glob that matches a file decides, so a later glob can put a file back even under a folder an earlier `!` took away (gitignore cannot). Quote a `!` glob in YAML. Backslash escapes are not supported: `\` reads as a folder separator.. A single string reads as a one-item list. Tools match it against changed files to find the pages a change affects (`nim mcp`'s `pagesForFiles`); nothing else depends on it, and it shows like any other field.
 - Legacy: a `trackerStatus:` block is read as `type` plus fields, with top-level keys winning. The first field write through the library flattens it into top-level keys. Other `<kind>Status:` blocks (`planStatus`, `decisionStatus`) are not interpreted; they read as ordinary fields.
 - A file without frontmatter is a valid page with no id yet (see Ids).
 
@@ -90,7 +91,7 @@ Readers report (but do not fix) names that differ only by case in one folder, wh
 
 ## Editor pages
 
-A page can also be a file of an editor type: a drawing (`.excalidraw`), mind map (`.mindmap`), data model (`.prisma`), mockup (`.mockup.html`), spreadsheet (`.csv`), calc sheet (`.calc.md`), canvas (`.canvas`), or any other type an installed extension can share. The file keeps its own extension and its content is exactly what that editor reads and writes; the format never adds anything to it.
+A page can also be a file of an editor type: a drawing (`.excalidraw`), mind map (`.mindmap`), data model (`.prisma`), mockup (`.mockup.html`), spreadsheet (`.csv`), calc sheet (`.calc.md`), canvas (`.canvas`), interactive HTML page (`.html`), or any other type an installed extension can share. The file keeps its own extension and its content is exactly what that editor reads and writes; the format never adds anything to it.
 
 ```
 Flow.excalidraw

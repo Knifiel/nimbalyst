@@ -41,6 +41,7 @@ import {
 } from '@nimbalyst/runtime/editor';
 import { $getRoot, $setSelection } from 'lexical';
 import { resolveDesktopCollabConfigForUri } from '../utils/collabDocumentOpener';
+import { collabPresenceName } from '../utils/collabPresenceName';
 import { getBodyDocCache, type BodyDocAcquisition, type BodyDocConfigFactory } from '../services/BodyDocCache';
 import { exportCollabRecoveryPlaintext, getCollabContentAdapter } from '@nimbalyst/collab-adapters';
 import { store } from '@nimbalyst/runtime/store';
@@ -253,7 +254,7 @@ export function useTrackerContentCollab({
       // no factory call) still has the right display name. The cache is
       // per-window; the same user owns every entry, so caching once is
       // safe.
-      userNameRef.current = config.userName || config.userEmail || 'Anonymous';
+      userNameRef.current = collabPresenceName(config);
       return {
         serverUrl: config.serverUrl,
         getJwt: config.getJwt,
@@ -350,7 +351,7 @@ export function useTrackerContentCollab({
       acquisition = acq;
       syncProviderRef.current = acq.syncProvider;
       acquisitionConfigRef.current = acq.config;
-      userNameRef.current = acq.config.userName || acq.config.userEmail || acq.config.teamMemberId;
+      userNameRef.current = collabPresenceName(acq.config);
       // `deferInitialSync` suppresses the immediate `sync(true)` that
       // CollabLexicalProvider normally fires on listener registration.
       // Instead, sync(true) fires only when the DocumentSyncProvider reaches

@@ -2377,3 +2377,31 @@ describe('EditorScreenshotWidget', () => {
     expect(dialog.parentElement).toBe(document.body);
   });
 });
+
+describe('VisualDisplayWidget', () => {
+  it('enlarges an image from outside the workspace using the bytes the thumbnail loaded', async () => {
+    const { VisualDisplayWidget } = await import('../CustomToolWidgets/VisualDisplayWidget');
+    const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    // nim-asset:// only serves workspace roots, so a /tmp path must not be
+    // handed to the lightbox as a URL; readFile can reach it.
+    const readFile = vi.fn(async () => ({ success: true, content: pixel }));
+    const message = makeToolMessage(
+      'mcp__nimbalyst__display_to_user',
+      { items: [
+        { description: 'Mockup A', image: { path: '/tmp/arch-mock/a.png' } },
+        { description: 'Mockup B', image: { path: '/tmp/arch-mock/b.png' } },
+      ] },
+      'ok',
+    );
+    render(
+      <Wrapper>
+        <VisualDisplayWidget message={message} isExpanded={false} onToggle={() => {}} sessionId="visual-lightbox" readFile={readFile} />
+      </Wrapper>
+    );
+
+    fireEvent.click(await screen.findByAltText('Mockup B'));
+    const enlarged = await screen.findByTestId('zoomable-image');
+    await waitFor(() => expect(enlarged.getAttribute('src')).toBe(`data:image/png;base64,${pixel}`));
+    expect(readFile).toHaveBeenCalledWith('/tmp/arch-mock/b.png');
+  });
+});

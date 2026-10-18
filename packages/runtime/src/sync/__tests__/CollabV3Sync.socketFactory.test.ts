@@ -138,13 +138,15 @@ describe('SyncConfig.createWebSocket', () => {
       const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify({ content: `message ${index}` })));
       return { id, sequence: index + 1, createdAt: 100 + index, source: 'user', direction: 'input', iv: Buffer.from(iv).toString('base64'), encryptedContent: Buffer.from(encrypted).toString('base64') };
     }));
-    // A row from a prior personal-key epoch can never decrypt; it must not
-    // hold the readable rows or the next page hostage (#1711 regression).
+    // A row from a prior personal-key epoch, or one the server blanked when
+    // chunked rows were retired, can never decrypt; it must not hold the
+    // readable rows or the next page hostage.
     const priorEpoch = { ...encryptedMessages[0], id: 'old0000000', sequence: 3, encryptedContent: Buffer.from('not ciphertext').toString('base64') };
-    socket.onmessage?.({ data: JSON.stringify({ type: 'syncResponse', messages: [...encryptedMessages, priorEpoch], hasMore: true, cursor: null, revisionCursor: 3 }) } as MessageEvent);
+    const blanked = { ...encryptedMessages[1], id: 'blank00000', sequence: 4, encryptedContent: '', iv: '' };
+    socket.onmessage?.({ data: JSON.stringify({ type: 'syncResponse', messages: [...encryptedMessages, priorEpoch, blanked], hasMore: true, cursor: '4' }) } as MessageEvent);
     await vi.waitFor(() => expect(messages).toHaveLength(2));
     expect(messages.map(message => [message.id, message.providerMessageId])).toEqual([[1, 'abcdef0123'], [2, 'abc9876543']]);
-    await vi.waitFor(() => expect(socket.send.mock.calls.map(([raw]) => JSON.parse(raw))).toContainEqual({ type: 'syncRequest', sinceRevision: 3 }));
+    await vi.waitFor(() => expect(socket.send.mock.calls.map(([raw]) => JSON.parse(raw))).toContainEqual({ type: 'syncRequest', sinceSeq: 4 }));
     off(); provider.disconnectAll();
   });
 
@@ -348,6 +350,38 @@ describe('SyncConfig.createWebSocket', () => {
     constructed[0].open();
 
     provider.disconnectAll();
+  });
+
+  it('logs a dropped session socket as one line that never contains the room URL or token', async () => {
+    const sockets: FakeWebSocket[] = [];
+    const provider = createCollabV3Sync({ ...baseConfig(), createWebSocket: url => {
+      const socket = new FakeWebSocket(url); sockets.push(socket); return socket as unknown as WebSocket;
+    } });
+    const lines: string[] = [];
+    const record = (...args: unknown[]) => { lines.push(args.map(arg => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' ')); };
+    vi.spyOn(console, 'log').mockImplementation(record);
+    vi.spyOn(console, 'error').mockImplementation(record);
+    vi.spyOn(console, 'warn').mockImplementation(record);
+    try {
+      await vi.waitFor(() => expect(sockets).toHaveLength(1)); sockets[0].open();
+      const connecting = provider.connect('dropped');
+      await vi.waitFor(() => expect(sockets).toHaveLength(2)); sockets[1].open(); await connecting;
+      lines.length = 0;
+
+      // Server- and runtime-provided text is never copied: not a URL, not a bare bearer token, not a title.
+      const bearer = 'Bearer eyJhbGciOiJIUzI1NiJ9.c2VjcmV0.c2lnbmF0dXJl';
+      const title = 'Q3 layoffs plan for Acme';
+      const errorEvent = Object.assign(new Event('error'), { message: `connect failed for ${sockets[1].url} with ${bearer}` });
+      sockets[1].onerror?.(errorEvent);
+      sockets[1].onclose?.({ code: 1006, reason: `${bearer} rejected: ${title}`, wasClean: false } as CloseEvent);
+
+      const mentions = lines.filter(line => line.includes('dropped'));
+      expect(mentions).toHaveLength(1);
+      expect(mentions[0]).toMatch(/code=1006 \(abnormal closure\).*reasonLength=\d+.*wasClean=false.*reachedOpen=true.*openFor=\d+ms.*error=other/);
+      expect(mentions[0]).toContain('reconnect on the next write or index reconnect');
+      const logged = lines.join('\n');
+      expect(logged).not.toMatch(/token|wss:\/\/|Bearer|eyJ|c2VjcmV0|layoffs|Acme/);
+    } finally { provider.disconnectAll(); }
   });
 });
 

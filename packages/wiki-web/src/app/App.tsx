@@ -21,7 +21,7 @@ import {
 import { createTrackerReferenceResolver, TrackersUIProvider } from '@nimbalyst/collab-bundle/trackers-ui';
 import { PageEditorServicesContext, type PageEditorServices } from './pageEditorServices';
 import { setWorkspaceFileLinkOpener } from '@nimbalyst/collab-bundle/editor';
-import { wikiApi } from '../api/client';
+import { wikiApi, wikiChanges } from '../api/client';
 import { LocalCollabHost, routePath } from '../host/LocalCollabHost';
 import type { LocalTrackerDataSource } from '../host/LocalTrackerDataSource';
 import { DraftStore, DraftStoreContext, prepareToLeave, resolveLeave, type LeaveChoice, type LeaveDecision } from './drafts';
@@ -29,6 +29,8 @@ import { PageView, SearchView, TypedPageView, TypesView, TypeTableView, type Pag
 import { WikiCreateMenu } from './WikiCreateMenu';
 import { setWikiCanvasContext } from '../editors/canvas/WikiCanvasCard';
 import { renderWikiFileEmbed } from '../editors/WikiFileEmbed';
+import { setWikiHtmlNavigator } from '../editors/html/htmlPages';
+import { openWikiHtmlLink } from '../editors/html/wikiHtmlNavigation';
 
 type Route = ViewRoute;
 
@@ -51,6 +53,13 @@ function pathOf(route: Route): string {
 }
 
 type Leaving = { reason: 'conflict' | 'error'; proceed: () => void };
+
+/** Whether the wiki server answers; it stops when the agent session that started it ends. */
+function useServerReachable(): boolean {
+  const [reachable, setReachable] = useState(() => wikiChanges.isReachable());
+  useEffect(() => wikiChanges.subscribe(() => setReachable(wikiChanges.isReachable())), []);
+  return reachable;
+}
 
 function useRoute(drafts: DraftStore): [Route, (route: Route, options?: { newTab?: boolean }) => void, Leaving | null, (choice: LeaveChoice) => void] {
   const [route, setRoute] = useState<Route>(parseLocation);
@@ -159,6 +168,27 @@ export function App({ root, projectRoot, trackers, module }: AppProps) {
     [host, trackerReferences, drafts],
   );
 
+  // A link clicked inside an HTML page; with no embedding page, the open page.
+  const routeRef = useRef(route);
+  routeRef.current = route;
+  useEffect(() => {
+    setWikiHtmlNavigator((fromPageId, href, options) => {
+      const current = routeRef.current;
+      const from = fromPageId ?? (current.kind === 'page' || current.kind === 'item' ? current.id : null);
+      openWikiHtmlLink(href, options, from, {
+        resolveLink: (pageId, link) => host.resolveLink(pageId, link),
+        navigate,
+        itemIdForKey: (key) => {
+          const resolved = trackerReferences.resolve(key);
+          return resolved.state === 'resolved' ? resolved.item.id : null;
+        },
+        openExternal: (link) => window.open(link, '_blank', 'noopener'),
+        notice: setNotice,
+      });
+    });
+    return () => setWikiHtmlNavigator(null);
+  }, [host, navigate, trackerReferences]);
+
   useEffect(() => setWikiCanvasContext({
     wikiRoot: root,
     projectRoot,
@@ -219,6 +249,7 @@ function Shell({
   const typeResolver = module.useBrowserTypeResolver('team');
   const { documents } = useCollabPagesState();
   const [createMenu, setCreateMenu] = useState<CollabSidebarCreateMenu | null>(null);
+  const reachable = useServerReachable();
 
   // Home is the first top-level page, as `nim wiki init` writes one.
   const home = useMemo(
@@ -272,6 +303,11 @@ function Shell({
         </div>
       </aside>
       <main className="wiki-web-main flex min-w-0 flex-1 flex-col overflow-auto select-text">
+        {reachable ? null : (
+          <div className="wiki-web-server-down border-b border-nim bg-nim-secondary px-4 py-2 text-xs text-nim" role="alert">
+            The wiki server stopped, so changes made here are not saved. Ask your agent to open the wiki in the browser again, or run <code>nim wiki serve</code>; this page reconnects on its own.
+          </div>
+        )}
         {notice ? (
           <div className="wiki-web-notice flex items-start gap-2 border-b border-nim bg-nim-secondary px-4 py-2 text-xs text-nim" role="alert">
             <span className="flex-1">{notice}</span>

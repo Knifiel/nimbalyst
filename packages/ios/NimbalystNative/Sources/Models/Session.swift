@@ -51,6 +51,9 @@ public struct Session: Codable, Identifiable, Hashable, Sendable {
     public var draftInput: String?
     /// Epoch ms when draftInput was last updated by the sending device
     public var draftUpdatedAt: Int?
+    /// The desktop lists this session but withholds its transcript because its
+    /// project is not enabled for sync. Comes from client metadata; absent is false.
+    public var transcriptSyncDisabled: Bool
 
     /// Context usage as a percentage (0-100), or nil if no context info available.
     public var contextUsagePercent: Int? {
@@ -108,7 +111,8 @@ public struct Session: Codable, Identifiable, Hashable, Sendable {
         lastReadAt: Int? = nil,
         lastMessageAt: Int? = nil,
         draftInput: String? = nil,
-        draftUpdatedAt: Int? = nil
+        draftUpdatedAt: Int? = nil,
+        transcriptSyncDisabled: Bool = false
     ) {
         self.id = id
         self.projectId = projectId
@@ -142,6 +146,7 @@ public struct Session: Codable, Identifiable, Hashable, Sendable {
         self.lastMessageAt = lastMessageAt
         self.draftInput = draftInput
         self.draftUpdatedAt = draftUpdatedAt
+        self.transcriptSyncDisabled = transcriptSyncDisabled
     }
 }
 
@@ -158,6 +163,7 @@ extension Session: FetchableRecord, PersistableRecord {
         case contextTokens, contextWindow
         case createdAt, updatedAt, lastSyncedSeq
         case lastReadAt, lastMessageAt, draftInput, draftUpdatedAt
+        case transcriptSyncDisabled
     }
 
     /// Association to parent project.
