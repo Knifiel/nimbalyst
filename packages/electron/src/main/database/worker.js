@@ -3268,8 +3268,8 @@ class PGLiteWorker {
       throw error;
     }
 
-    // Migration: worktree groups (schema version 53).
-    // Mirror of SQLite migration 0053_worktree_groups.sql -- keep in sync.
+    // Migration: worktree groups (fork-only schema version 1001).
+    // Mirror of SQLite migration 1001_worktree_groups.sql -- keep in sync.
     // A nullable column and a partial index, IF NOT EXISTS, so rerunning it
     // every launch is safe.
     try {

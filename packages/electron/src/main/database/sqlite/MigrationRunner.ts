@@ -40,7 +40,7 @@ export interface MigrationResult {
  * new schema changes go in subsequent migrations (0002_..., 0003_...).
  */
 export function getMigrations(schemaDir: string): Migration[] {
-  return [
+  const upstreamMigrations: Migration[] = [
     {
       version: 1,
       name: 'initial',
@@ -253,8 +253,8 @@ export function getMigrations(schemaDir: string): Migration[] {
     { version: 50, name: 'personal_pages_one_tree', sqlFile: path.join(schemaDir, '0050_personal_pages_one_tree.sql') },
     { version: 51, name: 'personal_pages_parents_and_order', sqlFile: path.join(schemaDir, '0051_personal_pages_parents_and_order.sql') },
     { version: 52, name: 'personal_pages_fields', sqlFile: path.join(schemaDir, '0052_personal_pages_fields.sql') },
-    { version: 53, name: 'worktree_groups', sqlFile: path.join(schemaDir, '0053_worktree_groups.sql') },
   ];
+  return [...upstreamMigrations, ...getForkMigrations(schemaDir)];
 }
 
 export function runMigrations(db: SqliteDatabase, schemaDir: string): MigrationResult {
@@ -265,6 +265,7 @@ export function runMigrations(db: SqliteDatabase, schemaDir: string): MigrationR
       applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
   `);
+  relabelLegacyForkMigrations(db);
 
   const appliedRows = db
     .prepare('SELECT version FROM _migrations ORDER BY version ASC')
@@ -328,4 +329,46 @@ export function runMigrations(db: SqliteDatabase, schemaDir: string): MigrationR
   }
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Fork-only migrations (Knifiel/nimbalyst integration builds).
+//
+// Upstream numbers its migrations 1, 2, 3, ...; fork migrations start at 1001
+// so the two sequences never meet, and they stay out of upstream's list above
+// so an upstream migration merges without touching them. Each is a plain
+// sqlFile named `<version>_<name>.sql`: packages/node derives its list from
+// the filenames, and its migrations.test.ts compares that with getMigrations().
+// ---------------------------------------------------------------------------
+
+export function getForkMigrations(schemaDir: string): Migration[] {
+  return [
+    { version: 1001, name: 'worktree_groups', sqlFile: path.join(schemaDir, '1001_worktree_groups.sql') },
+  ];
+}
+
+/**
+ * Fork builds up to 62d5d957b recorded worktree_groups as version 53, the
+ * number upstream later gave index_hygiene. Such a row moves to its fork
+ * version before the run, so upstream's 53 applies and worktree_groups (an
+ * ALTER TABLE that cannot run twice) is not applied again. Matching on the
+ * name as well leaves every other database alone.
+ */
+const LEGACY_FORK_VERSIONS = [{ legacyVersion: 53, version: 1001, name: 'worktree_groups' }];
+
+function relabelLegacyForkMigrations(db: SqliteDatabase): void {
+  const find = db.prepare('SELECT version FROM _migrations WHERE version = @version AND name = @name');
+  for (const m of LEGACY_FORK_VERSIONS) {
+    const legacy = { version: m.legacyVersion, name: m.name };
+    if (!find.get(legacy)) continue;
+    db.transaction(() => {
+      // Another connection may have moved it since the check above.
+      if (!find.get(legacy)) return;
+      if (find.get({ version: m.version, name: m.name })) {
+        db.prepare('DELETE FROM _migrations WHERE version = @version AND name = @name').run(legacy);
+      } else {
+        db.prepare('UPDATE _migrations SET version = @to WHERE version = @version AND name = @name').run({ ...legacy, to: m.version });
+      }
+    }).immediate();
+  }
 }
