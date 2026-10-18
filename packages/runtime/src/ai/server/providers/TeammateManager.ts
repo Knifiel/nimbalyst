@@ -6,7 +6,7 @@
  */
 
 import { query, type SDKUserMessage, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-
+import { afterCommitProposalSettles } from '../commitProposalInFlight';
 // Query interface not properly exported by SDK, so we define it inline
 interface Query extends AsyncGenerator<SDKMessage, void> {
   streamInput(stream: AsyncIterable<any>): Promise<void>;
@@ -1050,8 +1050,8 @@ export class TeammateManager {
       summary,
     });
 
-    const formattedMessage = `[Teammate message from "${teammateName}"]\n\n${content}`;
-    this.deps.interruptWithMessage(formattedMessage).catch(err => {
+    // #1682: never interrupt the lead mid-commit; the message stays queued until the call settles.
+    afterCommitProposalSettles(sessionId, () => this.deps.interruptWithMessage(`[Teammate message from "${teammateName}"]\n\n${content}`)).catch(err => {
       console.warn(`[MANAGED-TEAMMATE] Failed to interrupt lead with teammate message:`, err);
     });
 

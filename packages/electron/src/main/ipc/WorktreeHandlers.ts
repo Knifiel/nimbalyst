@@ -522,7 +522,7 @@ export function registerWorktreeHandlers(): void {
      * trackers key off it) -- only the git operations move to this repo.
      */
     const sourceRepo =
-      (options?.sourceFolderPath ? (await listReposForRoot(options.sourceFolderPath))[0] ?? null : null)
+      (options?.sourceFolderPath ? (await listReposForRoot(options.sourceFolderPath))[0] : undefined)
       ?? (await resolveDefaultRepo(workspacePath))
       ?? workspacePath;
 

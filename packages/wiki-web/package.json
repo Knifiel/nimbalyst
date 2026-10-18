@@ -20,7 +20,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "check:size": "node scripts/check-size.mjs",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "node ../../scripts/tsc-native.mjs --noEmit -p tsconfig.json",
     "test": "vitest run"
   },
   "devDependencies": {
@@ -65,7 +65,7 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "tailwindcss": "^3.4.19",
-    "typescript": "^5.5.0",
+    "typescript": "^6.0.3",
     "vite": "^7.1.12",
     "vitest": "4.1.11",
     "y-protocols": "^1.0.7",

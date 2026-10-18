@@ -161,12 +161,38 @@ describe('ClaudeCodeProvider canUseTool under an Agent-verified lead', () => {
   it('asks the permission service to wait for the user on the lead query', async () => {
     const { requestToolPermission, handler, call } = autoLeadInBypassAll();
     expect(await call(handler())).toMatchObject({ behavior: 'deny' });
-    expect(requestToolPermission).toHaveBeenCalledWith(expect.objectContaining({ requiresUserDecision: true }));
+    expect(requestToolPermission).toHaveBeenCalledWith(expect.objectContaining({ requiresUserDecision: 'escalated' }));
   });
 
   it('keeps the bypass-all shortcut for a teammate query running in default mode', async () => {
     const { requestToolPermission, handler, call } = autoLeadInBypassAll();
     expect(await call(handler('teammate-a', 'default'))).toMatchObject({ behavior: 'allow' });
     expect(requestToolPermission).not.toHaveBeenCalled();
+  });
+});
+
+// #1741: a hook "ask" on a compound command is answered as a whole. Splitting it would let
+// sub-commands approved earlier this session run without the prompt the hook asked for.
+describe('ClaudeCodeProvider canUseTool with a PreToolUse hook ask', () => {
+  afterEach(() => {
+    BaseAgentProvider.setTrustChecker(null);
+    vi.restoreAllMocks();
+  });
+
+  it('prompts once for the whole compound command even when its parts are approved', async () => {
+    const requestToolPermission = vi.fn(async () => ({ decision: 'deny' as const, scope: 'once' as const }));
+    const provider = new ClaudeCodeProvider();
+    Object.assign(provider as unknown as Record<string, unknown>, {
+      currentMode: 'agent',
+      permissionService: { requestToolPermission, getSessionApprovedPatterns: () => new Set(['Bash(ls:*)', 'Bash(touch:*)']) },
+    });
+    vi.spyOn(provider as any, 'logAgentMessage').mockResolvedValue(undefined);
+    trustIs({ trusted: true, mode: 'allow-all' });
+    const canUseTool = (provider as any).createCanUseToolHandler('session', '/proj', '/proj');
+    const command = 'ls && touch /tmp/ask-probe-9';
+    const result = await canUseTool('Bash', { command }, { signal: new AbortController().signal, decisionReasonType: 'hook' });
+    expect(result).toMatchObject({ behavior: 'deny' });
+    expect(requestToolPermission).toHaveBeenCalledTimes(1);
+    expect(requestToolPermission).toHaveBeenCalledWith(expect.objectContaining({ toolInput: { command }, requiresUserDecision: 'hook-ask' }));
   });
 });

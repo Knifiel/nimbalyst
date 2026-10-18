@@ -26,7 +26,7 @@
   "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "node ../../scripts/tsc-native.mjs -p tsconfig.json --noEmit",
     "test": "vitest run",
     "prepublishOnly": "pnpm run build"
   },
@@ -36,7 +36,7 @@
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.0.0",
-    "typescript": "^5.0.0",
+    "typescript": "^6.0.3",
     "vitest": "4.1.11"
   }
 }

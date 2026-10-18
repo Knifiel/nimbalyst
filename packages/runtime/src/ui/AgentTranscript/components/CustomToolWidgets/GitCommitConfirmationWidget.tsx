@@ -546,6 +546,8 @@ export const GitCommitConfirmationWidget: React.FC<CustomToolWidgetProps> = ({
   // The repo this proposal commits into, resolved in the main process from the
   // files. One proposal is one repo, so this is a single value.
   const repoPath: string | undefined = args.repoPath;
+  const targetWorktree: { path: string; branch: string | null } | undefined =
+    args.targetWorktree && typeof args.targetWorktree.path === 'string' ? args.targetWorktree : undefined;
   const repoLabel = useMemo(
     () => (repoPath ? repoPath.split('/').filter(Boolean).pop() : undefined),
     [repoPath]
@@ -1001,6 +1003,17 @@ export const GitCommitConfirmationWidget: React.FC<CustomToolWidgetProps> = ({
       </div>
 
       <div className="git-commit-widget__content p-2 flex flex-col gap-3">
+        {/* #1756: an explicit sibling worktree, not the session's checkout.
+            Never auto-committed, so the user sees where it lands first. */}
+        {targetWorktree && (
+          <div className="git-commit-widget__target-worktree flex items-start gap-1.5 p-2 rounded border border-[var(--nim-warning)] bg-[var(--nim-bg)] text-[0.8125rem] text-[var(--nim-text)] select-text">
+            <MaterialSymbol icon="alt_route" size={14} className="text-[var(--nim-warning)] mt-0.5" />
+            <span className="min-w-0 break-all">
+              Commits to another worktree{targetWorktree.branch ? <> on branch <code>{targetWorktree.branch}</code></> : ' (detached HEAD)'} at <code>{targetWorktree.path}</code>
+            </span>
+          </div>
+        )}
+
         {/* Reasoning */}
         {reasoning && (
           <div className="git-commit-widget__reasoning flex flex-col gap-1.5">

@@ -30,6 +30,7 @@ vi.mock('../../services/GitOperationLogService', () => ({
   runGitCommandStreaming: boundary.streaming,
   withGitOperationLog: vi.fn(),
 }));
+vi.mock('../../services/ai/proposalCommitTarget', () => ({ resolveProposalCommitPaths: vi.fn() }));
 import { registerGitHandlers } from '../GitHandlers';
 
 beforeEach(() => {

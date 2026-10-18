@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Agents can propose a commit into another worktree of the session's repository; the commit card shows its branch and path and always asks for approval on desktop
+- In the iOS and Android apps, a synced Markdown file now shows an embedded `.html` diagram live instead of as a link; document sync now carries `.html` files so the phone has them
 - New worktrees can be set up automatically: chosen project files such as `.env` are copied in and a setup command runs in a terminal of the worktree (Settings > Project > Worktree Setup)
 - The new-worktree dialog can branch a project's nested clones together with it: one task folder holds a worktree of each chosen clone at its own path, on one branch, with a repository picker in the Git panel, and is archived or deleted as a unit
 - Approving a plan can start its implementation in a new worktree, and sessions an agent spawns into a new worktree get the repositories last picked in the new-worktree dialog and the project's worktree setup, starting once the setup command finishes
@@ -18,18 +20,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- On the SQLite database, tool output older than 30 days in agent transcripts is now replaced with a placeholder by a daily background pass; your prompts, agent replies and tool calls are kept. Shrinking the file on disk is still the Vacuum action in the database dashboard
+- Completed and failed queued prompts older than 30 days are now deleted automatically
+- Old document history is now pruned once a day while the app stays open, and the pruning runs after the first window loads instead of during startup
+- Document history no longer stores snapshots of images and other binary files
+- Saving a tracker item's body no longer keeps a full copy of every earlier version in the local database; on the SQLite database, copies already stored are removed by a daily background pass. The original body from creation and the latest body are kept
+- Editing a tracker item now shortens the before and after values of its older activity entries to the 500-character limit new entries already use, so items edited before that limit stop carrying whole old descriptions in every save
+- When a project with document sync connects or reconnects, only files whose size or modification time changed since they were last read are read and hashed again, instead of every synced file. The first connect after updating still reads every file once
+- Saving a synced document without changing its content no longer uploads it again
 - A worktree of a repository cloned inside the project uses the project's agent trust instead of asking again; the clone opened on its own still asks
 
 ### Fixed
 <!-- Bug fixes go here -->
+- The local slow-query log is now capped at 2,000 rows instead of growing past its limit
+- The expanded tray panel reads each session's latest reply from an index instead of scanning every assistant message in the database, which could stall other database work for seconds on large histories
+- Session search now finds error messages from Codex sessions; on the SQLite database, existing Codex messages are relabeled once by a background pass
 - With "Allow everything" and Agent-verified checks on, a hook that asks for approval now waits for your answer instead of letting the tool run
 - A file watcher hitting the open-file limit no longer opens a blocking error dialog, which could keep the app from starting with many projects restored
 - The tray menu no longer throws an error dialog when a settings read fails, and projects without a `.mcp.json` no longer leak a folder watcher each time they start
 - Keep All and Revert All on an open Markdown file now write the agent's or the original bytes exactly when you haven't edited during the review, instead of re-saving the whole file through the editor, which broke front matter and `$` math
 - Reloading a Markdown file open in source mode after reviewing agent changes no longer throws an error
+- A hook that asks for approval now always prompts, even when the tool was approved for the session, matches a saved Always rule, or would be allowed by the current permission mode
+- Sending a queued prompt now, an orchestrator interrupt, or a teammate message no longer cuts off a commit in progress, and a commit that timed out waiting for the git lock now reports whether it actually committed
 - Commit proposals from Codex sessions no longer fail with "Cannot identify this exact commit proposal"
 - A Claude Code session no longer keeps showing "Waiting for your response" after you answer its question while it carries on working.
 - A prompt whose send failed, or a retried copy of it, no longer stays at the bottom of the transcript below later replies
+- The macOS Window menu now drops a project when you close its window and checks the window that has focus
+- The Pages sidebar now highlights the open page when it is a typed page in a local wiki or sits under a typed page, opening the collapsed rows above it
 - A worktree of a repository cloned inside the project is created next to the project instead of inside it, and the new-worktree dialog names the repository it branches from.
 - Archiving or deleting a worktree no longer deletes another repository's checkout of the same project that sits inside the worktree's folder
 - Archiving or deleting a worktree no longer deletes a folder or branch its repository does not own (another repository's worktree, or a moved, copied, locked or nested checkout), and no longer prunes the repository's other worktrees.

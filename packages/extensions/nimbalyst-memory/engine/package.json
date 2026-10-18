@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node ../../../../scripts/tsc-native.mjs --noEmit",
     "serve": "node dist/serve.js"
   },
   "dependencies": {
@@ -29,6 +29,6 @@
     "@types/better-sqlite3": "*",
     "@types/js-yaml": "*",
     "@types/node": "*",
-    "typescript": "^5.0.0"
+    "typescript": "^6.0.3"
   }
 }

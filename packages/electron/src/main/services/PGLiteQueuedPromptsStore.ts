@@ -200,6 +200,9 @@ function rowToQueuedPrompt(row: any): QueuedPrompt {
   };
 }
 
+/** Rows deleted per statement in `cleanup`, so a first prune of a large backlog never holds the worker. */
+const CLEANUP_BATCH_ROWS = 1000;
+
 export function createPGLiteQueuedPromptsStore(
   db: PGliteLike,
   ensureDbReady?: EnsureReadyFn
@@ -617,18 +620,26 @@ export function createPGLiteQueuedPromptsStore(
 
       const cutoffDate = new Date(Date.now() - olderThanMs);
 
-      const { rows } = await db.query<{ count: string }>(
-        `WITH deleted AS (
-           DELETE FROM queued_prompts
-           WHERE status IN ('completed', 'failed')
-             AND completed_at < $1
-           RETURNING 1
-         )
-         SELECT COUNT(*) as count FROM deleted`,
-        [cutoffDate]
-      );
+      // Bounded batches of plain DELETE ... RETURNING, which both PGLite and
+      // SQLite accept (a data-modifying CTE is Postgres-only). Only terminal
+      // rows are eligible; pending and executing prompts are never touched.
+      let count = 0;
+      for (;;) {
+        const { rows } = await db.query<{ id: string }>(
+          `DELETE FROM queued_prompts
+           WHERE id IN (
+             SELECT id FROM queued_prompts
+             WHERE status IN ('completed', 'failed')
+               AND completed_at < $1
+             LIMIT $2
+           )
+           RETURNING id`,
+          [cutoffDate, CLEANUP_BATCH_ROWS]
+        );
+        count += rows.length;
+        if (rows.length < CLEANUP_BATCH_ROWS) break;
+      }
 
-      const count = parseInt(rows[0]?.count || '0', 10);
       if (count > 0) {
         console.log(`[QueuedPromptsStore] Cleaned up ${count} old prompts`);
       }

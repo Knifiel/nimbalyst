@@ -343,7 +343,7 @@
     "build": "pnpm run build:node && vite build",
     "build:node": "pnpm --filter @nimbalyst/collab-protocol run build && tsc -p tsconfig.node.json && node scripts/add-node-extensions.mjs",
     "clean": "rm -rf dist dist-node",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "node ../../scripts/tsc-native.mjs --noEmit"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.20.0",
@@ -462,7 +462,7 @@
     "jsdom": "^26.1.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "typescript": "^5.5.0",
+    "typescript": "^6.0.3",
     "vite-plugin-dts": "^4.5.4",
     "vite-plugin-static-copy": "^3.1.4"
   }

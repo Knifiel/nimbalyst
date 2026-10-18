@@ -86,3 +86,20 @@ it('treats a push to a server that does not advertise acks as stored, including 
   expect(ws.sent.map((m) => m.type)).toEqual(['fileContentPush', 'fileContentBatchPush']);
   provider.disconnectAll();
 });
+
+it('asks the manifest builder for a full rehash only on an explicit resync', async () => {
+  vi.stubGlobal('WebSocket', FakeSocket);
+  const encryptionKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  const provider = new ProjectSyncProvider({
+    serverUrl: 'https://sync.test', orgId: 'org', personalMemberId: 'member' as PersonalMemberId,
+    encryptionKey, getJwt: async () => 'jwt' as PersonalJwt,
+  });
+  const builder = vi.fn(async (_opts: { fullRehash: boolean }) => []);
+  await provider.connect('proj', builder);
+  FakeSocket.last.onopen!();
+  await vi.waitFor(() => expect(builder).toHaveBeenCalledTimes(1));
+  await provider.resync('proj');
+  await provider.resync('proj', { fullRehash: true });
+  expect(builder.mock.calls.map(([opts]) => opts.fullRehash)).toEqual([false, false, true]);
+  provider.disconnectAll();
+});

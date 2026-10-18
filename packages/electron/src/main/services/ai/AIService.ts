@@ -96,6 +96,8 @@ import { dispatchQueuedPromptToClaudeCli } from './claudeCliQueueDispatch';
 import { publishQueuedPromptClaim } from './queuedPromptClaimEvents';
 import { canDispatchIntoDrain, isLeadTurnPending } from './drainFollowUp';
 import { hasLiveInteractivePrompt } from '../../mcp/tools/interactivePromptLiveness';
+import { isCommitProposalInFlight } from '@nimbalyst/runtime/ai/server/commitProposalInFlight';
+import { deferInterruptDuringCommit } from './commitInterruptDeferral';
 import { ensureClaudeCliSession } from './claudeCliLauncherSingleton';
 import {
   resolveProviderWorkflowCatalog,
@@ -138,6 +140,8 @@ export interface InterruptCurrentTurnResult {
   method?: 'interrupt' | 'abort' | 'terminal-ctrl-c';
   /** True when the session was forced idle because no completion event could arrive. */
   forcedIdle?: boolean;
+  /** #1682: held until the in-flight commit proposal call settles, then replayed. */
+  deferred?: 'commit-in-flight';
 }
 
 export class AIService {
@@ -450,6 +454,7 @@ export class AIService {
         isAwaitingUserInput: (id) =>
           getSessionStateManager().getSessionState(id)?.status === 'waiting_for_input'
           || hasLiveInteractivePrompt(id),
+        isCommitProposalInFlight,
         resolveWindow: (path, allowAutoOpen) =>
           this.queueWindowResolver.resolve(path, { allowAutoOpen }),
         failAllPending: async (id, errorMessage) => {
@@ -492,6 +497,20 @@ export class AIService {
     }
 
     const { AISessionsRepository } = await import('@nimbalyst/runtime/storage/repositories/AISessionsRepository');
+    // #1682: an interrupt mid-commit makes the SDK report a rejection while the
+    // commit lands. Hold it and replay the send-now once the call settles.
+    if (deferInterruptDuringCommit(sessionId, {
+      hasPendingPrompts: async (id) => (await (await import('../RepositoryManager')).getQueuedPromptsStore().listPending(id)).length > 0,
+      interrupt: (id) => this.interruptCurrentTurn(id),
+      drive: async (id) => {
+        const row = await AISessionsRepository.get(id);
+        const path = row?.worktreePath || row?.workspacePath;
+        if (path) await this.driveQueuedPrompts(id, path, 'send-now');
+      },
+      logWarn: (message) => logger.main.warn(message),
+    })) {
+      return { success: false, deferred: 'commit-in-flight', error: 'A commit proposal is in progress; the interrupt runs when it settles.' };
+    }
     const session = await AISessionsRepository.get(sessionId);
     if (!session) {
       return { success: false, error: 'Session not found' };

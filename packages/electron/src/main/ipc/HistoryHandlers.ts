@@ -10,6 +10,7 @@ import { dirtyEditorRegistry } from '../services/DirtyEditorRegistry';
 import { ProjectFileService } from '../services/ProjectFileService';
 import { jsonKeyAccessor } from '../database/jsonKeyExpr';
 import { reconcilePendingTagsForFile } from '../history/pendingTagReconciler';
+import { scheduleDailyMaintenance } from '../services/databaseRetentionMaintenance';
 import type { ProjectFileEdit, ProjectFileWriteReceipt } from '@nimbalyst/runtime';
 
 // Initialize history manager
@@ -62,6 +63,8 @@ export async function registerHistoryHandlers() {
 
     // Initialize history manager
     await historyManager.initialize();
+    // Age and per-file retention: after first-usable, then daily while open.
+    scheduleDailyMaintenance('document-history-retention', () => historyManager.cleanup());
 
     safeHandle('project-fs:read', async (event, paths: string[]) => {
         return projectFiles.read(getAuthorizedWorkspaceRoot(event), paths);

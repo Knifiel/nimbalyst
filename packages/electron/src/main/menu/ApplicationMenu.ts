@@ -29,6 +29,7 @@ import { existsSync } from 'fs';
 import * as fs from 'fs';
 import { windowStates, createWindow, findWindowByFilePath, getWindowId } from '../window/WindowManager';
 import { createAboutWindow } from '../window/AboutWindow';
+import { installWindowListMenuRefresh } from './windowListMenuRefresh';
 import { createWorkspaceManagerWindow } from '../window/WorkspaceManagerWindow.ts';
 import { launchTutorialFromMenu } from './helpMenuActions';
 import {
@@ -2044,6 +2045,10 @@ registerOrganizationMenuRebuild(() => { void updateApplicationMenu(); });
 // Rebuild when the organization window gains or loses focus, so the Messages
 // menu (and the Cmd+K / Cmd+F accelerators it borrows) follows the key window.
 registerTeamManagementFocusChange(() => { void updateApplicationMenu(); });
+
+// Rebuild when windows open, close, or take focus, so the Window menu's
+// project list and checkmark match the real windows.
+installWindowListMenuRefresh(app, () => { void updateApplicationMenu(); });
 
 // Update application menu
 export async function updateApplicationMenu() {

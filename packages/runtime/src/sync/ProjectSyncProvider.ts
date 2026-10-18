@@ -64,6 +64,13 @@ export interface ProjectSyncManifestFile {
   yjsSeq: number;
 }
 
+/**
+ * Builds the manifest from current disk. `fullRehash` asks the builder to
+ * re-read every file instead of reusing hashes cached by size + mtime; only an
+ * explicit resync passes it.
+ */
+export type ProjectSyncManifestBuilder = (opts: { fullRehash: boolean }) => Promise<ProjectSyncManifestFile[]>;
+
 export interface ProjectSyncResponse {
   updatedFiles: ProjectSyncFileUpdate[];
   newFiles: ProjectSyncFileUpdate[];
@@ -151,7 +158,7 @@ export class ProjectSyncProvider {
   // Per-project manifest builder. Called on every (re)connect so the server
   // always diffs against *current* disk state, never a stale startup snapshot
   // (NIM-853, Layer 1).
-  private manifestProviders = new Map<string, () => Promise<ProjectSyncManifestFile[]>>();
+  private manifestProviders = new Map<string, ProjectSyncManifestBuilder>();
   private pendingPushes = new Map<string, PendingPush>(); // requestId -> pending ack
   // Whether the server behind a socket acks pushes, learned from its first
   // projectSyncResponse. Absent until then.
@@ -170,7 +177,7 @@ export class ProjectSyncProvider {
 
   // MARK: - Connection
 
-  async connect(projectId: string, getManifest: () => Promise<ProjectSyncManifestFile[]>): Promise<void> {
+  async connect(projectId: string, getManifest: ProjectSyncManifestBuilder): Promise<void> {
     if (this.connections.has(projectId)) return;
 
     // Remember the builder so reconnects re-announce fresh disk state.
@@ -263,18 +270,19 @@ export class ProjectSyncProvider {
    * Re-announce current disk state so the server re-offers what this client
    * lacks, through the normal receive path (timestamps, conflicts, deletes).
    * No-op when the project is not connected; the next connect does the same.
+   * `fullRehash` re-reads every file rather than trusting cached hashes.
    */
-  resync(projectId: string): Promise<void> {
-    return this.sendFreshSyncRequest(projectId);
+  resync(projectId: string, opts: { fullRehash?: boolean } = {}): Promise<void> {
+    return this.sendFreshSyncRequest(projectId, opts.fullRehash === true);
   }
 
   /** Rebuild the manifest from current disk state and send the sync request. */
-  private async sendFreshSyncRequest(projectId: string): Promise<void> {
+  private async sendFreshSyncRequest(projectId: string, fullRehash = false): Promise<void> {
     const getManifest = this.manifestProviders.get(projectId);
     if (!getManifest) return;
     let manifest: ProjectSyncManifestFile[];
     try {
-      manifest = await getManifest();
+      manifest = await getManifest({ fullRehash });
     } catch (err) {
       console.error(`[ProjectSync] Failed to build manifest for ${projectId}:`, err);
       return;

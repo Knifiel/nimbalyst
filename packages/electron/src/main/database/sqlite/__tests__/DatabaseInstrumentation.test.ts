@@ -1,11 +1,14 @@
+// @vitest-environment node
 /**
  * Pure-logic tests for DatabaseInstrumentation. No native binding; mock the
  * SQLite handle so this runs even when better-sqlite3 isn't installed.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   DatabaseInstrumentation,
+  SLOW_QUERY_PRUNE_EVERY,
+  SLOW_QUERY_SHAPE_MAX_CHARS,
   extractCallSite,
   extractPrimaryTable,
   normalizeSql,
@@ -130,5 +133,42 @@ describe('DatabaseInstrumentation aggregation', () => {
     inst.reset();
     expect(inst.getSnapshot().byShape).toHaveLength(0);
     expect(inst.getSnapshot().totalQueries).toBe(0);
+  });
+});
+
+describe('DatabaseInstrumentation slow-query persistence', () => {
+  function bindFake(inst: DatabaseInstrumentation) {
+    const insert = vi.fn();
+    const prune = vi.fn();
+    const db = {
+      exec: vi.fn(),
+      pragma: vi.fn(() => 0),
+      prepare: vi.fn((sql: string) => ({ run: sql.includes('DELETE') ? prune : insert })),
+    };
+    inst.bind(db as never);
+    return { insert, prune };
+  }
+
+  it('prunes deterministically to the 2,000-row default cap, not on a coin flip', () => {
+    const inst = new DatabaseInstrumentation({ sampleRate: 0, slowQueryThresholdMs: 10 });
+    const { insert, prune } = bindFake(inst);
+    const inserts = SLOW_QUERY_PRUNE_EVERY * 3;
+    for (let i = 0; i < inserts; i++) {
+      inst.recordQuery({ sql: `SELECT * FROM t WHERE id = ${i}`, kind: 'read', durationMs: 20 });
+    }
+    expect(insert).toHaveBeenCalledTimes(inserts);
+    // First insert of the session, then once every SLOW_QUERY_PRUNE_EVERY.
+    expect(prune).toHaveBeenCalledTimes(3);
+    expect(prune).toHaveBeenCalledWith(2000);
+  });
+
+  it('caps the stored shape text', () => {
+    const inst = new DatabaseInstrumentation({ sampleRate: 0, slowQueryThresholdMs: 10 });
+    const { insert } = bindFake(inst);
+    const columns = Array.from({ length: 2000 }, (_, i) => `col_${i}`).join(', ');
+    inst.recordQuery({ sql: `SELECT ${columns} FROM t`, kind: 'read', durationMs: 20 });
+    const row = insert.mock.calls[0][0] as { shape: string };
+    expect(row.shape.length).toBeLessThanOrEqual(SLOW_QUERY_SHAPE_MAX_CHARS + 3);
+    expect(row.shape.startsWith('select col_0')).toBe(true);
   });
 });

@@ -64,6 +64,12 @@ export interface RetentionResult extends RetentionProgress {
   durationMs: number;
   cutoffIso: string;
   stoppedEarly: boolean;
+  /**
+   * Highest row id examined. Pass it back as `startAfterId` so a scheduled run
+   * resumes where the last one stopped instead of re-reading every row it
+   * already tombstoned.
+   */
+  lastId: number;
 }
 
 export interface RetentionOptions {
@@ -71,6 +77,8 @@ export interface RetentionOptions {
   retentionDays: number;
   /** Cap on rows examined in one run so a first pass on a huge table ends. */
   maxRows?: number;
+  /** Resume after this row id. Omit to walk from the start of the table. */
+  startAfterId?: number;
   onProgress?: (p: RetentionProgress) => void;
   /**
    * Log sink. Injected rather than imported because this pass executes inside
@@ -99,9 +107,13 @@ const SOURCE_PREDICATE = ELIGIBLE_SOURCE_PREFIXES.map(() => `m.source LIKE ? || 
  * Candidate selection. Tool rows only, older than the cutoff, in a session
  * that is not currently active.
  *
- * `message_kind = 'tool'` covers claude-code; codex persists its raw item
- * events as `meta`, so both are admitted and the pure rewrite decides whether
- * a given row actually carries output.
+ * `tool` covers claude-code and, since the classifier change, codex
+ * app-server tool items. `meta` is still admitted, and the pure rewrite
+ * decides whether a row actually carries output, because three populations of
+ * tool output remain under `meta`: codex rows the message-kind backfill has not
+ * reached yet, the legacy codex SDK and ACP shapes the classifier does not
+ * label, and hidden rows, which are `meta` for every provider. Codex lifecycle
+ * frames are `system` now, so they no longer reach this query at all.
  */
 const CANDIDATE_SQL = `
   SELECT m.id, m.source, m.content
@@ -387,13 +399,13 @@ export function createToolOutputRetentionWork(
   const maxRows = options.maxRows ?? Number.POSITIVE_INFINITY;
 
   const progress: RetentionProgress = { scanned: 0, rewritten: 0, bytesSaved: 0 };
-  let lastId = 0;
+  let lastId = options.startAfterId ?? 0;
 
   return {
     name: 'tool-output-retention',
     chunk(db: SqliteDatabase): { done: boolean } {
       if (progress.scanned >= maxRows) {
-        onDone({ ...progress, durationMs: now() - startedAt, cutoffIso: cutoff, stoppedEarly: true });
+        onDone({ ...progress, durationMs: now() - startedAt, cutoffIso: cutoff, stoppedEarly: true, lastId });
         return { done: true };
       }
 
@@ -407,7 +419,7 @@ export function createToolOutputRetentionWork(
           `[ToolRetention] complete: scanned=${progress.scanned} rewritten=${progress.rewritten} `
             + `saved=${(progress.bytesSaved / 1024 / 1024).toFixed(1)}MB`,
         );
-        onDone({ ...progress, durationMs: now() - startedAt, cutoffIso: cutoff, stoppedEarly: false });
+        onDone({ ...progress, durationMs: now() - startedAt, cutoffIso: cutoff, stoppedEarly: false, lastId });
         return { done: true };
       }
 
@@ -533,7 +545,8 @@ function emptyByReason(): Record<PruneReason, number> {
  * Deliberately WIDER than `CANDIDATE_SQL`: that one restricts to
  * `message_kind IN ('tool','meta')` because only those carry tool output, but
  * the frames this lane removes are classified as `system` (claude-code
- * `thinking_tokens`) as well as `meta` (codex notifications). Narrowing by
+ * `thinking_tokens`, codex status notifications) as well as `meta` (codex
+ * deltas, and codex notifications written before the relabel). Narrowing by
  * `message_kind` here would silently skip the single largest population.
  *
  * Every other guard is the same, and for the same reasons: output only, older

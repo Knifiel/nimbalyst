@@ -15,10 +15,11 @@ import { awaitServerIssueKey } from '../../services/tracker/awaitServerIssueKey'
 import { isLocalIssueKey, resolveDisplayIssueKey } from '../../../shared/localIssueKey';
 import { applyHeadlessBodyMarkdown, initializeHeadlessBodyMarkdown } from '../../services/MainBodyDocService';
 import { initialTrackerBodyCache } from '../../services/tracker/trackerBodySnapshot';
+import { writeTrackerBodyCacheVersion } from '../../services/tracker/trackerBodyCacheRetention';
 import { recordTypedPageBodySnapshot } from '../../services/tracker/typedPageBodyHistory';
 import { applyRelationshipFieldWrites } from '../../services/tracker/relationshipFieldWrite';
 import { pinCitedRevisions } from '../../services/tracker/citationPins';
-import { appendActivity } from '../../services/tracker/trackerActivity';
+import { appendActivity } from '../../services/tracker/trackerActivityTrailCap';
 import { pushSharedTrackerItem, sharedTrackerItemTooLarge, trackerItemTooLargeForRoom } from '../../services/tracker/trackerItemShareGate';
 import { assignLocalKeysToRows } from '../../services/tracker/localKeyAllocator';
 import { typeHasLocalNumbers } from '../../services/tracker/localNumberTypes';
@@ -2772,12 +2773,7 @@ export async function handleTrackerUpdate(
         );
         const newBodyVersion = Number(bumpResult.rows[0]?.body_version ?? 0);
         if (newBodyVersion > 0) {
-          await db.query(
-            `INSERT INTO tracker_body_cache (item_id, body_version, content, cached_at)
-             VALUES ($1, $2, $3, NOW())
-             ON CONFLICT (item_id, body_version) DO NOTHING`,
-            [row.id, newBodyVersion, contentJson]
-          );
+          await writeTrackerBodyCacheVersion(db, row.id, newBodyVersion, contentJson);
         }
         localSnapshotStored = true;
         // This write bypasses updateTrackerItemContent, which carries the

@@ -172,6 +172,8 @@ export interface GitCommitProposalPayload {
   status: 'pending' | 'resolved' | 'cancelled';
   commitMessage: string;
   stagedFiles: string[];
+  /** #1756: set when the proposal commits into another worktree; voice must not approve it. */
+  targetWorktree?: { path: string; branch: string | null };
   decision?: 'committed' | 'cancelled';
   commitSha?: string;
   respondedBy?: 'desktop' | 'mobile';

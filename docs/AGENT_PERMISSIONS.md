@@ -396,6 +396,10 @@ canUseTool: async ({ toolName, input }) => {
 }
 ```
 
+### A user's PreToolUse hook that returns "ask"
+
+When a PreToolUse hook in the user's Claude settings returns `permissionDecision: "ask"`, the SDK calls `canUseTool` with `decisionReasonType: 'hook'` (`isHookAsk` in `permissionPromptPolicy.ts`). That request always waits for the user (#1741). It is not answered by a Session approval, a saved Always rule, the "Allow edits only" file-tool shortcut, the "Allow everything" shortcut, the Agent-verified MCP/Skill shortcut, or the auto-approval of Nimbalyst-internal MCP tools or team tools, and a compound command is prompted as a whole rather than part by part. Every other request keeps the normal precedence.
+
 ### Important: SDK Configuration
 
 To ensure `canUseTool` is called, do NOT set `allowedTools: ['*']` in agent mode. This would bypass the permission flow entirely.

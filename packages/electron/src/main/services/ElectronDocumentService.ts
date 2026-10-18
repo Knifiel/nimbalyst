@@ -20,7 +20,8 @@ import { createNativeTrackerItem, type NativeTrackerCreatePayload } from './trac
 import { assertTrackerItemFitsRoom, pushSharedTrackerItem } from './tracker/trackerItemShareGate';
 import { fileTrackerItemRowUpdateRefusal } from './tracker/fileTrackerItemSizeGate';
 import { applyCommentMutation, type CommentMutation } from './tracker/commentMutations';
-import { appendActivity } from './tracker/trackerActivity';
+import { appendActivity } from './tracker/trackerActivityTrailCap';
+import { writeTrackerBodyCacheVersion } from './tracker/trackerBodyCacheRetention';
 import { TrackerBodyVersionConflictError } from './tracker/trackerBodyVersionConflict';
 import { COLUMN_ONLY_IDENTITY_KEYS, extractItemCustomFields } from './tracker/trackerRowCustomFields';
 import { fromDbBoolean } from './tracker/trackerDbValue';
@@ -2355,7 +2356,8 @@ export class ElectronDocumentService implements DocumentService {
     const modifierIdentity = getCurrentIdentity(row.workspace);
     appendActivity(data, modifierIdentity, 'updated', { field: 'content' });
     // Phase 4b: every body save bumps `body_version` and writes a row
-    // into `tracker_body_cache` keyed by `(item_id, body_version)`. The
+    // into `tracker_body_cache` keyed by `(item_id, body_version)`, then
+    // drops the item's superseded versions (see trackerBodyCacheRetention). The
     // bumped version travels through the metadata sync envelope so
     // remote clients learn the body changed without re-fetching the Y.Doc.
     //
@@ -2387,15 +2389,7 @@ export class ElectronDocumentService implements DocumentService {
     const newBodyVersion = Number(updateResult.rows[0]?.body_version ?? 0);
 
     if (contentJson !== null && newBodyVersion > 0) {
-      // ON CONFLICT DO NOTHING covers the rare case where two saves race
-      // on the same version assignment (shouldn't happen via PGLite's
-      // single-writer worker, but cheap insurance).
-      await database.query(
-        `INSERT INTO tracker_body_cache (item_id, body_version, content, cached_at)
-         VALUES ($1, $2, $3, NOW())
-         ON CONFLICT (item_id, body_version) DO NOTHING`,
-        [row.id, newBodyVersion, contentJson]
-      );
+      await writeTrackerBodyCacheVersion(database, row.id, newBodyVersion, contentJson);
     }
     // Body links are relationship edges; keep them with the write.
     await reindexItemRelationshipsAfterWrite(row.workspace, row.id, data, globalRegistry.get(row.type)?.fields ?? [],
@@ -2456,33 +2450,6 @@ export class ElectronDocumentService implements DocumentService {
         // that needs it because there is no live renderer peer to
         // write the Y.Doc.
       }
-    }
-  }
-
-  /**
-   * Read a body snapshot at a specific version from the cache. Used by
-   * future cold-read paths (search, history, preview) so they don't pay
-   * the cost of resolving the Y.Doc just to look at body text.
-   *
-   * Returns `null` when no cached row exists at that version (e.g. the
-   * cache was provisioned after the version was written, or the row was
-   * evicted by a future pruning policy).
-   */
-  async getTrackerBodyCacheAtVersion(itemId: string, bodyVersion: number): Promise<any | null> {
-    const row = await this.resolveTrackerRowForPublicId(itemId);
-    if (!row) return null;
-    const result = await database.query<{ content: string | null }>(
-      `SELECT content FROM tracker_body_cache
-        WHERE item_id = $1 AND body_version = $2`,
-      [row.id, bodyVersion]
-    );
-    const raw = result.rows[0]?.content;
-    if (raw === undefined || raw === null) return null;
-    try {
-      return JSON.parse(raw);
-    } catch {
-      // Not JSON -- return as-is. The cache stores whatever the host wrote.
-      return raw;
     }
   }
 
@@ -2802,12 +2769,7 @@ export class ElectronDocumentService implements DocumentService {
         );
         const newBodyVersion = Number(versionResult.rows[0]?.body_version ?? 0);
         if (contentJson !== null && newBodyVersion > 0) {
-          await database.query(
-            `INSERT INTO tracker_body_cache (item_id, body_version, content, cached_at)
-             VALUES ($1, $2, $3, NOW())
-             ON CONFLICT (item_id, body_version) DO NOTHING`,
-            [resolvedRow.id, newBodyVersion, contentJson]
-          );
+          await writeTrackerBodyCacheVersion(database, resolvedRow.id, newBodyVersion, contentJson);
         }
         await reindexItemRelationshipsAfterWrite(resolvedRow.workspace, resolvedRow.id, mergedData, fieldDefs,
           null, database as any, normalizedDescription ?? null);

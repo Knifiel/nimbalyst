@@ -77,6 +77,27 @@ export function isNonRenderingAppServerItemStarted(itemType: unknown): boolean {
   return typeof itemType === 'string' && ITEM_STARTED_NON_RENDERING_TYPES.has(itemType);
 }
 
+/** Item types with their own tool-card branch in `parseItemCompleted`. */
+const EXPLICIT_TOOL_ITEM_TYPES = new Set([
+  'fileChange',
+  'mcpToolCall',
+  'commandExecution',
+  'collabAgentToolCall',
+]);
+
+/**
+ * True when an app-server item renders as a tool card: one of the explicit
+ * tool branches, or a generic tool-like item. `searchableTextExtractor` uses
+ * this to label the row `tool`, so it must follow `parseItemCompleted`.
+ */
+export function isAppServerToolItem(item: unknown): boolean {
+  if (!item || typeof item !== 'object') return false;
+  const { id, type } = item as { id?: unknown; type?: unknown };
+  if (typeof type !== 'string' || !type) return false;
+  if (EXPLICIT_TOOL_ITEM_TYPES.has(type)) return true;
+  return typeof id === 'string' && id.length > 0 && !NON_GENERIC_TOOL_ITEM_TYPES.has(type);
+}
+
 interface AppServerEnvelope {
   method?: string;
   params?: {

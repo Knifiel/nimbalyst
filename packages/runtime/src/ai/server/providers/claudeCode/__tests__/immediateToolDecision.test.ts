@@ -215,6 +215,28 @@ describe('resolveImmediateToolDecision', () => {
     });
   });
 
+  // #1741: a PreToolUse hook "ask" always reaches the user; no mode shortcut answers it.
+  describe('PreToolUse hook ask', () => {
+    const hookAsk = { signal: new AbortController().signal, decisionReasonType: 'hook' };
+
+    it.each([
+      ['allow-all', 'agent', 'Edit'],
+      ['bypass-all', 'agent', 'Bash'],
+      ['bypass-all', 'auto', 'mcp__some-third-party-server__do_something'],
+    ])('%s trust in %s mode does not auto-approve %s', async (mode, currentMode, toolName) => {
+      const deps = createDeps({
+        trustChecker: vi.fn().mockReturnValue({ trusted: true, mode }),
+        getCurrentMode: () => currentMode as 'agent' | 'auto',
+      });
+      expect(await resolveImmediateToolDecision(deps, createParams({ toolName, options: hookAsk }))).toBeNull();
+    });
+
+    it.each(['mcp__nimbalyst-mcp__display_to_user', 'TeamDelete', 'TeamCreate'])('does not auto-approve the internal tool %s', async (toolName) => {
+      const deps = createDeps({ resolveTeamContext: vi.fn().mockResolvedValue('alpha') });
+      expect(await resolveImmediateToolDecision(deps, createParams({ toolName, input: {}, options: hookAsk }))).toBeNull();
+    });
+  });
+
   describe('fallthrough to permission system', () => {
     it('returns null for unknown tool in ask mode', async () => {
       const deps = createDeps();

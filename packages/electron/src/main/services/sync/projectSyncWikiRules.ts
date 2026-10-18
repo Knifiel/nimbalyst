@@ -71,13 +71,14 @@ export function isInWikiTrash(filePath: string, workspacePath: string): boolean 
 }
 
 /**
- * The one filter for the paths project file sync carries: markdown anywhere,
- * the marker at the wiki location, and `.csv` tables inside a wiki whose
- * marker exists; never the wiki's trash. The marker check is not cached, so a
- * table that arrives right after the marker in one batch is accepted.
+ * The one filter for the paths project file sync carries: markdown and `.html`
+ * anywhere (phones render a page's embedded `.html` diagrams from the synced
+ * copy), the marker at the wiki location, and `.csv` tables inside a wiki
+ * whose marker exists; never the wiki's trash. The marker check is not cached,
+ * so a table that arrives right after the marker in one batch is accepted.
  */
 export function isProjectSyncPath(filePath: string, workspacePath: string): boolean {
-  if (filePath.endsWith('.md')) return !isInWikiTrash(filePath, workspacePath);
+  if (filePath.endsWith('.md') || filePath.endsWith('.html')) return !isInWikiTrash(filePath, workspacePath);
   if (path.basename(filePath) === MARKER_FILE) return isWikiMarkerPath(filePath, workspacePath);
   return isWikiTablePath(filePath, workspacePath) && existsSync(path.join(wikiRootWithin(workspacePath)!, MARKER_FILE));
 }

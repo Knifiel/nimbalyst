@@ -376,8 +376,8 @@ export class SQLiteDatabaseProxy {
    * Run the retention pass. Executes on the worker's background lane, so the
    * app stays responsive while it works.
    */
-  async toolRetentionRun(retentionDays: number, maxRows?: number): Promise<unknown> {
-    return this.send('toolRetentionRun', { retentionDays, maxRows });
+  async toolRetentionRun(retentionDays: number, maxRows?: number, startAfterId?: number): Promise<unknown> {
+    return this.send('toolRetentionRun', { retentionDays, maxRows, startAfterId });
   }
 
   /**

@@ -33,7 +33,7 @@ Maintain this when notable capabilities are added, significantly expanded, or re
 - Document history with diff viewer
 - Auto-save
 - Live custom-editor embeds in Markdown through a standalone file link, including mockups, data models, and animations; a Team or Personal page of an extension type embeds the same way when linked with `@` (a Personal page embed is view only and follows edits made in its tab)
-- Interactive HTML embeds and pages -- a standalone link to an `.html` file or HTML page embeds it live and interactive without selecting it first, in the desktop app, the team web console and the local wiki browser view; the page runs sandboxed (no access to the app, its storage or credentials; scripts, styles, fonts and images may load over https, network requests are blocked), its ordinary links open wiki pages, tracker items and files in the app, it follows the app's light/dark theme, and it grows to its content unless the link sets a height; HTML is also a Team, Personal and local wiki page type with a rendered preview and a source view
+- Interactive HTML embeds and pages -- a standalone link to an `.html` file or HTML page embeds it live and interactive without selecting it first, in the desktop app, the team web console, the local wiki browser view, and synced markdown files on iOS and Android (project sync carries `.html` files for this; the phones list no `.html` files and open one on its own as a read-only rendering); the page runs sandboxed (no access to the app, its storage or credentials; scripts, styles, fonts and images may load over https, network requests are blocked), its ordinary links open wiki pages, tracker items and files in the app, it follows the app's light/dark theme, and it grows to its content unless the link sets a height; HTML is also a Team, Personal and local wiki page type with a rendered preview and a source view
 - Team wiki pages in the web console render embedded editor pages (drawings, mockups, spreadsheets and the other browser editors) live at the link's width and height
 - Editor-header session history -- open the last AI session that worked on a file, choose another associated session, or start a new one
 - Shared mockup comments anchored to a spot in the design, with live pins and agent read/reply support
@@ -189,6 +189,7 @@ Twelve built-in provider lanes, plus any agent an extension contributes. Every l
 - Git operations panel with a Changes list where users select files and commit directly or ask AI to write the message
 - AI-assisted commit message generation
 - Interactive git commit proposal widget with individual-hunk selection to commit only the intended lines of a shared file
+- Commit proposals can target another registered worktree of the session's repository; the widget names its branch and path, and these commits always need approval on desktop, even with auto-commit on
 - Commit history view with ahead/behind tracking and links to the AI sessions that produced commits
 - Per-repository status, branches, file lists, and commit controls for multi-folder projects; Commit with AI proposes separate commits per repository; the title-bar branch, Git panel and new-worktree dialog follow the file open in the editor
 - Auto-commit mode (toggle)

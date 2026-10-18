@@ -124,6 +124,44 @@ describe('tool output retention pass', () => {
     expect(contentOf(db, id)).toContain('Output discarded to reclaim disk');
   });
 
+  it('resumes after startAfterId and reports the last id it examined', () => {
+    const db = makeDb();
+    const first = insert(db, {});
+    const second = insert(db, {});
+    const before = contentOf(db, first);
+
+    let result: any = null;
+    const work = createToolOutputRetentionWork(
+      { retentionDays: 30, now: () => NOW, startAfterId: first },
+      (r) => { result = r; },
+    );
+    for (let i = 0; i < 100 && !work.chunk(db).done; i++) { /* drive */ }
+
+    expect(contentOf(db, first)).toBe(before);
+    expect(result.rewritten).toBe(1);
+    expect(result.lastId).toBe(second);
+  });
+
+  it('tombstones codex command output under both the old meta and the new tool label', () => {
+    const db = makeDb();
+    const commandCompleted = JSON.stringify({
+      method: 'item/completed',
+      params: { item: { id: 'c1', type: 'commandExecution', command: 'ls', aggregatedOutput: BIG } },
+    });
+    const notYetBackfilled = insert(db, { source: 'openai-codex', kind: 'meta', content: commandCompleted });
+    const relabeled = insert(db, { source: 'openai-codex', kind: 'tool', content: commandCompleted });
+    // A lifecycle frame is `system` now and must never be read by this lane.
+    const lifecycle = JSON.stringify({ method: 'turn/completed', params: { usage: { blob: BIG } } });
+    const turnCompleted = insert(db, { source: 'openai-codex', kind: 'system', content: lifecycle });
+
+    const result = runPass(db);
+
+    expect(result.scanned).toBe(2);
+    expect(contentOf(db, notYetBackfilled)).toContain('Output discarded to reclaim disk');
+    expect(contentOf(db, relabeled)).toContain('Output discarded to reclaim disk');
+    expect(contentOf(db, turnCompleted)).toBe(lifecycle);
+  });
+
   it('never touches user prompts', () => {
     const db = makeDb();
     const id = insert(db, { direction: 'input', kind: 'user', content: toolResult(BIG) });

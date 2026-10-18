@@ -3356,7 +3356,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
                 authorizePart: (partInput, warnings) => promptForTool(toolName, partInput, options, warnings),
                 logSecurity: (message, data) => this.logSecurity(message, data),
               },
-              input
+              input, options
             )
           : null;
         if (immediateDecision) {

@@ -495,11 +495,11 @@ async function handle(req: RequestEnvelope): Promise<unknown> {
     case 'toolRetentionRun': {
       // Runs on the coordinator's BACKGROUND lane, never inline: an unbounded
       // rewrite of ai_agent_messages on the hot lane hangs the whole app.
-      const { retentionDays, maxRows } = req.payload as ToolRetentionPayload;
+      const { retentionDays, maxRows, startAfterId } = req.payload as ToolRetentionPayload;
       const inst = ensureInitialized();
       let result: RetentionResult | null = null;
       await inst.runBackground(
-        createToolOutputRetentionWork({ retentionDays, maxRows }, (r) => {
+        createToolOutputRetentionWork({ retentionDays, maxRows, startAfterId }, (r) => {
           result = r;
         }),
       );

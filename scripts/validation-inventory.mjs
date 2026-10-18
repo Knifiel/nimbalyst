@@ -41,7 +41,11 @@ export const scriptTests = [
 ];
 
 const workspaceDeps = [[packageManager, 'run', 'build:workspace-deps']];
-const bundleBuild = [[packageManager, '--filter', '@nimbalyst/collab-bundle', 'run', 'build']];
+// The production bundle build plus its size budgets. Not part of the
+// collab-bundle typecheck, which would otherwise set the whole typecheck's wall
+// clock (~15s of ~22s, 2026-10-18). Vitest needs its dist: docsUiStoreBinding
+// imports the built docs-ui entry.
+const bundleBuild = [[packageManager, '--filter', '@nimbalyst/collab-bundle', 'run', 'check:bundle']];
 const preparedTypecheck = [
   [packageManager, '--dir', 'packages/extensions/nimbalyst-memory/engine', 'run', 'build'],
   [packageManager, 'run', 'typecheck'],
@@ -54,6 +58,7 @@ export const tasks = {
   typecheck: [
     ...workspaceDeps,
     [packageManager, '--filter', '@nimbalyst/runtime', 'run', 'build', '--logLevel', 'warn'],
+    ...bundleBuild,
     ...preparedTypecheck,
   ],
   'typecheck-ready': preparedTypecheck,

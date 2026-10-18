@@ -4,6 +4,7 @@ import { AgentMessagesRepository } from "@nimbalyst/runtime/storage/repositories
 import { logger } from "../../utils/logger";
 import { TrayManager } from "../../tray/TrayManager";
 import {
+  findGitCommitProposalWorktreeTarget,
   getGitCommitProposalResponseChannel,
   resolveGitCommitProposalPromptId,
 } from "./gitCommitProposalPromptUtils";
@@ -148,6 +149,15 @@ export async function handleGitCommitResponse(
     if (!(await cancelCommitProposalOnce(sessionId, canonicalPromptId)))
       return { action: "error", error: "This proposal was already handled." };
     return await emitProposalResponse({ action: "cancelled" });
+  }
+
+  // #1756: a sibling-worktree commit is approved in the desktop widget, which
+  // shows its branch and path. Answer mobile without closing the proposal.
+  if (await findGitCommitProposalWorktreeTarget(sessionId, canonicalPromptId).catch(() => null)) {
+    return {
+      action: "error",
+      error: "This commit targets another worktree. Approve it in the Nimbalyst desktop app.",
+    };
   }
 
   // For 'committed' action, we need to execute the git commit on desktop

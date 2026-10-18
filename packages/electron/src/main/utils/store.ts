@@ -72,19 +72,34 @@ export interface DatabaseMaintenanceSettings {
   backupIntervalHours: number;
   /**
    * Days of tool output to keep at full fidelity. Older tool results are
-   * rewritten to a placeholder. 0 disables the pass entirely. User prompts and
-   * agent text are never affected at any setting.
+   * rewritten to a placeholder by a daily background pass. 0 disables the pass
+   * entirely. User prompts and agent text are never affected at any setting.
    */
   toolOutputRetentionDays: number;
+}
+
+/**
+ * What is actually persisted under `databaseMaintenance`. Internal fields stay
+ * out of `DatabaseMaintenanceSettings`, which is the IPC shape.
+ */
+interface StoredDatabaseMaintenance extends Partial<DatabaseMaintenanceSettings> {
+  /**
+   * True only once a patch explicitly carried `toolOutputRetentionDays`. The
+   * setter persists the whole merged object, so every install that ever
+   * changed a backup option also stored the old default of 0 -- a stored 0
+   * without this flag is not a user choice and reads as the current default.
+   */
+  toolOutputRetentionDaysUserSet?: boolean;
+  /** Resume cursor for the scheduled retention pass; see `RetentionResult.lastId`. */
+  toolOutputRetentionCursor?: number;
 }
 
 export const DEFAULT_DATABASE_MAINTENANCE: DatabaseMaintenanceSettings = {
   backupCopiesKept: 2,
   backupIntervalHours: 12,
-  // Opt-in for now: the pass is destructive and irreversible, so it ships
-  // behind an explicit action in the database dashboard before it becomes a
-  // default. See the rollout in the storage plan.
-  toolOutputRetentionDays: 0,
+  // Without a default, tool output grew without bound (gigabytes on heavy
+  // installs). VACUUM stays an explicit user step; this only frees pages.
+  toolOutputRetentionDays: 30,
 };
 
 /** How the macOS menu bar fleet strip is drawn. See `getTrayStripStyle`. */
@@ -119,7 +134,7 @@ interface AppStoreSchema {
   completedSessionsWithTools?: number;
   // Local database maintenance. Each backup generation is a FULL copy of the
   // database, so `copiesKept` is a direct multiplier on disk usage (#1248).
-  databaseMaintenance?: DatabaseMaintenanceSettings;
+  databaseMaintenance?: StoredDatabaseMaintenance;
   // Sound notifications
   completionSoundEnabled?: boolean;
   completionSoundType?: CompletionSoundType;
@@ -1130,26 +1145,46 @@ export const store = {
  * these fields for every existing install, so each one is defaulted
  * individually rather than trusting the stored object to be complete.
  */
+function getStoredDatabaseMaintenance(): StoredDatabaseMaintenance | undefined {
+  return getAppStore().get('databaseMaintenance') as StoredDatabaseMaintenance | undefined;
+}
+
 export function getDatabaseMaintenanceSettings(): DatabaseMaintenanceSettings {
-  const stored = getAppStore().get('databaseMaintenance') as
-    | Partial<DatabaseMaintenanceSettings>
-    | undefined;
+  const stored = getStoredDatabaseMaintenance();
   return {
     backupCopiesKept:
       stored?.backupCopiesKept ?? DEFAULT_DATABASE_MAINTENANCE.backupCopiesKept,
     backupIntervalHours:
       stored?.backupIntervalHours ?? DEFAULT_DATABASE_MAINTENANCE.backupIntervalHours,
-    toolOutputRetentionDays:
-      stored?.toolOutputRetentionDays ?? DEFAULT_DATABASE_MAINTENANCE.toolOutputRetentionDays,
+    toolOutputRetentionDays: stored?.toolOutputRetentionDaysUserSet
+      ? stored.toolOutputRetentionDays ?? DEFAULT_DATABASE_MAINTENANCE.toolOutputRetentionDays
+      : DEFAULT_DATABASE_MAINTENANCE.toolOutputRetentionDays,
   };
 }
 
 export function setDatabaseMaintenanceSettings(
   patch: Partial<DatabaseMaintenanceSettings>,
 ): DatabaseMaintenanceSettings {
+  const stored = getStoredDatabaseMaintenance();
   const next = { ...getDatabaseMaintenanceSettings(), ...patch };
-  getAppStore().set('databaseMaintenance', next);
+  getAppStore().set('databaseMaintenance', {
+    ...stored,
+    ...next,
+    toolOutputRetentionDaysUserSet:
+      stored?.toolOutputRetentionDaysUserSet === true || patch.toolOutputRetentionDays !== undefined,
+  } satisfies StoredDatabaseMaintenance);
   return next;
+}
+
+export function getToolOutputRetentionCursor(): number {
+  return getStoredDatabaseMaintenance()?.toolOutputRetentionCursor ?? 0;
+}
+
+export function setToolOutputRetentionCursor(lastId: number): void {
+  getAppStore().set('databaseMaintenance', {
+    ...getStoredDatabaseMaintenance(),
+    toolOutputRetentionCursor: lastId,
+  } satisfies StoredDatabaseMaintenance);
 }
 
 export function getRecentItems(type: 'workspaces' | 'documents'): RecentItem[] {

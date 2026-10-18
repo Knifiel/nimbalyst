@@ -99,7 +99,7 @@ export interface DatabaseInstrumentationOptions {
   sampleRate?: number;
   /** Queries >= this many ms are persisted to _perf_slow_queries. Default 100. */
   slowQueryThresholdMs?: number;
-  /** Max rows kept in _perf_slow_queries before pruning. Default 10_000. */
+  /** Max rows kept in _perf_slow_queries before pruning. Default 2_000. */
   slowQueryMaxRows?: number;
   /** Rolling window for in-memory aggregates. Default 5 min. */
   windowMs?: number;
@@ -117,6 +117,15 @@ interface ShapeBucket {
 
 const HIST_KINDS: QueryKind[] = ['read', 'write', 'migration'];
 
+/**
+ * Prune `_perf_slow_queries` back to the cap every this many inserts. Was a
+ * 1% coin flip per insert, which let the table overshoot by an unbounded
+ * amount between lucky draws.
+ */
+export const SLOW_QUERY_PRUNE_EVERY = 50;
+/** Stored shape text is cut to this length; a generated IN-list shape can be megabytes. */
+export const SLOW_QUERY_SHAPE_MAX_CHARS = 500;
+
 function emptyHistRow(): HistogramRow {
   return { lt1ms: 0, lt10ms: 0, lt100ms: 0, lt1s: 0, gt1s: 0 };
 }
@@ -126,6 +135,7 @@ export class DatabaseInstrumentation {
   private sampleRate: number;
   private slowQueryThresholdMs: number;
   private slowQueryMaxRows: number;
+  private slowInsertsSincePrune = 0;
   private windowMs: number;
   private log: (level: 'info' | 'warn', msg: string) => void;
 
@@ -157,7 +167,7 @@ export class DatabaseInstrumentation {
   constructor(opts: DatabaseInstrumentationOptions = {}) {
     this.sampleRate = opts.sampleRate ?? 1.0;
     this.slowQueryThresholdMs = opts.slowQueryThresholdMs ?? 100;
-    this.slowQueryMaxRows = opts.slowQueryMaxRows ?? 10_000;
+    this.slowQueryMaxRows = opts.slowQueryMaxRows ?? 2_000;
     this.windowMs = opts.windowMs ?? 5 * 60 * 1000;
     this.log = opts.log ?? (() => {});
   }
@@ -426,7 +436,7 @@ export class DatabaseInstrumentation {
       if (wasReadOnly) db.pragma('query_only = OFF');
       try {
         this.insertSlowStmt.run({
-          shape,
+          shape: shape.length > SLOW_QUERY_SHAPE_MAX_CHARS ? shape.slice(0, SLOW_QUERY_SHAPE_MAX_CHARS) + '...' : shape,
           sqlSample: opts.sql.length > 2000 ? opts.sql.slice(0, 2000) + '...' : opts.sql,
           paramsSample: opts.params ? safeStringifyParams(opts.params) : null,
           durationMs: opts.durationMs,
@@ -436,10 +446,12 @@ export class DatabaseInstrumentation {
           callSite,
           errorMessage: opts.error ? String(opts.error.message ?? opts.error) : null,
         });
-        // Cheap pruning -- only DELETE when we're plausibly over the cap.
-        if (Math.random() < 0.01) {
+        // Prune on the first insert of a session (catches tables left over
+        // the cap by older builds) and then every SLOW_QUERY_PRUNE_EVERY.
+        if (this.slowInsertsSincePrune === 0) {
           this.pruneSlowStmt.run(this.slowQueryMaxRows);
         }
+        this.slowInsertsSincePrune = (this.slowInsertsSincePrune + 1) % SLOW_QUERY_PRUNE_EVERY;
       } finally {
         if (wasReadOnly) {
           try { db.pragma('query_only = ON'); } catch { /* db may be closing */ }

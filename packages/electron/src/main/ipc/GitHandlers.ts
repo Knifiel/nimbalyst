@@ -21,6 +21,7 @@
 
 import { runCommitProposalOnce, commitProposalIdentity } from '../services/ai/CommitProposalExecution';
 import { resolveGitCommitProposalPromptId } from '../services/ai/gitCommitProposalPromptUtils';
+import { resolveProposalCommitPaths } from '../services/ai/proposalCommitTarget';
 import { ipcMain } from 'electron';
 import type { SimpleGit } from 'simple-git';
 import { createGit } from '../services/gitClient';
@@ -1195,8 +1196,18 @@ export function registerGitHandlers(): void {
       // A worktree session commits against the worktree path, which owns no
       // attached folders -- they are keyed by the parent workspace. Without
       // this every attached-folder file resolves to no repo and is dropped.
+      const canonicalProposalId = sessionId && proposalId
+        ? await resolveGitCommitProposalPromptId(sessionId, proposalId, false)
+        : undefined;
+      // #1756 / #1529: a proposal commits where its stored record says (a
+      // sibling worktree is re-checked first); the caller's paths are ignored.
+      const proposalPaths = sessionId && canonicalProposalId
+        ? await resolveProposalCommitPaths(sessionId, canonicalProposalId)
+        : null;
+      const commitPath = proposalPaths?.workspacePath ?? workspacePath;
+      const commitRepoPath = proposalPaths ? proposalPaths.repoPath : repoPath;
       const extraRoots = sessionId
-        ? await resolveSessionExtraCommitRoots(sessionId, workspacePath)
+        ? await resolveSessionExtraCommitRoots(sessionId, commitPath)
         : [];
 
       const execute = () => withGitOperationLog(
@@ -1206,19 +1217,19 @@ export function registerGitHandlers(): void {
         // Resolves the owning repo per file and splits across repos when the
         // selection spans more than one. A single-repo selection -- every
         // ordinary commit -- behaves exactly as before.
-        entry => executeGitCommitAcrossRepos(workspacePath, message, filesToStage, {
+        entry => executeGitCommitAcrossRepos(commitPath, message, filesToStage, {
           logContext: '[git:commit]',
           env: getGitSubprocessEnv(),
           onOutput: (stream, chunk) => operationLog.appendOutput(workspacePath, entry.id, stream, chunk),
           hunkSelections,
-          repoPath,
+          repoPath: commitRepoPath,
           extraRoots,
         }),
         result => result.commitHash ? `[${result.commitHash}] commit created` : undefined,
       );
 
-      const result = sessionId && proposalId
-        ? await runCommitProposalOnce(sessionId, await resolveGitCommitProposalPromptId(sessionId, proposalId, false), commitProposalIdentity(workspacePath, message, filesToStage, hunkSelections, repoPath), execute)
+      const result = sessionId && canonicalProposalId
+        ? await runCommitProposalOnce(sessionId, canonicalProposalId, commitProposalIdentity(commitPath, message, filesToStage, hunkSelections, commitRepoPath), execute)
         : await execute();
 
       if (sessionId) {

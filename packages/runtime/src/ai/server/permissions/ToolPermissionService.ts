@@ -22,7 +22,7 @@ import {
   PendingPermission,
 } from '../providers/ProviderPermissionMixin';
 import { AgentMessagesRepository } from '../../../storage/repositories/AgentMessagesRepository';
-import { constrainPermissionResponse, permissionPromptHints, type PermissionPromptHints } from './permissionPromptPolicy';
+import { constrainPermissionResponse, permissionPromptHints, type PermissionPromptHints, type UserDecisionRequirement } from './permissionPromptPolicy';
 
 /**
  * Configuration options for ToolPermissionService
@@ -330,6 +330,36 @@ export class ToolPermissionService {
     return this.sessionApprovedPatterns;
   }
 
+  /** A Session approval or a saved Always rule that already covers this pattern. */
+  private async findRememberedApproval(workspacePath: string, toolName: string, pattern: string): Promise<PermissionDecision | null> {
+    if (this.sessionApprovedPatterns.has(pattern)) {
+      this.securityLogger('[ToolPermissionService] Pattern already approved this session', {
+        pattern,
+        toolName,
+      });
+      return { decision: 'allow', scope: 'session' };
+    }
+
+    // Check for wildcard patterns (e.g., 'WebFetch' matches any WebFetch call)
+    if (toolName === 'WebFetch' && this.sessionApprovedPatterns.has('WebFetch')) {
+      this.securityLogger('[ToolPermissionService] WebFetch wildcard approved this session', { toolName });
+      return { decision: 'allow', scope: 'session' };
+    }
+
+    // Check persisted settings
+    if (await this.isPatternApproved(workspacePath, pattern)) {
+      this.securityLogger('[ToolPermissionService] Pattern already approved in settings', {
+        pattern,
+        toolName,
+      });
+      // Add to session cache for fast lookups
+      this.sessionApprovedPatterns.add(pattern);
+      return { decision: 'allow', scope: 'always' };
+    }
+
+    return null;
+  }
+
   /**
    * Request permission for a tool call (Claude Code style)
    *
@@ -358,10 +388,11 @@ export class ToolPermissionService {
     /** Name of the teammate requesting permission (undefined for lead agent) */
     teammateName?: string;
     /**
-     * The caller already decided the user must answer (Agent-verified mode escalated
-     * the call, e.g. a PreToolUse hook returned "ask"), so bypass-all must not auto-approve.
+     * The caller already decided the user must answer. 'escalated' skips the bypass-all
+     * shortcut (#1740); 'hook-ask' also skips the allow-edits shortcut and every remembered
+     * Session or Always approval (#1741).
      */
-    requiresUserDecision?: boolean;
+    requiresUserDecision?: UserDecisionRequirement;
   }): Promise<PermissionDecision> {
     const {
       requestId,
@@ -381,6 +412,7 @@ export class ToolPermissionService {
     } = options;
 
     const pathForTrust = permissionsPath || workspacePath;
+    const hookAsked = requiresUserDecision === 'hook-ask';
 
     // Check trust status
     if (pathForTrust && this.trustChecker) {
@@ -400,8 +432,8 @@ export class ToolPermissionService {
         return { decision: 'allow', scope: 'once' };
       }
 
-      // Allow-all mode: auto-approve file edit operations
-      if (trustStatus.mode === 'allow-all') {
+      // Allow-all mode: auto-approve file edit operations, unless a hook asked (#1741)
+      if (trustStatus.mode === 'allow-all' && !hookAsked) {
         const fileEditTools = ['Edit', 'Write', 'MultiEdit', 'Read', 'Glob', 'Grep', 'LS', 'NotebookEdit'];
         if (fileEditTools.includes(toolName)) {
           this.securityLogger('[ToolPermissionService] Allow-all mode, auto-approving file tool', { toolName });
@@ -410,30 +442,14 @@ export class ToolPermissionService {
       }
     }
 
-    // Check session cache first
-    if (this.sessionApprovedPatterns.has(pattern)) {
-      this.securityLogger('[ToolPermissionService] Pattern already approved this session', {
-        pattern,
-        toolName,
-      });
-      return { decision: 'allow', scope: 'session' };
-    }
-
-    // Check for wildcard patterns (e.g., 'WebFetch' matches any WebFetch call)
-    if (toolName === 'WebFetch' && this.sessionApprovedPatterns.has('WebFetch')) {
-      this.securityLogger('[ToolPermissionService] WebFetch wildcard approved this session', { toolName });
-      return { decision: 'allow', scope: 'session' };
-    }
-
-    // Check persisted settings
-    if (await this.isPatternApproved(workspacePath, pattern)) {
-      this.securityLogger('[ToolPermissionService] Pattern already approved in settings', {
-        pattern,
-        toolName,
-      });
-      // Add to session cache for fast lookups
-      this.sessionApprovedPatterns.add(pattern);
-      return { decision: 'allow', scope: 'always' };
+    // A hook "ask" is answered by the user every time, never by a remembered approval (#1741)
+    if (hookAsked) {
+      this.securityLogger('[ToolPermissionService] PreToolUse hook asked, skipping remembered approvals', { pattern, toolName });
+    } else {
+      const remembered = await this.findRememberedApproval(workspacePath, toolName, pattern);
+      if (remembered) {
+        return remembered;
+      }
     }
 
     const rawCommand = toolName === 'Bash' ? toolInput?.command || '' : toolDescription;
