@@ -76,7 +76,7 @@ async function launchDatabase(engine: 'pglite' | 'sqlite', dir: string, pglite?:
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
   `);
-  await db.exec(mirrorDdl('0053'));
+  await db.exec(mirrorDdl('1001'));
   return { db, close: async () => {} };
 }
 
