@@ -32,6 +32,9 @@ function writeLegacyForkDatabase(dbDir: string): void {
   fs.mkdirSync(dbDir, { recursive: true });
   const db = new Database(path.join(dbDir, 'nimbalyst.sqlite'));
   try {
+    // A throwaway fixture: without this every statement of 52 migrations waits
+    // on fsync, which took the test past its bound under the full suite.
+    db.pragma('synchronous = OFF');
     db.exec(`
       CREATE TABLE _migrations (
         version INTEGER PRIMARY KEY,
@@ -94,7 +97,7 @@ describe('fork migrations', () => {
       expect(state.groupIdColumns).toBe(1);
       expect(state.groups).toEqual([{ id: 'wt-1', group_id: 'wt-1' }]);
     }
-  });
+  }, 60_000);
 
   it('records worktree_groups as 1001 on a fresh database', async () => {
     const state = await launch((db) => ({
