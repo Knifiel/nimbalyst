@@ -1,6 +1,7 @@
 import { buildCodexThreadStartParams } from './codexAppServer/threadConfiguration';
 import { validateCodexSandbox } from './codexAppServer/validateCodexSandbox';
-import { previewForLog, summarizeNotificationParams, extractNotificationRouting } from './codexAppServer/notificationDiagnostics';
+import { summarizeNotificationParams, extractNotificationRouting } from './codexAppServer/notificationDiagnostics';
+import { captureCodexStderr } from './codexAppServer/stderrLogging';
 /**
  * OpenAI Codex app-server Protocol Adapter
  *
@@ -493,16 +494,7 @@ export class CodexAppServerProtocol implements AgentProtocol {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    const stderrTail: string[] = [];
-    child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (chunk: string) => {
-      stderrTail.push(chunk);
-      console.warn('[CODEX][APPSERVER][stderr]', previewForLog(chunk.trim(), 800));
-      // Keep the last ~16KB for diagnostics.
-      while (stderrTail.length > 0 && stderrTail.join('').length > 16 * 1024) {
-        stderrTail.shift();
-      }
-    });
+    const stderrTail = captureCodexStderr(child.stderr);
     const client = new JsonRpcClient(child, {
       logger: {
         log: (m, ...a) => console.log('[CODEX][APPSERVER]', m, ...a),

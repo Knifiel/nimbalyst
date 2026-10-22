@@ -61,7 +61,7 @@ Stop the chain at a failed step, unless the remaining targets do not depend on i
 `nimbalyst/nimbalyst-wiki` is generated output; never edit it by hand. The local clone is `../nimbalyst-wiki`.
 
 1. The clone must be on `main`, clean, and current: `git -C ../nimbalyst-wiki status -sb`, then `git -C ../nimbalyst-wiki pull --ff-only`. If it has local changes, stop and ask.
-2. Run `node scripts/stage-wiki-repo.mjs ../nimbalyst-wiki`. It builds wiki-web and refuses a stale plugin or a changed plugin without a version bump. If it refuses, go back to step 2 of this command.
+2. Run `node scripts/stage-wiki-repo.mjs ../nimbalyst-wiki`. The plugin runs `@nimbalyst/cli` at its own version, so publish the cli group first ([/publish-npm](./publish-npm.md)). Staging refuses a stale plugin, a changed plugin without a version bump, a plugin whose pinned CLI is not on npm yet, and anything the Anthropic plugin directory would block or hold for a reviewer. If it refuses, go back to step 2 of this command.
 3. Read `../nimbalyst-wiki/SOURCE`. If it says `(with uncommitted changes)`, stop: the staging is not reproducible from a commit.
 4. Show `git -C ../nimbalyst-wiki status --short` and the diff stat. Ask before committing. Staging replaces the whole tree, so the commit stages everything in the clone (`git -C ../nimbalyst-wiki add -A`); that is safe only because the clone was clean in step 1. Use the mirror's own commit voice: `Nimbalyst Wiki X.Y.Z: <what users can now do>`.
 5. Ask, then `git -C ../nimbalyst-wiki push origin main`.

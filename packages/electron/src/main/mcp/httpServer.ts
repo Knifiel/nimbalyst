@@ -19,6 +19,7 @@ import { workspaceToWindowMap } from "./mcpWorkspaceResolver";
 import { requireMcpAuth } from "./mcpAuth";
 import { getAllowedClipOrigin, hasAllowedClipContentType } from "./clipRequestGuards";
 import { withTrackerSchemaWorkspace } from "../services/tracker/trackerSchemaScope";
+import { logger } from "../utils/logger";
 
 // Extracted modules
 import {
@@ -514,12 +515,7 @@ function createSharedMcpServer(
   // abort signal so a cancelled call tears its waiter down (#1341).
   server.setRequestHandler(CallToolRequestSchema, withTrackerSchemaWorkspace(workspacePath, async (request: any, extra: any) => {
     const { name, arguments: args } = request.params;
-    if (request.params._meta) {
-      console.log(
-        `[MCP Server] Tool called: ${name}, _meta:`,
-        JSON.stringify(request.params._meta)
-      );
-    }
+    logger.mcp.debug(`[MCP Server] Tool called: ${name}`);
 
     // Strip MCP server prefix if present
     const toolName = name.replace(/^mcp__nimbalyst__/, "");

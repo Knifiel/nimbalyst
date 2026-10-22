@@ -45,6 +45,7 @@ import {
 import { refreshFileTree } from '../../store/listeners/fileTreeListeners';
 import { bindActiveFileToTabs } from '../../store/atoms/fileTree';
 import { requestConfirmation } from '../../dialogs/requestConfirmation';
+import { openFileAsWikiPage } from '../../utils/agentEditedPage';
 
 export interface EditorModeRef {
   closeActiveTab: () => void;
@@ -911,6 +912,12 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
     });
   }, []); // No dependencies - uses refs for all mutable state
 
+  // A transcript link: a Local wiki page opens in Pages, anything else here.
+  const handleChatFileOpen = useCallback(async (filePath: string) => {
+    if (await openFileAsWikiPage(filePath, workspacePath, 'agent_tool')) return;
+    await handleWorkspaceFileSelect(filePath);
+  }, [workspacePath, handleWorkspaceFileSelect]);
+
   // Handle opening session - switches to Agent Mode since ChatSidebar manages its own single session
   const handleOpenSessionInChat = useCallback(async (sessionId: string) => {
     console.log('[EditorMode] handleOpenSessionInChat called with sessionId:', sessionId);
@@ -1462,7 +1469,7 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
             onWidthChange={setAIChatWidth}
             documentContext={{ filePath: currentFilePath || '' }}
             getDocumentContext={getDocumentContext}
-            onFileOpen={handleWorkspaceFileSelect}
+            onFileOpen={handleChatFileOpen}
             onSwitchToAgentMode={onSwitchToAgentMode ? (sid?: string) => onSwitchToAgentMode(undefined, sid) : undefined}
           />
         )}

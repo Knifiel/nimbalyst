@@ -25,6 +25,7 @@ import {
   readLegacyExternalMessages,
 } from "../ExternalSessionIngestor";
 import type { ExternalSessionRef } from "../types";
+import { ExternalIngestQueueFullError } from "../types";
 import type { SessionStore } from "@nimbalyst/runtime/ai/adapters/sessionStore";
 
 const ref: ExternalSessionRef = {
@@ -276,6 +277,28 @@ describe("ExternalSessionIngestor", () => {
         }),
       })
     );
+  });
+  // The watcher skips its retry back-off only for this error class (GitHub #1812).
+  it("rejects with ExternalIngestQueueFullError while the queue is full", async () => {
+    const h = harness(1);
+    let release!: () => void;
+    const batch = await h.source.readSince();
+    h.source.readSince.mockImplementationOnce(
+      () => new Promise((resolve) => (release = () => resolve(batch)))
+    );
+    const first = h.ingestor.ingest(h.source, ref, {
+      workspacePath: "/workspace",
+    });
+    await expect(
+      h.ingestor.ingest(
+        h.source,
+        { ...ref, externalId: "other", filePath: "/other" },
+        { workspacePath: "/workspace" }
+      )
+    ).rejects.toBeInstanceOf(ExternalIngestQueueFullError);
+    await vi.waitFor(() => expect(release).toBeDefined());
+    release();
+    await first;
   });
   it("bounds provisional files, clears them on stop, and discards metadata after source reset", async () => {
     const h = harness(2);

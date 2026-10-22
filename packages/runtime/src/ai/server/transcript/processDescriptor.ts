@@ -84,6 +84,7 @@ export async function processDescriptor(
         mode: desc.mode,
         createdAt: desc.createdAt,
         thinking: desc.thinking,
+        progressUpdate: desc.progressUpdate,
         thinkingSignature: desc.thinkingSignature,
         model: desc.model,
       });

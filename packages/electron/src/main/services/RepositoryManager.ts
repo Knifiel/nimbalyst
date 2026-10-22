@@ -25,6 +25,10 @@ import { createPendingSubmissionStore, type PendingSubmissionStore } from './ai/
 import { runAgentMessagesBackfill } from './AgentMessagesBackfill';
 import { healArchivedWorkstreamChildren } from './healArchivedWorkstreamChildren';
 import { migrateSessionTrees } from './sessionTreeMigration';
+import { trimSessionCurrentTasks } from './sessionCurrentTasksTrim';
+import { AnalyticsService } from './analytics/AnalyticsService';
+import { app } from 'electron';
+import * as path from 'path';
 import { runWhenFirstUsable } from './startupMaintenanceGate';
 import { database } from '../database/PGLiteDatabaseWorker';
 import { createSQLiteStoreAdapter } from '../database/sqlite/SQLiteStoreAdapter';
@@ -238,6 +242,19 @@ class RepositoryManager {
       // in case sign-in already completed; the auth hook below retries when it
       // has not, since the replica identity needs an account id.
       runWhenFirstUsable('legacy-pending-update-drain', () => drainAllLegacyPendingUpdates());
+
+      // Bring task lists written before the provider bounded them down to the
+      // same bound, after exporting everything removed. Runs once.
+      runWhenFirstUsable('session-task-history-trim', async () => {
+        const result = await trimSessionCurrentTasks(dbAdapter, {
+          exportDir: path.join(app.getPath('userData'), 'session-task-history-exports'),
+          onBeforeTrim: summary => AnalyticsService.getInstance().sendEvent('session_task_history_trimmed', {
+            sessions: summary.sessions, entries: summary.entries, agentReports: summary.agentReports,
+          }),
+          log: message => logger.main.info(message),
+        });
+        if (result.status === 'export-unverified') logger.main.error(`[RepositoryManager] Session task history export did not verify; nothing trimmed: ${result.exportPath}`);
+      });
 
       // Subscribe to auth state changes to reinitialize sync when user authenticates
       // This handles the case where Stytch is lazy-initialized after repositories are ready

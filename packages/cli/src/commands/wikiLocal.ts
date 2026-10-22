@@ -20,11 +20,12 @@ import { resolveWikiLocation } from '../localWiki/locate.js';
 import { hasLocalWiki, initLocalWiki, openLocalWiki } from '../localWiki/open.js';
 import { buildTree, findPage, isTeamReference, positionBeside } from '../localWiki/tree.js';
 import { runMoveToTeam } from './wikiMove.js';
+import { runWikiExport } from './wikiExport.js';
 
 /** Verbs the local wiki has; `ls` is `list`. */
-const LOCAL_VERBS = new Set(['init', 'list', 'ls', 'read', 'write', 'move', 'search', 'convert-type', 'move-to-team']);
+const LOCAL_VERBS = new Set(['init', 'list', 'ls', 'read', 'write', 'move', 'search', 'convert-type', 'move-to-team', 'export']);
 /** Local verbs with no team counterpart. */
-const LOCAL_ONLY = new Set(['init', 'write', 'convert-type', 'move-to-team']);
+const LOCAL_ONLY = new Set(['init', 'write', 'convert-type', 'move-to-team', 'export']);
 
 const startDir = (args: ParsedArgs) => flagStr(args, 'workspace') ?? process.cwd();
 
@@ -104,6 +105,8 @@ export async function runLocalWiki(args: ParsedArgs, version = '0.0.0-dev'): Pro
     switch (args.verb) {
       case 'move-to-team':
         return await runMoveToTeam(args, opened, version);
+      case 'export':
+        return await runWikiExport(args, opened, version);
       case 'list':
       case 'ls':
         return await runLs(args, wiki);

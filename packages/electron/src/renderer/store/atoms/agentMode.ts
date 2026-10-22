@@ -41,6 +41,8 @@ export interface SessionHistoryLayout {
   viewMode: 'list' | 'kanban';
   /** One line per session row instead of title plus a metadata line. */
   compactRows: boolean;
+  /** Thin context-window fill bar under each session title. */
+  showContextUsage: boolean;
 }
 
 /**
@@ -87,6 +89,7 @@ const DEFAULT_SESSION_HISTORY_LAYOUT: SessionHistoryLayout = {
   sortOrder: 'updated',
   viewMode: 'list',
   compactRows: false,
+  showContextUsage: false,
 };
 
 const DEFAULT_LAYOUT: AgentModeLayout = {
@@ -115,6 +118,7 @@ export function mergeWithDefaults(persisted: Partial<AgentModeLayout> | undefine
     // Coerce any value other than the two known ones back to 'updated'.
     sortOrder: persisted?.sessionHistoryLayout?.sortOrder === 'created' ? 'created' : 'updated',
     compactRows: persisted?.sessionHistoryLayout?.compactRows === true,
+    showContextUsage: persisted?.sessionHistoryLayout?.showContextUsage === true,
   };
   // Only pick known layout fields from persisted data.
   // agenticCodingWindowState stores both layout AND selectedWorkstream at the same level.
@@ -198,6 +202,11 @@ export const sortOrderAtom = atom(
 /** Whether session rows render on a single line */
 export const compactRowsAtom = atom(
   (get) => get(agentModeLayoutAtom).sessionHistoryLayout.compactRows
+);
+
+/** Whether session rows show a context-window fill bar */
+export const showContextUsageAtom = atom(
+  (get) => get(agentModeLayoutAtom).sessionHistoryLayout.showContextUsage
 );
 
 /** View mode for session history (list or kanban) */
@@ -443,6 +452,16 @@ export const setCompactRowsAtom = atom(
   null,
   (_get, set, compactRows: boolean) => {
     set(setSessionHistoryLayoutAtom, { compactRows });
+  }
+);
+
+/**
+ * Toggle the context-window fill bar on session rows.
+ */
+export const setShowContextUsageAtom = atom(
+  null,
+  (_get, set, showContextUsage: boolean) => {
+    set(setSessionHistoryLayoutAtom, { showContextUsage });
   }
 );
 

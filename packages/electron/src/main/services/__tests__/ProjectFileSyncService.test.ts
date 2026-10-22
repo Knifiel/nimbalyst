@@ -140,7 +140,9 @@ describe('ProjectFileSyncService.handleFileSaved', () => {
     await writeFile(filePath, '# Same\n', 'utf-8');
     (service as any).projectStates.get('proj-enc').set(syncId, { syncId, contentHash: sha256('# Same\n'), lastSyncedMtime: 1 });
 
-    const touched = new Date(Date.now() + 5_000);
+    // A whole second: utimes takes fractional seconds, and reading a
+    // millisecond time back can land 1 ms low, so the stamp check flaked.
+    const touched = new Date(Math.floor((Date.now() + 5_000) / 1000) * 1000);
     await fsp.utimes(filePath, touched, touched);
     await service.handleFileSaved(filePath, tmpDir, 'proj-enc');
 
@@ -239,6 +241,39 @@ describe('ProjectFileSyncService remote-write conflict guard', () => {
 
     const after = await fsp.readFile(filePath, 'utf-8');
     expect(after).toBe(newContent);
+  });
+
+  it('sends a delete instead of restoring a file this desktop synced and then deleted (NIM-7587)', async () => {
+    const fsp = await import('fs/promises');
+    const deleteFile = vi.fn();
+    (service as any).provider.deleteFile = deleteFile;
+    const remoteFile = (relPath: string, content: string) => ({
+      syncId: syncIdFromPath(relPath), relativePath: relPath, title: path.basename(relPath, '.md'),
+      content, contentHash: sha256(content), lastModifiedAt: Date.now() - 60_000, hasYjs: false,
+    });
+    // Synced here, then removed with its folder (no per-file unlink reached sync).
+    const deletedRel = path.join('temptests', 'wt', 'README.md');
+    const { filePath: deletedPath, syncId: deletedId } = await seedSyncedFile(deletedRel, '# Readme\n', Date.now() - 60_000);
+    await rm(path.join(tmpDir, 'temptests'), { recursive: true, force: true });
+    // Never synced here: another device's new file still arrives.
+    const newRel = path.join('docs', 'from-phone.md');
+    // Synced here, deleted, then edited on another device: the edit wins.
+    const editedRel = path.join('docs', 'edited-elsewhere.md');
+    const { filePath: editedPath } = await seedSyncedFile(editedRel, 'before\n', Date.now() - 60_000);
+    await rm(editedPath);
+
+    await (service as any).handleSyncResponse('proj-enc', {
+      updatedFiles: [],
+      newFiles: [remoteFile(deletedRel, '# Readme\n'), remoteFile(newRel, 'hello\n'), remoteFile(editedRel, 'after\n')],
+      deletedSyncIds: [], needFromClient: [], yjsUpdates: [],
+    });
+
+    await expect(fsp.access(deletedPath)).rejects.toThrow();
+    expect(deleteFile).toHaveBeenCalledTimes(1);
+    expect(deleteFile).toHaveBeenCalledWith('proj-enc', deletedId);
+    expect((service as any).projectStates.get('proj-enc').has(deletedId)).toBe(false);
+    expect(await fsp.readFile(path.join(tmpDir, newRel), 'utf-8')).toBe('hello\n');
+    expect(await fsp.readFile(editedPath, 'utf-8')).toBe('after\n');
   });
 });
 

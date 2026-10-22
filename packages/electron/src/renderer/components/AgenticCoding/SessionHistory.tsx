@@ -48,7 +48,7 @@ import { activeWorkspacePathAtom } from '../../store/atoms/openProjects';
 import { useGitRepoProbe } from '../../hooks/useGitRepoProbe';
 import { workstreamStateAtom } from '../../store/atoms/workstreamState';
 import { sessionProcessingAtom, sessionUnreadAtom, sessionHasPendingInteractivePromptAtom, activeSessionIdAtom as globalActiveSessionIdAtom, sessionPinnedUpdateAtom } from '../../store/atoms/sessions';
-import { collapsedGroupsAtom, compactRowsAtom, setCompactRowsAtom, sortOrderAtom, setCollapsedGroupsAtom, setSortOrderAtom } from '../../store/atoms/agentMode';
+import { collapsedGroupsAtom, compactRowsAtom, setCompactRowsAtom, showContextUsageAtom, setShowContextUsageAtom, sortOrderAtom, setCollapsedGroupsAtom, setSortOrderAtom } from '../../store/atoms/agentMode';
 import {
   recentlyRenamedSessionAtom,
   selectSessionActionAtom,
@@ -231,6 +231,8 @@ const SessionHistoryComponent: React.FC = () => {
   const controlledSortOrder = useAtomValue(sortOrderAtom);
   const compactRows = useAtomValue(compactRowsAtom);
   const setCompactRows = useSetAtom(setCompactRowsAtom);
+  const showContextUsage = useAtomValue(showContextUsageAtom);
+  const setShowContextUsage = useSetAtom(setShowContextUsageAtom);
   const setCollapsedGroupsAction = useSetAtom(setCollapsedGroupsAtom);
   const setSortOrderAction = useSetAtom(setSortOrderAtom);
   const onCollapsedGroupsChange = setCollapsedGroupsAction;
@@ -3265,6 +3267,19 @@ const SessionHistoryComponent: React.FC = () => {
               >
                 <span>Compact rows</span>
                 {compactRows && (
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M13 4L6 11L3 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )}
+              </button>
+              <button
+                className={`session-history-context-usage-option flex items-center justify-between w-full px-3 py-2 text-[13px] border-none text-[var(--nim-text)] cursor-pointer transition-colors duration-150 text-left gap-2 hover:bg-[var(--nim-bg-hover)] [&>span]:flex-1 [&_svg]:shrink-0 [&_svg]:text-[var(--nim-primary)] ${showContextUsage ? 'bg-[var(--nim-bg-selected)] font-medium' : ''}`}
+                onClick={() => { setShowContextUsage(!showContextUsage); setSortDropdownOpen(false); }}
+                role="menuitemcheckbox"
+                aria-checked={showContextUsage}
+              >
+                <span>Show context usage</span>
+                {showContextUsage && (
                   <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M13 4L6 11L3 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>

@@ -26,6 +26,7 @@ vi.mock('../../../store', () => ({
 vi.mock('../../../store/atoms/sessions', () => ({ convertToWorkstreamAtom: () => ({}) }));
 vi.mock('../../../store/atoms/teamInbox', () => ({ sessionAgentWakePendingAtom: () => ({}) }));
 vi.mock('../SessionContextMenu', () => ({ SessionContextMenu: () => null }));
+vi.mock('../SessionContextUsageBar', () => ({ SessionContextUsageBar: () => null }));
 
 import { SessionListItem } from '../SessionListItem';
 import { SessionRelativeTime } from '../SessionRelativeTime';

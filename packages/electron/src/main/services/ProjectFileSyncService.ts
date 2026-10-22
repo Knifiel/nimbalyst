@@ -24,7 +24,7 @@ import { getPersonalSessionJwt } from './StytchAuthService';
 import { hashProjectFiles } from './ProjectManifestHasher';
 import { exceedsProjectSyncLimit, OversizedFileWarnings, projectSyncTitle, storedSyncIds } from './projectFileSyncLimits';
 import { keepDivergedRemoteCopy } from './projectFileSyncConflicts';
-import { isInWikiTrash, isProjectSyncPath, isWikiMarkerPath, ProjectSyncWikiRules, wikiMarkerFirst } from './sync/projectSyncWikiRules';
+import { isInWiki, isInWikiTrash, isProjectSyncPath, isWikiMarkerPath, ProjectSyncWikiRules, wikiMarkerFirst } from './sync/projectSyncWikiRules';
 import { parseDiskStamp, persistDiskStamps, stampMatches, type DiskStamp, type ScannedFile } from './projectFileSyncDiskCache';
 
 interface SyncedFileState {
@@ -36,7 +36,7 @@ interface SyncedFileState {
 /** What writeRemoteFileToDisk did with one offered file; logged per sync response. */
 type RemoteWriteOutcome =
   | 'written' | 'in-sync' | 'not-sync-path' | 'deferred-dirty'
-  | 'kept-local-newer' | 'kept-local-diverged' | 'moved-away' | 'failed';
+  | 'kept-local-newer' | 'kept-local-diverged' | 'moved-away' | 'deleted-locally' | 'failed';
 
 export class ProjectFileSyncService {
   private provider: ProjectSyncProvider | null = null;
@@ -656,6 +656,20 @@ export class ProjectFileSyncService {
       } else if (await this.wikiRules.isMovedAwayLocally(projectId, workspacePath, file)) {
         this.handleFileDeleted(file.syncId, projectId);
         return 'moved-away';
+      } else if (
+        !isInWiki(filePath, workspacePath)
+        && this.projectStates.get(projectId)?.get(file.syncId)?.contentHash === file.contentHash
+      ) {
+        // This desktop synced exactly this version and the file is gone, so it
+        // was deleted here without a per-file unlink reaching sync: a folder
+        // removal, or a delete while the app was closed. Restoring it made
+        // deleted folders come back (NIM-7587). Send the delete instead; a
+        // version edited elsewhere since has another hash and is still written.
+        // Inside the wiki the move rules above decide, and restore unless the
+        // moved copy provably holds the content.
+        logger.main.info(`[ProjectFileSync] Deleted locally since last sync: ${file.relativePath}`);
+        this.handleFileDeleted(file.syncId, projectId);
+        return 'deleted-locally';
       }
 
       // Fast-forward: remote is strictly newer and local is unchanged since the

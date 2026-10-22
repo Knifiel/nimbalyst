@@ -176,6 +176,8 @@ export default defineConfig(({ command, mode }) => {
       // The collab bundle owns a compiled copy of the comment UI; a second copy would split its registries.
       { find: '@nimbalyst/runtime/editor/commenting/ui', replacement: resolvePath('@nimbalyst/collab-bundle/commenting-ui') },
       { find: /^@nimbalyst\/runtime$/, replacement: wikiRuntimeBridge },
+      // Monaco without its language workers; see monacoCore.ts.
+      { find: /^monaco-editor$/, replacement: path.join(here, 'src/editors/monacoCore.ts') },
     ],
   },
   server: { fs: { allow: [here, runtimeSource, webEditorsSourceDir, collabBundleDist, ...editorBundles.map((bundle) => path.dirname(bundle.entryPath))] } },

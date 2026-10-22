@@ -27,6 +27,11 @@ import { resolveSessionModelSelection } from '../services/ai/sessionModelSelecti
 import { inheritedOwnership, stripOwnerControlledMetadata } from '../services/extensionSessions/sessionOwnership';
 import { readSessionSubtree } from '../services/sessionHierarchy';
 import { isLocalWikiItemId } from '../services/localWiki/localWikiItemIds';
+import { createTrailingSingleFlight } from '../utils/asyncCache';
+
+// Several listeners refresh the list on one event; eight identical calls in the
+// same millisecond each materialized every session row before the OOM abort.
+const sessionListFlight = createTrailingSingleFlight<string, unknown>();
 
 // Initialize session manager
 const sessionManager = new SessionManager();
@@ -495,7 +500,10 @@ export async function registerSessionHandlers() {
     });
 
     // List sessions for workspace
-    safeHandle('sessions:list', async (event, workspacePath: string, options?: { includeArchived?: boolean }) => {
+    safeHandle('sessions:list', (event, workspacePath: string, options?: { includeArchived?: boolean }) =>
+        sessionListFlight(`${workspacePath}\u0000${options?.includeArchived ? 1 : 0}`, () => listSessions(workspacePath, options)));
+
+    async function listSessions(workspacePath: string, options?: { includeArchived?: boolean }) {
         try {
             const startTime = performance.now();
             const entries = await AISessionsRepository.list(workspacePath, options);
@@ -527,7 +535,7 @@ export async function registerSessionHandlers() {
             console.error('[SessionHandlers] Failed to list sessions:', error);
             return { success: false, error: String(error), sessions: [] };
         }
-    });
+    }
 
     // List child sessions for a parent session
     safeHandle('sessions:list-children', async (

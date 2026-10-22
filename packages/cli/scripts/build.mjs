@@ -71,7 +71,13 @@ await build({
   external: ['better-sqlite3'],
   define: { __NIM_VERSION__: JSON.stringify(version) },
   // The app's mark parser is pure but not a package of its own; see src/types/pageMarkSyntax.d.ts.
-  alias: { '@nimbalyst/runtime/core/pageMarkSyntax': path.join(packageDir, '../runtime/src/core/pageMarkSyntax.ts') },
+  alias: {
+    '@nimbalyst/runtime/core/pageMarkSyntax': path.join(packageDir, '../runtime/src/core/pageMarkSyntax.ts'),
+    // `nim hook session-inputs` runs the knowledge extension's server; see src/types/wikiPlugin.d.ts.
+    '@nimbalyst/wiki-plugin/session-inputs': path.join(packageDir, '../extensions/knowledge/src/sessionInputs/server.ts'),
+    // The session-inputs server's citation format, as the plugin bundle resolves it.
+    '@nimbalyst/runtime/core/citationSyntax': path.join(packageDir, '../runtime/src/core/citationSyntax.ts'),
+  },
   // Each entry is bundled independently rather than sharing chunks: the two bin
   // entries differ only in whether they declare the bundled SQLite channel
   // before anything opens a database, and that declaration is module state.

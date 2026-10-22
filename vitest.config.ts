@@ -42,8 +42,17 @@ const alias = [
     replacement: path.resolve(__dirname, './packages/local-wiki/src/index.ts'),
   },
   {
+    find: /^@nimbalyst\/local-wiki\/browser$/,
+    replacement: path.resolve(__dirname, './packages/local-wiki/src/browser.ts'),
+  },
+  {
     find: '@nimbalyst/collab-protocol',
     replacement: path.resolve(__dirname, './packages/collab-protocol/src'),
+  },
+  {
+    // `nim hook session-inputs` runs the knowledge extension's server; see packages/cli/src/types/wikiPlugin.d.ts.
+    find: '@nimbalyst/wiki-plugin/session-inputs',
+    replacement: path.resolve(__dirname, './packages/extensions/knowledge/src/sessionInputs/server.ts'),
   },
   {
     // wiki-web imports runtime source under this name (see its vite.config.ts); must precede the plain prefix below.

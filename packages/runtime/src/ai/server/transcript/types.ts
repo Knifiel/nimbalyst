@@ -54,6 +54,8 @@ export interface AssistantMessagePayload {
    * content.
    */
   thinking?: string;
+  /** `thinking` is an API progress update (see AssistantMessageDescriptor.progressUpdate). */
+  progressUpdate?: boolean;
   /** Signature accompanying the thinking block. */
   thinkingSignature?: string;
   /** Per-turn model id (e.g. "claude-opus-4-7"). New in Claude Code 2.1.x. */

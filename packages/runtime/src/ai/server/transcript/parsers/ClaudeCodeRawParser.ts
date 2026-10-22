@@ -44,6 +44,23 @@ export class ClaudeCodeRawParser implements IRawMessageParser {
   private processedTextMessageIds = new Set<string>();
 
   /**
+   * API message id of the most recent thinking block. Opus 5.5 and Fable 5
+   * return text written between tool calls as a second thinking block in the
+   * same message, holding a summary of that text (a "progress update",
+   * #1801). The transformer carries this across incremental batches because
+   * the two blocks usually arrive as separate rows.
+   */
+  private lastThinkingMessageId: string | undefined;
+
+  setLastThinkingMessageId(messageId: string | undefined): void {
+    this.lastThinkingMessageId = messageId;
+  }
+
+  getLastThinkingMessageId(): string | undefined {
+    return this.lastThinkingMessageId;
+  }
+
+  /**
    * When true, result chunk text is always suppressed.
    * Set by the transformer when this parser handles a resume batch
    * (afterId > 0), because prior batches may have already produced
@@ -225,7 +242,7 @@ export class ClaudeCodeRawParser implements IRawMessageParser {
                 createdAt: msg.createdAt,
                 ...(turnModel ? { model: turnModel } : {}),
               });
-            } else if (block.type === 'thinking' && (block.thinking || block.text)) {
+            } else if (block.type === 'thinking') {
               // Extended-thinking output. Persist as an assistant_message
               // with empty text and the thinking content on the side-channel
               // so we don't have to migrate the event_type CHECK constraint.
@@ -235,6 +252,8 @@ export class ClaudeCodeRawParser implements IRawMessageParser {
                   : typeof block.text === 'string'
                     ? block.text
                     : '';
+              const progressUpdate = !!messageId && this.lastThinkingMessageId === messageId;
+              if (messageId) this.lastThinkingMessageId = messageId;
               if (!thinkingText) continue;
               const thinkingSignature: string | undefined =
                 typeof block.signature === 'string' ? block.signature : undefined;
@@ -242,6 +261,7 @@ export class ClaudeCodeRawParser implements IRawMessageParser {
                 type: 'assistant_message',
                 text: '',
                 thinking: thinkingText,
+                ...(progressUpdate ? { progressUpdate: true } : {}),
                 ...(thinkingSignature ? { thinkingSignature } : {}),
                 ...(turnModel ? { model: turnModel } : {}),
                 createdAt: msg.createdAt,

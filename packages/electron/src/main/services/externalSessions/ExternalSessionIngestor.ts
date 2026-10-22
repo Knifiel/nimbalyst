@@ -13,6 +13,7 @@ import type {
   ExternalSessionRef,
   ExternalSessionSource,
 } from "./types";
+import { ExternalIngestQueueFullError } from "./types";
 
 export interface ExternalWorkspaceRoute {
   workspacePath: string;
@@ -106,9 +107,7 @@ export class ExternalSessionIngestor {
     if (source.providerId !== ref.providerId)
       return Promise.reject(new Error("External source provider mismatch"));
     if (this.pending >= this.maxPending)
-      return Promise.reject(
-        new Error("External ingestion queue is full; retry on next scan")
-      );
+      return Promise.reject(new ExternalIngestQueueFullError());
     const key = JSON.stringify([ref.providerId, ref.externalId]);
     this.pending++;
     const fence: {

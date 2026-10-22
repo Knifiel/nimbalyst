@@ -17,6 +17,7 @@ import { PAGE_TOOL_NAMES, pageToolContract } from '@nimbalyst/collab-protocol';
 import { handleMessage, runStdioServer } from '../stdioServer.js';
 import { TeamScopeRefusal, ToolMap, textResult } from '../toolMap.js';
 import { resolvePluginWorkspace } from '../pluginWorkspace.js';
+import { pluginServerSetup } from '../pluginEntry.js';
 import { writeMigratedTo } from '../../localWiki/locate.js';
 import { createLocalToolMap, LOCAL_SERVER_INSTRUCTIONS, localWikiContext } from '../serverTools.js';
 import { detectNpmInstall, detectPluginInstall, startUpdateCheck, type PluginInstall } from '../updateCheck.js';
@@ -45,6 +46,9 @@ beforeAll(async () => {
       '@nimbalyst/local-wiki': path.join(repoRoot, 'packages/local-wiki/src/index.ts'),
       '@nimbalyst/collab-protocol': path.join(repoRoot, 'packages/collab-protocol/src/index.ts'),
       '@nimbalyst/runtime/core/pageMarkSyntax': path.join(repoRoot, 'packages/runtime/src/core/pageMarkSyntax.ts'),
+      // As in scripts/build.mjs: the session-inputs server `nim hook` runs.
+      '@nimbalyst/wiki-plugin/session-inputs': path.join(repoRoot, 'packages/extensions/knowledge/src/sessionInputs/server.ts'),
+      '@nimbalyst/runtime/core/citationSyntax': path.join(repoRoot, 'packages/runtime/src/core/citationSyntax.ts'),
     },
     logLevel: 'silent',
   });
@@ -385,6 +389,13 @@ describe('re-pointing the server at another project', () => {
     expect(LOCAL_SERVER_INSTRUCTIONS).toContain('`capture` skill');
     expect(LOCAL_SERVER_INSTRUCTIONS).toContain('listMarks');
   });
+
+  it('the local server steers the agent to its own tools, not a separately installed `nim` on PATH', () => {
+    // A user on plugin 0.11.0 had an agent read `nim --version` from an older global install and report the wrong version.
+    expect(LOCAL_SERVER_INSTRUCTIONS).toContain('`openWikiInBrowser`');
+    expect(LOCAL_SERVER_INSTRUCTIONS).toContain('`wikiDoctor`');
+    expect(LOCAL_SERVER_INSTRUCTIONS).toMatch(/`nim` command on the shell's PATH is a separate install/);
+  });
 });
 
 describe('plugin workspace', () => {
@@ -509,6 +520,14 @@ describe('plugin update check', () => {
 
       expect(detectPluginInstall({}, '/repo', otherRoot)).toBeNull();
       expect(detectPluginInstall({}, '/repo', path.join(repoRoot, 'plugins/nimbalyst-wiki'))).toBeNull();
+
+      // `nim mcp` as each agent's plugin config starts it through npx, in the project: Claude Code
+      // passes the plugin root; Codex can't, so its install is found under the CLI's own version.
+      const machine = (env: NodeJS.ProcessEnv) => ({ env, home });
+      expect(pluginServerSetup(machine({ CLAUDE_PROJECT_DIR: '/repo' }), '/repo', { root: claudeRoot }, '0.5.0')).toEqual({ workspace: '/repo', install: claude });
+      expect(pluginServerSetup(machine({ CLAUDE_PROJECT_DIR: '/repo' }), '/repo', { root: otherRoot }, '0.5.0').install).toEqual({ kind: 'unmanaged', reason: 'checkout' });
+      expect(pluginServerSetup(machine({ PWD: '/npx/clobbered' }), '/repo', { agent: 'codex' }, '0.5.0')).toEqual({ workspace: '/repo', install: { ...codex, agent: 'codex' } });
+      expect(pluginServerSetup(machine({}), '/repo', { agent: 'codex' }, '0.6.0').install).toEqual({ kind: 'unmanaged', reason: 'checkout' });
 
       const notice = startUpdateCheck({ install: { ...codex!, version: '0.4.0' }, env: {}, cacheFile: path.join(home, 'c.json'), now: () => 0, fetchImpl: manifestFetch('0.5.0'), log: () => {} });
       await notice.settled;

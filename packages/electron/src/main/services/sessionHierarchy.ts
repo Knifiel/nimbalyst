@@ -34,9 +34,22 @@ export function withHierarchyWrite<T>(write: () => Promise<T>): Promise<T> {
   return result;
 }
 
-export async function readHierarchy(db: HierarchyDatabase, workspaceId: string): Promise<HierarchyRow[]> {
+/**
+ * The metadata keys hierarchy writes read: the pending intent, and the original
+ * spawner. The spawner key is emitted only when the row has it, because an
+ * explicit null and an absent key mean different things to
+ * `managerReassignmentMetadata`. `->` yields JSON null, not SQL NULL, for an
+ * explicit null on both backends. Selecting the whole column parsed every
+ * session's task history on each remote snapshot.
+ */
+export const HIERARCHY_METADATA_SQL = `CASE WHEN metadata->'originalSpawnerSessionId' IS NOT NULL
+  THEN jsonb_build_object('hierarchySyncIntent', metadata->'hierarchySyncIntent', 'originalSpawnerSessionId', metadata->'originalSpawnerSessionId')
+  ELSE jsonb_build_object('hierarchySyncIntent', metadata->'hierarchySyncIntent') END AS metadata`;
+
+/** The workspace graph. Placement checks need no metadata; only the one-time tree migration asks for it. */
+export async function readHierarchy(db: HierarchyDatabase, workspaceId: string, options?: { withMetadata?: boolean }): Promise<HierarchyRow[]> {
   return (await db.query<HierarchyRow>(
-    `SELECT id, workspace_id, parent_session_id, worktree_id, created_by_session_id, session_type, title, metadata
+    `SELECT id, workspace_id, parent_session_id, worktree_id, created_by_session_id, session_type, title${options?.withMetadata ? ', metadata' : ''}
      FROM ai_sessions WHERE workspace_id = $1
        OR parent_session_id IN (SELECT id FROM ai_sessions WHERE workspace_id = $1)`, [workspaceId],
   )).rows;
@@ -212,7 +225,7 @@ export function wrapSessionHierarchyWrites(store: SessionStore, db: HierarchyDat
       if (!changesHierarchy) return patch.isArchived !== undefined ? withHierarchyWrite(() => store.updateMetadata(sessionId, patch)) : store.updateMetadata(sessionId, patch);
       return withHierarchyWrite(async () => {
         await ensureReady();
-        const { rows } = await db.query<HierarchyRow>('SELECT id, workspace_id, parent_session_id, worktree_id, created_by_session_id, session_type, title, metadata FROM ai_sessions WHERE id = $1', [sessionId]);
+        const { rows } = await db.query<HierarchyRow>(`SELECT id, workspace_id, parent_session_id, worktree_id, created_by_session_id, session_type, title, ${HIERARCHY_METADATA_SQL} FROM ai_sessions WHERE id = $1`, [sessionId]);
         const current = rows[0];
         if (!current) throw new Error('Session not found');
         if (patch.expectedParentSessionId !== undefined && patch.expectedParentSessionId !== (current.parent_session_id ?? null)) throw new Error('Session parent changed; refresh before moving it');
@@ -246,7 +259,7 @@ export async function deleteSessionAndLiftChildren(db: HierarchyDatabase, sessio
   if (!db.runTransaction) throw new Error('Session deletion requires transactional storage');
   const { rows: deletedRows } = await db.query<HierarchyRow>('SELECT id, workspace_id, parent_session_id FROM ai_sessions WHERE id = $1', [sessionId]);
   const deleted = deletedRows[0];
-  const { rows: children } = await db.query<HierarchyRow>('SELECT id, workspace_id, title, parent_session_id, created_by_session_id, metadata FROM ai_sessions WHERE parent_session_id = $1 OR created_by_session_id = $1', [sessionId]);
+  const { rows: children } = await db.query<HierarchyRow>(`SELECT id, workspace_id, title, parent_session_id, created_by_session_id, ${HIERARCHY_METADATA_SQL} FROM ai_sessions WHERE parent_session_id = $1 OR created_by_session_id = $1`, [sessionId]);
   const changes = children.map(child => ({ child,
     parentId: child.parent_session_id === sessionId ? deleted?.parent_session_id ?? null : child.parent_session_id ?? null,
     managerId: child.created_by_session_id === sessionId

@@ -136,7 +136,7 @@ import {
   wantsPromptSuggestion,
 } from './claudeCode/promptSuggestionWait';
 import { injectPendingTeammateMessages } from './claudeCode/teammateInjection';
-import { hydrateTaskListItems, persistCurrentTodos, stopStaleRunningTasks } from './claudeCode/sessionMetadataWrites';
+import { hydrateTaskListItems, persistCurrentTasks, persistCurrentTodos, stopStaleRunningTasks } from './claudeCode/sessionMetadataWrites';
 import { applySystemTaskChunk, recordBackgroundEvidence, type TrackedSystemTask } from './claudeCode/systemTaskChunks';
 import {
   raceNextChunkWithStallWatchdog,
@@ -2567,23 +2567,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
 
   private async emitTaskUpdate(sessionId: string | undefined): Promise<void> {
     if (!sessionId) return;
-
-    try {
-      const { AISessionsRepository } = await import('../../../storage/repositories/AISessionsRepository');
-      const currentSession = await AISessionsRepository.get(sessionId);
-      const currentMetadata = currentSession?.metadata || {};
-
-      await AISessionsRepository.updateMetadata(sessionId, {
-        metadata: {
-          ...currentMetadata,
-          currentTasks: Array.from(this.activeTasks.values()),
-        }
-      });
-
-      this.emit('message:logged', { sessionId, direction: 'output' });
-    } catch (error) {
-      console.error('[CLAUDE-CODE] Failed to update session metadata with tasks:', error);
-    }
+    await persistCurrentTasks(sessionId, this.activeTasks, () => this.emit('message:logged', { sessionId, direction: 'output' }));
   }
 
   /**

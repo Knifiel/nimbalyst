@@ -170,7 +170,7 @@ import { TrackerMode } from './components/TrackerMode';
 import { PullRequestMode, type PullRequestModeRef } from './components/PullRequestMode';
 import { CollabMode, type CollabModeRef } from './components/CollabMode';
 import { navigatePagesHistory } from './components/CollabMode/pagesTabNavigation';
-import { openAgentEditedPage } from './utils/agentEditedPage';
+import { openAgentEditedPage, openFileAsWikiPage } from './utils/agentEditedPage';
 import { openConsoleLinkInWindow } from './utils/openConsoleLink';
 import {
   OrgModeHost,
@@ -1728,6 +1728,15 @@ export default function App() {
     }
   }, [workspacePath, setActiveMode]);
 
+  // A transcript link: a Local wiki page opens in Pages, anything else in Files.
+  const handleFileLinkOpen = useCallback(async (filePath: string, location?: EditorRevealPosition) => {
+    if (workspacePath && await openFileAsWikiPage(filePath, workspacePath, 'agent_tool')) {
+      if (location) revealEditorPosition(filePath, location);
+      return;
+    }
+    await handleWorkspaceFileSelect(filePath, location);
+  }, [workspacePath, handleWorkspaceFileSelect]);
+
   // Configure aiToolService with handleWorkspaceFileSelect
   useEffect(() => {
     aiToolService.setHandleWorkspaceFileSelectFunction(handleWorkspaceFileSelect);
@@ -2394,13 +2403,14 @@ export default function App() {
 
   // Handle QuickOpen file selection - delegates to EditorMode and switches mode if needed
   const handleQuickOpenFileSelect = useCallback(async (filePath: string) => {
+    if (workspacePath && await openFileAsWikiPage(filePath, workspacePath, 'quick_open')) return;
     setActiveMode('files');
 
     // Delegate to EditorMode's file selection handler
     if (editorModeRef.current) {
       await editorModeRef.current.selectFile(filePath);
     }
-  }, [setActiveMode]);
+  }, [workspacePath, setActiveMode]);
 
   // Handle QuickOpen folder selection - switches to files mode so the file tree is visible
   const handleQuickOpenFolderSelect = useCallback(() => {
@@ -3150,7 +3160,7 @@ export default function App() {
                   ref={collabModeRef}
                   workspacePath={workspacePath}
                   isActive={activeMode === 'collab'}
-                  onFileOpen={handleWorkspaceFileSelect}
+                  onFileOpen={handleFileLinkOpen}
                   onPanelStateChange={setCollabPanelState}
                 />
               )}
@@ -3210,7 +3220,7 @@ export default function App() {
                           ref={chatSidebarRef}
                           workspacePath={workspacePath}
                           documentContext={extensionPanelDocumentContext}
-                          onFileOpen={handleWorkspaceFileSelect}
+                          onFileOpen={handleFileLinkOpen}
                         />
                       </div>
                     )}

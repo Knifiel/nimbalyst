@@ -1,4 +1,5 @@
 import type { AgentRole, SessionData, SessionMode, SessionType, TranscriptViewMessage } from '../server/types';
+import type { SessionContextUsage } from '../sessionContextUsage';
 
 // Type aliases for compatibility
 export type ChatMessage = TranscriptViewMessage;
@@ -50,6 +51,8 @@ export interface SessionMeta {
   tags?: string[];
   // Linked tracker item IDs (from metadata JSONB)
   linkedTrackerItemIds?: string[];
+  /** Last persisted context-window fill (metadata.tokenUsage.currentContext). */
+  contextUsage?: SessionContextUsage;
   // Branch tracking - SEPARATE from hierarchical parentSessionId
   branchedFromSessionId?: string;
   branchPointMessageId?: number;

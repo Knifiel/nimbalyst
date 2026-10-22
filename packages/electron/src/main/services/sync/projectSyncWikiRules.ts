@@ -62,6 +62,12 @@ function isInside(root: string, filePath: string): boolean {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
+/** True for a path inside this project's Local wiki folder. */
+export function isInWiki(filePath: string, workspacePath: string): boolean {
+  const root = wikiRootWithin(workspacePath);
+  return !!root && isInside(root, filePath);
+}
+
 /** True for the wiki's `.trash/` folder and anything under it. */
 export function isInWikiTrash(filePath: string, workspacePath: string): boolean {
   const root = wikiRootWithin(workspacePath);

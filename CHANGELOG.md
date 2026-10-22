@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- New features go here -->
 - Agents can propose a commit into another worktree of the session's repository; the commit card shows its branch and path and always asks for approval on desktop
 - In the iOS and Android apps, a synced Markdown file now shows an embedded `.html` diagram live instead of as a link; document sync now carries `.html` files so the phone has them
+- The Project Graph timeline has a "24 hours" time range with an hourly ruler and times in its tooltips
+- The session list can show a thin bar under each session with how full its context window is; turn it on with "Show context usage" in the session list's sort menu. Sessions from agents that don't report a context window show no bar
+- The GitHub pull request and issue lists can be searched by author: typing a login matches it, and `author:login` shows only that person's items. Pull request search also matches labels now
+- `nim wiki export --static <dir>` exports a local wiki as a static website for any static host, served from the root of a site: each page gets its own URL and readable HTML, and the browser view shows it read-only with charts, diagrams, embedded editor pages, backlinks and search. Tracker items a page links to get their own read-only page in the export when the Nimbalyst app is on the machine. Pages marked `export: false` and person fields are left out by default
 - New worktrees can be set up automatically: chosen project files such as `.env` are copied in and a setup command runs in a terminal of the worktree (Settings > Project > Worktree Setup)
 - The new-worktree dialog can branch a project's nested clones together with it: one task folder holds a worktree of each chosen clone at its own path, on one branch, with a repository picker in the Git panel, and is archived or deleted as a unit
 - Approving a plan can start its implementation in a new worktree, and sessions an agent spawns into a new worktree get the repositories last picked in the new-worktree dialog and the project's worktree setup, starting once the setup command finishes
@@ -20,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Opening a local wiki page from Quick Open or from a file link in an AI transcript now shows it in Pages mode instead of Files
 - On the SQLite database, tool output older than 30 days in agent transcripts is now replaced with a placeholder by a daily background pass; your prompts, agent replies and tool calls are kept. Shrinking the file on disk is still the Vacuum action in the database dashboard
 - Completed and failed queued prompts older than 30 days are now deleted automatically
 - Old document history is now pruned once a day while the app stays open, and the pruning runs after the first window loads instead of during startup
@@ -28,10 +33,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Editing a tracker item now shortens the before and after values of its older activity entries to the 500-character limit new entries already use, so items edited before that limit stop carrying whole old descriptions in every save
 - When a project with document sync connects or reconnects, only files whose size or modification time changed since they were last read are read and hashed again, instead of every synced file. The first connect after updating still reads every file once
 - Saving a synced document without changing its content no longer uploads it again
+- Session groups in the session list no longer show a count of unread child sessions, which took up row space
+- The table of contents menu in a document's header now indents each heading under the heading it belongs to, and shows deeper headings in smaller, lighter text
 - A worktree of a repository cloned inside the project uses the project's agent trust instead of asking again; the clone opened on its own still asks
 
 ### Fixed
 <!-- Bug fixes go here -->
+- In Claude Agent sessions on Opus 5.5 and Fable 5, the short summary the model returns in place of text written between tool calls now shows as a visible line in the transcript instead of inside a collapsed Thinking box; the full original text is not returned by the API and still can't be shown
+- The background scan for Claude Code and Codex session files now waits before retrying a file that failed to import, starting at 1 minute and growing to 30, instead of retrying it on every pass; a file that changes on disk is still retried right away
+- Files deleted from a synced project, including a whole deleted folder or files deleted while Nimbalyst was closed, are now removed from document sync instead of being written back to disk on the next sync; a file edited on another device since is still restored
 - The local slow-query log is now capped at 2,000 rows instead of growing past its limit
 - The expanded tray panel reads each session's latest reply from an index instead of scanning every assistant message in the database, which could stall other database work for seconds on large histories
 - Session search now finds error messages from Codex sessions; on the SQLite database, existing Codex messages are relabeled once by a background pass
@@ -43,10 +53,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A hook that asks for approval now always prompts, even when the tool was approved for the session, matches a saved Always rule, or would be allowed by the current permission mode
 - Sending a queued prompt now, an orchestrator interrupt, or a teammate message no longer cuts off a commit in progress, and a commit that timed out waiting for the git lock now reports whether it actually committed
 - Commit proposals from Codex sessions no longer fail with "Cannot identify this exact commit proposal"
+- Claude Agent sessions no longer keep every command they have ever run in the session record. The session list re-read those records on each refresh, which could make the app run out of memory and crash. The Agents panel now lists running tasks and the 20 most recent finished ones. After updating, existing records are trimmed to the same limit once, and the removed entries are first saved to an export file in the app's data folder
+- In the Project Graph timeline, an AI session's bar now ends at its last activity or phase change instead of running to today, and when there are more than 1,000 rows the most recent ones are shown instead of the oldest
 - A Claude Code session no longer keeps showing "Waiting for your response" after you answer its question while it carries on working.
 - A prompt whose send failed, or a retried copy of it, no longer stays at the bottom of the transcript below later replies
 - The macOS Window menu now drops a project when you close its window and checks the window that has focus
 - The Pages sidebar now highlights the open page when it is a typed page in a local wiki or sits under a typed page, opening the collapsed rows above it
+- Cursor Agent sessions now receive attached text documents and the file paths of pasted images and PDFs, which the agent opens itself
 - A worktree of a repository cloned inside the project is created next to the project instead of inside it, and the new-worktree dialog names the repository it branches from.
 - Archiving or deleting a worktree no longer deletes another repository's checkout of the same project that sits inside the worktree's folder
 - Archiving or deleting a worktree no longer deletes a folder or branch its repository does not own (another repository's worktree, or a moved, copied, locked or nested checkout), and no longer prunes the repository's other worktrees.

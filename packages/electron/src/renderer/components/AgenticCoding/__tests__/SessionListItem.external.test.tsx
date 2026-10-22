@@ -17,6 +17,7 @@ vi.mock('../../../store/atoms/teamInbox', async () => {
   return { sessionAgentWakePendingAtom: () => value };
 });
 vi.mock('../SessionContextMenu', () => ({ SessionContextMenu: () => null }));
+vi.mock('../SessionContextUsageBar', () => ({ SessionContextUsageBar: () => null }));
 vi.mock('../SessionProviderIcon', () => ({ SessionProviderIcon: () => <span>Provider badge</span> }));
 vi.mock('../FullTitleTooltip', () => ({ FullTitleTooltip: ({ children }: any) => <span>{children}</span> }));
 import { SessionListItem } from '../SessionListItem';

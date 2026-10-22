@@ -132,6 +132,13 @@ export class TranscriptTransformer {
    */
   private sessionLocks = new Map<string, Promise<unknown>>();
 
+  /**
+   * Last Claude Code thinking-block message id per session, carried across
+   * batches so a progress update arriving in a later batch than its empty
+   * sibling thinking block is still recognized (#1801).
+   */
+  private lastThinkingMessageIds = new Map<string, string>();
+
   constructor(
     private rawStore: IRawMessageStore,
     private transcriptStore: ITranscriptEventStore,
@@ -272,6 +279,7 @@ export class TranscriptTransformer {
     // that was processed in a previous batch.
     if (afterId > 0 && parser instanceof ClaudeCodeRawParser) {
       parser.setSuppressResultChunkText(true);
+      parser.setLastThinkingMessageId(this.lastThinkingMessageIds.get(sessionId));
     }
 
     const startSequence = await this.transcriptStore.getNextSequence(sessionId);
@@ -331,6 +339,7 @@ export class TranscriptTransformer {
         }
         lastRawMessageId = msg.id;
       }
+      this.rememberLastThinkingMessageId(sessionId, parser);
 
       // Advance the watermark per page: this page's events are already
       // written, so a failed read of the next page must not replay them.
@@ -592,6 +601,7 @@ export class TranscriptTransformer {
     // turns need result text, and those are always in the first batch.
     if (isResume && parser instanceof ClaudeCodeRawParser) {
       parser.setSuppressResultChunkText(true);
+      parser.setLastThinkingMessageId(this.lastThinkingMessageIds.get(sessionId));
     }
 
     const startSequence = await targetStore.getNextSequence(sessionId);
@@ -639,8 +649,16 @@ export class TranscriptTransformer {
       }
       onPageTransformed?.(lastRawMessageId);
     }
+    this.rememberLastThinkingMessageId(sessionId, parser);
 
     return { lastRawMessageId, eventsWritten };
+  }
+
+  private rememberLastThinkingMessageId(sessionId: string, parser: IRawMessageParser): void {
+    if (!(parser instanceof ClaudeCodeRawParser)) return;
+    const messageId = parser.getLastThinkingMessageId();
+    if (messageId) this.lastThinkingMessageIds.set(sessionId, messageId);
+    else this.lastThinkingMessageIds.delete(sessionId);
   }
 
   // ---------------------------------------------------------------------------

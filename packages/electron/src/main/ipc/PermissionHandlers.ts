@@ -86,7 +86,7 @@ export function registerPermissionHandlers(): void {
       // Get trust mode from our store (still managed by us)
       const permissionMode = permissionService.getPermissionMode(resolvedPath);
       const isTrusted = permissionMode !== null;
-      logger.main.info(`[PermissionHandlers:${workspaceName}] getWorkspacePermissions - permissionMode:`, { permissionMode, isTrusted });
+      logger.main.debug(`[PermissionHandlers:${workspaceName}] getWorkspacePermissions - permissionMode:`, { permissionMode, isTrusted });
 
       // Read patterns from Claude settings files
       const effectiveSettings = await claudeSettingsManager.getEffectiveSettings(workspacePath);

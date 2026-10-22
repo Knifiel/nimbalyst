@@ -1,5 +1,6 @@
 import { SessionSpawnerLink } from './SessionSpawnerLink';
 import { SessionProviderIcon } from './SessionProviderIcon';
+import { SessionContextUsageBar } from './SessionContextUsageBar';
 import React, { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react';
 import { atom, useAtomValue } from 'jotai';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
@@ -418,6 +419,7 @@ export const SessionListItem = memo<SessionListItemProps>(function SessionListIt
             onClick={(e) => e.stopPropagation()}
           />
         ) : compact ? (
+          <>
           <div className="session-list-item-compact-line flex items-center gap-1.5 min-w-0">
             <FullTitleTooltip
               label={displayTitle}
@@ -429,6 +431,8 @@ export const SessionListItem = memo<SessionListItemProps>(function SessionListIt
             <span className="session-list-item-datetime shrink-0 text-[0.6875rem] text-[var(--nim-text-faint)] whitespace-nowrap" title={fullDateTime}>{relativeTime}</span>
             {hint && <span className="session-tree-drop-hint text-xs text-[var(--nim-primary)]" role="status">{hint.label}</span>}
           </div>
+          <SessionContextUsageBar sessionId={id} />
+          </>
         ) : (
           <>
             <FullTitleTooltip
@@ -444,6 +448,7 @@ export const SessionListItem = memo<SessionListItemProps>(function SessionListIt
               <SessionExternalMarker sessionId={id} />
               {treeDetails}
             </div>
+            <SessionContextUsageBar sessionId={id} />
             <SessionSpawnerLink sessionId={id} />
             {hint && <div className="session-tree-drop-hint text-xs text-[var(--nim-primary)]" role="status">{hint.label}</div>}
           </>
