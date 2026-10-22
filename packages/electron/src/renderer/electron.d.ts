@@ -448,6 +448,8 @@ interface ElectronAPI {
   copyToClipboard: (text: string) => Promise<{ success: boolean }>;
   copyImageToClipboard: (payload: { filePath?: string; dataUrl?: string }) => Promise<{ success: boolean; error?: string }>;
   readClipboard: () => Promise<{ success: boolean; text?: string }>;
+  /** Under WSL, the image on the Windows clipboard; null elsewhere or when there is none. */
+  readWindowsClipboardImage: () => Promise<{ mimeType: string; data: Uint8Array<ArrayBuffer> } | null>;
 
   // Settings operations
   getSidebarWidth: (workspacePath: string) => Promise<number>;

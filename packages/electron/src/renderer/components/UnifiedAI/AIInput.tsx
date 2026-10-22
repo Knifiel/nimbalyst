@@ -4,7 +4,7 @@ import { shouldAcceptPromptSuggestion } from './promptSuggestionKeys';
 import { GenericTypeahead, TypeaheadOption } from '../Typeahead/GenericTypeahead';
 import { extractTriggerMatch, getSlashTypeaheadScope, insertAtTrigger, type SlashTypeaheadScope, TriggerMatch } from '../Typeahead/typeaheadUtils';
 import { buildSlashCommandOptions, fetchSlashCommandEntries, type SlashCommandEntry } from '../Typeahead/slashCommandAutocomplete';
-import { readClipboard, encodeMarkdownLinkPath, type ChatAttachment } from '@nimbalyst/runtime';
+import { readClipboard, isEmptyPaste, readWindowsClipboardImage, encodeMarkdownLinkPath, type ChatAttachment } from '@nimbalyst/runtime';
 import type { TokenUsageCategory } from '@nimbalyst/runtime/ai/server/types';
 import type { EffortLevel, ThinkingMode } from '../../utils/modelUtils';
 import { AttachmentPreviewList } from '../AgenticCoding/AttachmentPreviewList';
@@ -1231,6 +1231,16 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
     const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
       const items = Array.from(e.clipboardData.items);
 
+      const attachPastedImage = async (file: File) => {
+        // Generate unique filename for pasted images (clipboard gives generic "image.png")
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const ext = file.type.split('/')[1] || 'png';
+        const uniqueName = `pasted-image-${timestamp}.${ext}`;
+        const renamedFile = new File([file], uniqueName, { type: file.type });
+        pushSnapshot(captureSnapshot(), { boundary: true });
+        await handleFileAttachment(renamedFile);
+      };
+
       // Handle image attachments
       if (onAttachmentAdd) {
         for (const item of items) {
@@ -1238,13 +1248,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
             e.preventDefault();
             const file = item.getAsFile();
             if (file) {
-              // Generate unique filename for pasted images (clipboard gives generic "image.png")
-              const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-              const ext = file.type.split('/')[1] || 'png';
-              const uniqueName = `pasted-image-${timestamp}.${ext}`;
-              const renamedFile = new File([file], uniqueName, { type: file.type });
-              pushSnapshot(captureSnapshot(), { boundary: true });
-              await handleFileAttachment(renamedFile);
+              await attachPastedImage(file);
             }
             return; // Exit early after handling image
           }
@@ -1253,7 +1257,18 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
 
       // Get pasted text for further processing
       const pastedText = e.clipboardData.getData('text');
-      if (!pastedText) return;
+      if (!pastedText) {
+        // Under WSL an image copied in Windows arrives as an empty text entry
+        // (WSLg passes only text to Linux apps); ask the host for the image.
+        if (onAttachmentAdd && isEmptyPaste(e.clipboardData)) {
+          e.preventDefault();
+          const windowsImage = await readWindowsClipboardImage();
+          if (windowsImage) {
+            await attachPastedImage(windowsImage);
+          }
+        }
+        return;
+      }
 
       // Handle large text pastes as attachments (keeps transcript clean)
       if (onAttachmentAdd && sessionId) {
