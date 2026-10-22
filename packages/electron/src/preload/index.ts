@@ -419,6 +419,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   copyImageToClipboard: (payload: { filePath?: string; dataUrl?: string }) =>
     ipcRenderer.invoke('copy-image-to-clipboard', payload),
   readClipboard: () => ipcRenderer.invoke('read-from-clipboard'),
+  readWindowsClipboardImage: () => ipcRenderer.invoke('read-image-from-windows-clipboard'),
 
   // File change event listeners
   onFileRenamed: (callback: (data: { oldPath: string; newPath: string }) => void) => {

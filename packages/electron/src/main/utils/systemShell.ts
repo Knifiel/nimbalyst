@@ -211,7 +211,7 @@ async function isExecutable(candidate: string): Promise<boolean> {
 }
 
 /** `name` on PATH, else `fallback` (an app started from the WSLg Start menu may lack the Windows PATH). */
-async function findExecutable(name: string, fallback?: string): Promise<string | null> {
+export async function findExecutable(name: string, fallback?: string): Promise<string | null> {
   for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
     if (!dir || !path.isAbsolute(dir)) continue;
     const candidate = path.join(dir, name);
@@ -247,7 +247,7 @@ function readOsRelease(): string {
 }
 
 let wslHost: boolean | undefined;
-function detectWsl(): boolean {
+export function detectWsl(): boolean {
   if (wslHost === undefined) {
     // Only the Electron app hands work to Windows. Unit tests that load a
     // call site under vitest on a WSL machine must never launch Windows apps.

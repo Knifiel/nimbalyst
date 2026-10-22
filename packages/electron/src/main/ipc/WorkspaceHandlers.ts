@@ -1,5 +1,6 @@
 import { BrowserWindow, shell, clipboard, nativeImage } from 'electron';
 import { systemShell } from '../utils/systemShell';
+import { readWindowsClipboardImage } from '../utils/windowsClipboard';
 import { readFileSync, readdirSync, statSync, existsSync, promises as fsPromises } from 'fs';
 import { join, basename, dirname, extname } from 'path';
 import * as path from 'path';
@@ -1021,6 +1022,10 @@ export function registerWorkspaceHandlers() {
 
     safeHandle('read-from-clipboard', async () => {
         return { success: true, text: clipboard.readText() };
+    });
+
+    safeHandle('read-image-from-windows-clipboard', async () => {
+        return readWindowsClipboardImage();
     });
 
     safeHandle('show-in-finder', async (event, filePath: string) => {
