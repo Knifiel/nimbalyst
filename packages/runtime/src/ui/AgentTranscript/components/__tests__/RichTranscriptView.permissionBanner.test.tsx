@@ -14,7 +14,7 @@ vi.mock('virtua', async () => {
   const ReactModule = await import('react');
 
   return {
-    VList: ReactModule.forwardRef(({ children }: { children: React.ReactNode }, ref) => {
+    VList: ReactModule.forwardRef(({ children, className }: { children: React.ReactNode; className?: string }, ref) => {
       const rows = ReactModule.Children.toArray(children);
       vlistState.childCount = rows.length;
 
@@ -28,7 +28,7 @@ vi.mock('virtua', async () => {
         scrollBy: vlistState.scrollBy,
       }));
 
-      return <div data-testid="mock-vlist">{rows}</div>;
+      return <div data-testid="mock-vlist" className={className}>{rows}</div>;
     }),
   };
 });
@@ -153,7 +153,7 @@ describe('pending question navigation', () => {
   it('auto-jumps to the newest of several open questions once, not again when the pane is shown again', () => {
     // An abandoned card stays open above the re-asked question.
     const messages = [question(0), makeMessage(1, { text: 'Asking again' }), question(2), makeMessage(3, { text: '' })];
-    render(view(messages));
+    const { container } = render(view(messages));
     flushFrames();
     expect(vlistState.scrollToIndex).toHaveBeenLastCalledWith(3, { align: 'start' });
     expect(vlistState.scrollToIndex).not.toHaveBeenCalledWith(1, { align: 'start' });
@@ -162,10 +162,17 @@ describe('pending question navigation', () => {
     setTranscriptVisible(false);
     flushFrames();
     setTranscriptVisible(true);
+    // The bottom position is a pin of the scroller to its last pixel.
+    const scroller = container.querySelector<HTMLElement>('.rich-transcript-vlist')!;
+    const pins: number[] = [];
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, get: () => 300 });
+    Object.defineProperty(scroller, 'scrollTop', {
+      configurable: true, get: () => 0, set: (top: number) => { pins.push(top); },
+    });
     flushFrames();
     expect(vlistState.scrollToIndex).not.toHaveBeenCalledWith(expect.any(Number), { align: 'start' });
     // The remounted list falls back to the usual bottom position.
-    expect(vlistState.scrollToIndex).toHaveBeenCalledWith(messages.length - 1, { align: 'end' });
+    expect(pins).toContain(300);
   });
 
   it('ignores superseded answers and non-question prompts', () => {
