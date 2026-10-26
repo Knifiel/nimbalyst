@@ -157,13 +157,32 @@ export async function commitProposalOutcome(
     : { kind: "not-committed" };
 }
 
+/**
+ * Close this proposal as cancelled, decided before returning: true when it is
+ * now (or already was) cancelled, false when a commit of it owns the record.
+ * A supersede settles its waiter on this answer in the same tick, so a Stop
+ * arriving later cannot release a proposal that is closing.
+ */
+export function reserveCommitProposalCancel(
+  sessionId: string,
+  promptId: string
+): boolean {
+  const key = proposalKey(sessionId, promptId);
+  const old = lookupExecution(key);
+  if (old) return old.identity === "cancelled" && old.result?.success === true;
+  const execution: ProposalExecution = { identity: "cancelled", result: { success: true } };
+  executions.set(key, execution);
+  try {
+    storage().set(key, execution);
+  } catch (error) {
+    console.error("[CommitProposalExecution] Failed to record commit proposal cancel:", error);
+  }
+  return true;
+}
+
 export async function cancelCommitProposalOnce(
   sessionId: string,
   promptId: string
 ): Promise<boolean> {
-  return (
-    await runCommitProposalOnce(sessionId, promptId, "cancelled", async () => ({
-      success: true,
-    }))
-  ).success;
+  return reserveCommitProposalCancel(sessionId, promptId);
 }

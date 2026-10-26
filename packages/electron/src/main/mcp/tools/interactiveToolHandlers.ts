@@ -36,7 +36,7 @@ import { SessionCommitService } from "../../services/SessionCommitService";
 import { resolveGitCommitProposalTarget } from "../../services/gitCommitProposalTarget";
 import { isGitLockFailure, noCommitNote, readProposalOutcome } from "../../services/commitOutcomeCheck";
 import { COMMIT_TARGET_VERSION } from "../../services/ai/proposalCommitTarget";
-import { cancelCommitProposalOnce, commitProposalIdentity, runCommitProposalOnce } from "../../services/ai/CommitProposalExecution";
+import { commitProposalIdentity, reserveCommitProposalCancel, runCommitProposalOnce } from "../../services/ai/CommitProposalExecution";
 import { persistSupersededCommitProposalResponse } from "../../services/ai/gitCommitProposalPromptUtils";
 import { beginCommitProposalCall, holdCommitProposalCall, isCommitProposalInFlight } from "@nimbalyst/runtime/ai/server/commitProposalInFlight";
 import { releasedPromptResult } from "@nimbalyst/runtime/ai/server/interactivePromptTools";
@@ -891,15 +891,15 @@ async function runGitCommitProposal(
     const unregisterLive = registerLiveInteractivePrompt(targetSessionId, {
       kind: "git_commit_proposal",
       promptId: proposalId,
-      settleTerminally: async () => {
+      settleTerminally: () => {
         if (settled) return false;
         // The cancel reservation is what refuses a later Commit press on the
         // card. A refusal means this proposal's commit already started; its
-        // own result settles this call.
-        if (!(await cancelCommitProposalOnce(targetSessionId, proposalId))) return false;
+        // own result settles this call. Both happen before returning, so a
+        // Stop in the same tick finds this waiter settled, not releasable.
+        if (!reserveCommitProposalCancel(targetSessionId, proposalId)) return false;
         settle({ action: "cancelled", superseded: true }, "superseded");
-        await persistSupersededCommitProposalResponse(targetSessionId, proposalId);
-        return true;
+        return persistSupersededCommitProposalResponse(targetSessionId, proposalId).then(() => true);
       },
       // #1116: a desktop Stop; the card stays committable. A running commit
       // is never released (#1682): the Stop aborts as before.

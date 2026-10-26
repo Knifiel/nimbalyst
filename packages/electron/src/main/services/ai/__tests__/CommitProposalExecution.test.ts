@@ -17,6 +17,7 @@ vi.mock("../../../utils/privateSettingsStore", () => ({
 import {
   runCommitProposalOnce,
   cancelCommitProposalOnce,
+  reserveCommitProposalCancel,
   acceptsCommitProposalResponse,
   commitProposalOutcome,
   resetCommitProposalExecutionMemoryForTests,
@@ -105,6 +106,27 @@ describe("shared card and voice answer boundary", () => {
 
     expect(await cancelCommitProposalOnce("held", "c")).toBe(true);
     expect(isCommitProposalInFlight("held")).toBe(false);
+  });
+
+  // Round 2 review: a supersede reserved its cancel only after an await, so a
+  // Stop in that gap released the proposal as "stays open" and the closing row
+  // landed anyway. The reservation has to be decided before returning.
+  it("reserves a cancel synchronously and refuses one a commit already owns", async () => {
+    expect(reserveCommitProposalCancel("s", "p")).toBe(true);
+    expect(acceptsCommitProposalResponse("s", "p", { action: "cancelled" })).toBe(true);
+    expect(reserveCommitProposalCancel("s", "p")).toBe(true);
+    expect((await runCommitProposalOnce("s", "p", "selection", async () => ({ success: true, commitHash: "x" }))).success).toBe(false);
+    expect(isCommitProposalInFlight("s")).toBe(false);
+
+    let finish!: () => void;
+    const commit = runCommitProposalOnce("s", "q", "selection", async () => {
+      await new Promise<void>((r) => { finish = r; });
+      return { success: true, commitHash: "abc1234" };
+    });
+    expect(reserveCommitProposalCancel("s", "q")).toBe(false);
+    finish();
+    await commit;
+    expect(reserveCommitProposalCancel("s", "q")).toBe(false);
   });
 
   // Re-review: git succeeded but recording the result threw, which left the tool call unsettled.

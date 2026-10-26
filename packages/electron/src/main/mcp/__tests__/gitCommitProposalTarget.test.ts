@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   ipcOn: vi.fn(),
   outcome: vi.fn(async (_opts: any): Promise<any> => ({ kind: 'not-committed' })),
   cancel: vi.fn(async (_s: string, _p: string) => true),
+  reserve: vi.fn((_s: string, _p: string) => true),
 }));
 vi.mock('electron', () => {
   const window = { isDestroyed: () => false, webContents: { send: mocks.send } };
@@ -26,6 +27,7 @@ vi.mock('../../services/ai/CommitProposalExecution', () => ({
   commitProposalIdentity: () => 'identity',
   commitProposalOutcome: mocks.outcome,
   cancelCommitProposalOnce: mocks.cancel,
+  reserveCommitProposalCancel: mocks.reserve,
 }));
 vi.mock('../tools/promptResponsePoll', () => ({ findGitCommitProposalResponse: async () => null, findToolPermissionResponse: async () => null }));
 vi.mock('../../services/CommitTrackerLinker', () => ({ commitTrackerLinker: { linkBySession: async () => ({ closedItemIds: [] }) } }));
@@ -71,6 +73,7 @@ beforeEach(() => {
   mocks.auto = true;
   mocks.outcome.mockResolvedValue({ kind: 'not-committed' });
   mocks.cancel.mockResolvedValue(true);
+  mocks.reserve.mockReturnValue(true);
   mocks.target.mockResolvedValue({ workspacePath: '/worktree', repoPath: '/worktree', files: ['/worktree/shared.txt'] });
 });
 
@@ -184,7 +187,7 @@ it('closes a waiting proposal as superseded when the user sends a new message in
   const result = await pending;
   expect(result.isError).toBe(false);
   expect(text(result)).toMatch(/user sent a new message instead of answering[\s\S]*No commit was made/);
-  expect(mocks.cancel).toHaveBeenCalledWith('session', 'tool-1');
+  expect(mocks.reserve).toHaveBeenCalledWith('session', 'tool-1');
   const responses = mocks.create.mock.calls.map(([row]) => JSON.parse(row.content)).filter(row => row.type === 'git_commit_proposal_response');
   expect(responses).toEqual([expect.objectContaining({ proposalId: 'tool-1', action: 'cancelled', reason: 'superseded' })]);
   expect(mocks.send).toHaveBeenCalledWith('ai:gitCommitProposalResolved', { sessionId: 'session', proposalId: 'tool-1' });
@@ -193,7 +196,7 @@ it('closes a waiting proposal as superseded when the user sends a new message in
 
 it('leaves a proposal whose commit is already executing to that commit', async () => {
   mocks.auto = false;
-  mocks.cancel.mockResolvedValue(false);
+  mocks.reserve.mockReturnValue(false);
   const pending = handleGitCommitProposal({ filesToStage: ['shared.txt'], commitMessage: 'fix: x' }, 'session', '/parent', {});
   await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
 
@@ -202,6 +205,19 @@ it('leaves a proposal whose commit is already executing to that commit', async (
 
   await answerWidget({ action: 'committed', commitHash: 'abc1234' });
   expect(text(await pending)).toContain('abc1234');
+});
+
+// Round 2 review: the supersede awaited its cancel before settling, so a Stop
+// in that gap released the proposal as "stays open" and the card then closed.
+it('settles a superseded proposal before a Stop in the same tick can release it', async () => {
+  mocks.auto = false;
+  const pending = handleGitCommitProposal({ filesToStage: ['shared.txt'], commitMessage: 'fix: x' }, 'session', '/parent', {});
+  await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
+
+  const superseding = settleLiveInteractivePrompts('session', 'superseded');
+  expect(releaseLivePromptsOnFirstStop('session', {})).toEqual([]);
+  await expect(superseding).resolves.toEqual(['tool-1']);
+  expect(text(await pending)).toMatch(/user sent a new message instead of answering/);
 });
 
 it('says no commit was made when the manual widget is cancelled and nothing landed', async () => {
