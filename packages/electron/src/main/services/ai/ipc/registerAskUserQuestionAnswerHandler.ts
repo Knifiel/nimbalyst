@@ -15,7 +15,7 @@ import {
 import { deliverCodexQuestionAnswer } from "../codexQuestionDelivery";
 import { hasPersistedTerminalResult } from "../questionTerminalResultLookup";
 import { sessionFallbackMayCarryAnswer } from "../../../mcp/tools/interactivePromptFallback";
-import { hasLiveInteractivePrompt } from "../../../mcp/tools/interactivePromptLiveness";
+import { resumeWithAnswer } from "../answerResume";
 import type { AIServiceContext } from "./AIServiceContext";
 
 export function registerAskUserQuestionAnswerHandler(
@@ -179,11 +179,11 @@ export function registerAskUserQuestionAnswerHandler(
         return { success: true };
       }
 
-      // No live handler exists -- the SDK subprocess is dead (e.g., app restarted
-      // while session was waiting for input). Auto-resume the session by sending
-      // a new message that includes the user's answer. The Claude Code SDK will
+      // No live handler exists -- Stop released the question (#1116), or the SDK
+      // subprocess is dead (e.g., app restarted while session was waiting for
+      // input). Resume the session with a new message that includes the answer. The Claude Code SDK will
       // resume using the stored providerSessionId, picking up conversation history.
-      if (resolvedSessionId && ctx.sendMessageHandler && session) {
+      if (resolvedSessionId && session) {
         // Issue #773: without a terminal tool_result the widget stayed pending, so
         // every re-click auto-resumed again. Refuse a repeat answer for a question
         // this process already terminalized.
@@ -225,42 +225,18 @@ export function registerAskUserQuestionAnswerHandler(
           return { success: true };
         }
 
-        // Another prompt is blocking the turn right now; resuming would abort
-        // it (sendMessage replaces the running request). The answer is already
-        // this card's terminal result above.
-        if (hasLiveInteractivePrompt(resolvedSessionId)) {
-          logger.main.info(
-            `[AIService] AskUserQuestion ${questionId} has no live handler but another prompt is live; not auto-resuming: ${resolvedSessionId}`
-          );
-          return { success: true };
-        }
-
         const answerText = Object.entries(answers)
           .map(([question, answer]) => `${question}: ${answer}`)
           .join("\n");
-        const resumeMessage = `[Resuming after answering a question]\n\n${answerText}`;
 
-        logger.main.info(
-          `[AIService] No live handler for AskUserQuestion, auto-resuming session: ${resolvedSessionId}`
-        );
-
-        // Fire-and-forget: resume the session in the background
-        const workspacePath = session.workspacePath;
-        setImmediate(async () => {
-          try {
-            await ctx.sendMessageHandler!(
-              event,
-              resumeMessage,
-              // Not a human turn: it must not supersede other open questions.
-              { promptOrigin: "interactive-question" },
-              resolvedSessionId,
-              workspacePath
-            );
-          } catch (err) {
-            logger.main.error(
-              `[AIService] Failed to auto-resume session after AskUserQuestion: ${err}`
-            );
-          }
+        // Queued while a turn is in flight (a released card's, or another
+        // prompt's), since sendMessage would replace that running request.
+        await resumeWithAnswer({
+          event,
+          sessionId: resolvedSessionId,
+          promptId: questionId,
+          workspacePath: session.workspacePath,
+          message: `[Resuming after answering a question]\n\n${answerText}`,
         });
 
         return { success: true };

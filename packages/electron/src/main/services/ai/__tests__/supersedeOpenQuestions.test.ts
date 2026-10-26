@@ -111,7 +111,7 @@ import { codexQuestionRecoveryId, deliverCodexQuestionAnswer } from '../codexQue
 import { registerAskUserQuestionAnswerHandler } from '../ipc/registerAskUserQuestionAnswerHandler';
 import { markToolResultPersisted } from '../claudeCliToolResultSeen';
 import { clearTerminalizedAskUserQuestions } from '../askUserQuestionFallbackResolution';
-import { configureRequestUserInputResume } from '../requestUserInputOrphanedAnswer';
+import { configureAnswerResume } from '../answerResume';
 import { AISessionsRepository } from '@nimbalyst/runtime/storage/repositories/AISessionsRepository';
 import { cancelCommitProposalOnce } from '../CommitProposalExecution';
 import { persistSupersededCommitProposalResponse } from '../gitCommitProposalPromptUtils';
@@ -279,7 +279,7 @@ describe('supersedeOpenQuestions', () => {
 
   it('resumes the session with a form answer that reaches no live waiter, exactly once', async () => {
     const resume = vi.fn(async () => undefined);
-    configureRequestUserInputResume(resume);
+    configureAnswerResume({ send: resume, publish: vi.fn(async () => {}), drive: vi.fn(async () => undefined) });
     const answers = { notes: { type: 'editText', text: 'thirty minutes of typing', edited: true } };
 
     expect(await respondToForm('form_orphan', { answers })).toMatchObject({ success: true });
@@ -304,7 +304,7 @@ describe('supersedeOpenQuestions', () => {
   ])('closes the form without resuming for %s', async (_label, provider, response, cancelled) => {
     vi.mocked(AISessionsRepository.get).mockResolvedValue({ provider, workspacePath: '/ws' } as any);
     const resume = vi.fn(async () => undefined);
-    configureRequestUserInputResume(resume);
+    configureAnswerResume({ send: resume, publish: vi.fn(async () => {}), drive: vi.fn(async () => undefined) });
 
     expect(await respondToForm('form_quiet', response)).toMatchObject({ success: true });
 

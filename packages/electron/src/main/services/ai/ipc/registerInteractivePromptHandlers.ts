@@ -3,7 +3,7 @@ import { warnIfUnpublished } from '@nimbalyst/runtime/sync/pushOutcome';
 import { registerAskUserQuestionAnswerHandler } from './registerAskUserQuestionAnswerHandler';
 import { AISessionsRepository } from '@nimbalyst/runtime/storage/repositories/AISessionsRepository';
 import { configureCodexQuestionDelivery, deliverCodexQuestionAnswer } from '../codexQuestionDelivery';
-import { configureRequestUserInputResume } from '../requestUserInputOrphanedAnswer';
+import { configureAnswerResume } from '../answerResume';
 import { TrayManager } from '../../../tray/TrayManager';
 import { safeHandle } from '../../../utils/ipcRegistry';
 import { logger } from '../../../utils/logger';
@@ -31,10 +31,13 @@ export function registerInteractivePromptHandlers(ctx: AIServiceContext): void {
     drive: (sessionId, workspacePath) => ctx.driveQueuedPrompts(sessionId, workspacePath, 'session-idle'),
     publish: sessionId => ctx.publishQueueStateToSync(sessionId),
   });
-  configureRequestUserInputResume(({ event, sessionId, workspacePath, message }) =>
-    // Not a human turn: it must not supersede other open questions.
-    ctx.sendMessageHandler(event, message, { promptOrigin: 'interactive-question' }, sessionId, workspacePath),
-  );
+  configureAnswerResume({
+    send: ({ event, sessionId, workspacePath, message }) =>
+      // Not a human turn: it must not supersede other open questions.
+      ctx.sendMessageHandler(event, message, { promptOrigin: 'interactive-question' }, sessionId, workspacePath),
+    publish: sessionId => ctx.publishQueueStateToSync(sessionId),
+    drive: (sessionId, workspacePath) => ctx.driveQueuedPrompts(sessionId, workspacePath, 'session-idle'),
+  });
   // Handle ExitPlanMode confirmation response from renderer
   safeHandle('ai:exitPlanModeConfirmResponse', async (event, requestId: string, sessionId: string, response: { approved: boolean; clearContext?: boolean; feedback?: string }) => {
     logger.main.info(`[AIService] ExitPlanMode confirmation response: requestId=${requestId}, approved=${response.approved}, clearContext=${response.clearContext}, hasFeedback=${!!response.feedback}`);

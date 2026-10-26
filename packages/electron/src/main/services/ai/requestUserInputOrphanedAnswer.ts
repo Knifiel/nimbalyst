@@ -16,21 +16,7 @@
  */
 
 import { persistInteractivePromptTerminalResult } from './askUserQuestionFallbackResolution';
-import { hasLiveInteractivePrompt } from '../../mcp/tools/interactivePromptLiveness';
-
-export type ResumeSessionWithAnswer = (args: {
-  event: Electron.IpcMainInvokeEvent;
-  sessionId: string;
-  workspacePath: string | undefined;
-  message: string;
-}) => Promise<unknown>;
-
-let resumeSession: ResumeSessionWithAnswer | null = null;
-
-/** Wired by AIService, which owns the send-message path. */
-export function configureRequestUserInputResume(value: ResumeSessionWithAnswer): void {
-  resumeSession = value;
-}
+import { resumeWithAnswer } from './answerResume';
 
 /**
  * Same payload the live tool result carries, so the agent reads the answers
@@ -66,28 +52,13 @@ export async function settleOrphanedRequestUserInput(args: {
     console.warn(`[SessionHandlers] No live waiter for PromptForUserInput on claude-code-cli; not auto-resuming: ${sessionId}`);
     return;
   }
-  // Another prompt is blocking the turn right now (the answer was for an older
-  // card). Resuming would abort that turn, since sendMessage replaces the
-  // running request; the terminal result above already closes this card.
-  if (hasLiveInteractivePrompt(sessionId)) {
-    console.warn(`[SessionHandlers] PromptForUserInput ${promptId} has no live waiter but another prompt is live; not auto-resuming: ${sessionId}`);
-    return;
-  }
-  if (!resumeSession) {
-    console.error(`[SessionHandlers] PromptForUserInput resume is not configured; answer for ${promptId} was not delivered`);
-    return;
-  }
-
-  console.log(`[SessionHandlers] No live waiter for PromptForUserInput, auto-resuming session: ${sessionId}`);
-  const resume = resumeSession;
-  setImmediate(() => {
-    resume({
-      event,
-      sessionId,
-      workspacePath: session.workspacePath,
-      message: buildRequestUserInputResumeMessage(answers),
-    }).catch((err) => {
-      console.error(`[SessionHandlers] Failed to auto-resume session after PromptForUserInput: ${err}`);
-    });
+  // Queued while a turn is in flight (a released card's, or another prompt's),
+  // since sendMessage would replace that running request.
+  await resumeWithAnswer({
+    event,
+    sessionId,
+    promptId,
+    workspacePath: session.workspacePath,
+    message: buildRequestUserInputResumeMessage(answers),
   });
 }
