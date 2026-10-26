@@ -16,8 +16,7 @@ import { setSessionPendingPrompt } from "../services/ai/pendingPromptPersistence
 import { deliverCodexQuestionAnswer } from "../services/ai/codexQuestionDelivery";
 import { isInteractivePromptClosed } from "../services/ai/questionTerminalResultLookup";
 import { settleOrphanedRequestUserInput } from "../services/ai/requestUserInputOrphanedAnswer";
-import { buildCommitProposalResumeMessage, isTurnInFlight, resumeWithAnswer } from "../services/ai/answerResume";
-import { getSessionStateManager } from "@nimbalyst/runtime/ai/server/SessionStateManager";
+import { settleOrphanedCommitProposal } from "../services/ai/answerResume";
 import {
   getRequestUserInputFallbackResponseChannel,
   getRequestUserInputResponseChannel,
@@ -363,34 +362,13 @@ export function registerSessionPromptResponseHandler(): void {
             ipcMain.emit(responseChannel, null, response);
           } else {
             // No waiter: Stop released the proposal (#1116), or its call ended
-            // with the subprocess or an app restart. The response row above is
-            // the card's result; the agent hears the outcome as a new message.
-            const message = buildCommitProposalResumeMessage(response);
-            const commitSession = await AISessionsRepository.get(sessionId);
-            console.warn(
-              `[SessionHandlers] No MCP waiter for git commit proposal response on channel: ${responseChannel}. ` +
-                `Session: ${sessionId}, proposalId: ${canonicalPromptId}, action: ${response.action}.`
-            );
-            if (message && commitSession && commitSession.provider !== "claude-code-cli") {
-              await resumeWithAnswer({
-                event,
-                sessionId,
-                promptId: canonicalPromptId,
-                workspacePath: commitSession.workspacePath,
-                message,
-              });
-            } else if (!isTurnInFlight(sessionId)) {
-              // A turn that died without ending would look stuck forever. A
-              // turn still running (a released one) ends itself.
-              try {
-                await getSessionStateManager().endSession(sessionId);
-              } catch (cleanupErr) {
-                console.warn(
-                  "[SessionHandlers] Failed to mark orphaned session as idle:",
-                  cleanupErr
-                );
-              }
-            }
+            // with the subprocess or an app restart.
+            await settleOrphanedCommitProposal({
+              sessionId,
+              proposalId: canonicalPromptId,
+              response,
+              eventFor: () => event,
+            });
           }
           event.sender.send("ai:gitCommitProposalResolved", {
             sessionId,

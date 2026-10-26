@@ -14,6 +14,7 @@
 
 import { createHash } from 'node:crypto';
 import { getSessionStateManager } from '@nimbalyst/runtime/ai/server/SessionStateManager';
+import { AISessionsRepository } from '@nimbalyst/runtime/storage/repositories/AISessionsRepository';
 import { getQueuedPromptsStore } from '../RepositoryManager';
 import { hasLiveInteractivePrompt } from '../../mcp/tools/interactivePromptLiveness';
 import { isLeadTurnPending } from './drainFollowUp';
@@ -43,7 +44,7 @@ export function configureAnswerResume(value: AnswerResumeHost): void {
 const sending = new Map<string, Promise<unknown>>();
 
 /** True while the session has a turn that a new sendMessage would replace. */
-export function isTurnInFlight(sessionId: string): boolean {
+function isTurnInFlight(sessionId: string): boolean {
   if (sending.has(sessionId) || hasLiveInteractivePrompt(sessionId) || isLeadTurnPending(sessionId)) return true;
   const state = getSessionStateManager().getSessionState(sessionId);
   return !!state && (state.status === 'running' || state.status === 'waiting_for_input' || state.isStreaming);
@@ -52,15 +53,17 @@ export function isTurnInFlight(sessionId: string): boolean {
 const queueId = (sessionId: string, promptId: string) =>
   `answer-resume-${createHash('sha256').update(JSON.stringify([sessionId, promptId])).digest('hex')}`;
 
-/** The live tool result's wording, so the agent reads the same outcome either way. */
-export function buildCommitProposalResumeMessage(response: {
+interface CommitProposalOutcome {
   action?: string;
   commitHash?: string;
   commitDate?: string;
   commitMessage?: string;
   filesCommitted?: string[];
   error?: string;
-}): string | null {
+}
+
+/** The live tool result's wording, so the agent reads the same outcome either way. */
+export function buildCommitProposalResumeMessage(response: CommitProposalOutcome): string | null {
   let outcome: string;
   if (response.error) outcome = `Commit failed: ${response.error}`;
   else if (response.action === 'committed' && response.commitHash) {
@@ -75,7 +78,8 @@ export function buildCommitProposalResumeMessage(response: {
 }
 
 export async function resumeWithAnswer(args: {
-  event: Electron.IpcMainInvokeEvent;
+  /** Where the resumed turn streams. Without one, the queue delivers it once a window opens. */
+  event: Electron.IpcMainInvokeEvent | null;
   sessionId: string;
   promptId: string;
   workspacePath: string | undefined;
@@ -88,7 +92,7 @@ export async function resumeWithAnswer(args: {
   }
   const resumeHost = host;
 
-  if (!isTurnInFlight(sessionId)) {
+  if (event && !isTurnInFlight(sessionId)) {
     console.log(`[AnswerResume] No turn in flight, resuming session ${sessionId} with the answer to ${promptId}`);
     const pending = new Promise<void>((resolve) => setImmediate(resolve))
       .then(() => resumeHost.send({ event, sessionId, workspacePath, message }));
@@ -126,4 +130,39 @@ export async function resumeWithAnswer(args: {
   if (started) void started.then(drive, drive);
   else drive();
   return 'queued';
+}
+
+/**
+ * A commit proposal answered from desktop or mobile with no MCP waiter. The
+ * response row is already the card's result; the agent hears the outcome as a
+ * new message. A cancel tells it nothing. Only a session with no turn in flight
+ * is marked idle, so one whose turn died without ending does not look stuck.
+ */
+export async function settleOrphanedCommitProposal(args: {
+  sessionId: string;
+  proposalId: string;
+  response: CommitProposalOutcome;
+  eventFor(workspacePath: string | undefined): Electron.IpcMainInvokeEvent | null;
+}): Promise<void> {
+  const { sessionId, proposalId, response } = args;
+  console.warn(`[AnswerResume] No MCP waiter for commit proposal ${proposalId} on session ${sessionId} (action: ${response.action})`);
+  const message = buildCommitProposalResumeMessage(response);
+  const session = await AISessionsRepository.get(sessionId);
+  // As for questions: claude-code-cli has no stored session to resume, and a
+  // send would type into its live composer.
+  if (message && session && session.provider !== 'claude-code-cli') {
+    await resumeWithAnswer({
+      event: args.eventFor(session.workspacePath),
+      sessionId,
+      promptId: proposalId,
+      workspacePath: session.workspacePath,
+      message,
+    });
+  } else if (!isTurnInFlight(sessionId)) {
+    try {
+      await getSessionStateManager().endSession(sessionId);
+    } catch (err) {
+      console.warn(`[AnswerResume] Failed to mark orphaned session ${sessionId} idle: ${err}`);
+    }
+  }
 }

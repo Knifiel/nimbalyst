@@ -26,6 +26,7 @@ import {
   acceptsCommitProposalResponse,
 } from "./CommitProposalExecution";
 import { beginCommitProposalConfirm } from "@nimbalyst/runtime/ai/server/commitProposalInFlight";
+import { settleOrphanedCommitProposal } from "./answerResume";
 
 const log = logger.ai;
 interface GitCommitResponse {
@@ -150,7 +151,23 @@ async function answerGitCommit(
         respondedAt: Date.now(),
       }),
     });
-    ipcMain.emit(responseChannel, null, result);
+    if (ipcMain.listenerCount(responseChannel) > 0) {
+      ipcMain.emit(responseChannel, null, result);
+    } else {
+      // No waiter: Stop released the proposal (#1116), or its call ended.
+      // The resumed turn streams into the session's window, if one is open.
+      await settleOrphanedCommitProposal({
+        sessionId,
+        proposalId: canonicalPromptId,
+        response: result,
+        eventFor: (workspacePath) => {
+          const win = workspacePath ? findWindowByWorkspace(workspacePath) : null;
+          return win && !win.isDestroyed()
+            ? ({ sender: win.webContents, senderFrame: win.webContents.mainFrame } as Electron.IpcMainInvokeEvent)
+            : null;
+        },
+      });
+    }
 
     // Record the sha -> session link for the Git Log panel (idempotent; the
     // MCP settle path records the same row when the tool is still waiting)

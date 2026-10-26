@@ -26,6 +26,8 @@ const mocks = vi.hoisted(() => {
 vi.mock('../PromptAnswerReservation', () => ({ reservePromptAnswer: () => true }));
 
 vi.mock('../codexQuestionDelivery', () => ({ deliverCodexQuestionAnswer: mocks.deliverCodex }));
+// MobileGitCommitResponse reaches it through answerResume; the real one loads the whole store layer.
+vi.mock('../../RepositoryManager', () => ({ getQueuedPromptsStore: vi.fn() }));
 
 vi.mock('electron', async () => ({
   app: (await import('../../../../../test-stubs/privateUserData')).testApp,
