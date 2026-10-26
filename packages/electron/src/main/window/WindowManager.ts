@@ -119,7 +119,7 @@ export const documentServices = new Map<string, ElectronDocumentService>();
 // handlers can register/free them without importing this whole module.
 import { fileSystemServices } from './serviceRegistry';
 
-function resolveDocumentServiceForEvent(event: IpcMainEvent | IpcMainInvokeEvent): ElectronDocumentService | null {
+function resolveDocumentServiceForEvent(event: IpcMainEvent | IpcMainInvokeEvent, workspacePath?: string): ElectronDocumentService | null {
     const browserWindow = BrowserWindow.fromWebContents(event.sender);
     if (!browserWindow) {
         // console.log('[DocumentService] No browser window from event');
@@ -134,7 +134,9 @@ function resolveDocumentServiceForEvent(event: IpcMainEvent | IpcMainInvokeEvent
     // Honor the project rail's active selection (issue #591). Reading the raw
     // primary `workspacePath` here leaked another project's tracker items when
     // the visible project differed from the window's startup project.
-    const path = resolveDocumentServicePath(state);
+    // A request that names its project (#1822) is answered for that project,
+    // whichever one the rail has marked active by now.
+    const path = resolveDocumentServicePath(state, workspacePath);
     if (!path) {
         return null;
     }
@@ -177,6 +179,8 @@ export function getFocusedOrNewWindow(): BrowserWindow {
 }
 
 export interface CreateWindowOptions {
+    /** Explicit project windows must not inherit another window's saved rail. */
+    restorePreviousProjects?: boolean;
     /** Show the window without activating the app (no focus steal). */
     showInactive?: boolean;
     /**
@@ -301,6 +305,7 @@ export function createWindow(
             mode: isWorkspaceMode ? 'workspace' : 'document',
             filePath: null,
             workspacePath: isWorkspaceMode ? workspacePath : null,
+            restorePreviousProjects: options?.restorePreviousProjects,
             documentEdited: false
         });
 

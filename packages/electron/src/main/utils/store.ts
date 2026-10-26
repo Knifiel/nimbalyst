@@ -2676,15 +2676,20 @@ export function isWorkspaceTrusted(workspacePath: string): boolean {
          getWorkspaceState(workspacePath).agentPermissions?.permissionMode !== undefined;
 }
 
-export function setWorkspaceTrusted(workspacePath: string, trusted: boolean, mode: 'ask' | 'allow-all' | 'bypass-all' = 'ask'): void {
+export function setWorkspaceTrusted(
+  workspacePath: string,
+  trusted: boolean,
+  mode: 'ask' | 'allow-all' | 'bypass-all' = 'ask',
+  allowAllUsesClassifier?: boolean,
+): void {
   updateWorkspaceState(workspacePath, (state) => {
     const existing = state.agentPermissions;
+    // Preserve the "Allow All" classifier opt-in across trust toggles (issue #628)
+    // unless the caller sets it explicitly.
+    const classifier = allowAllUsesClassifier ?? existing?.allowAllUsesClassifier;
     state.agentPermissions = {
       permissionMode: trusted ? mode : null,
-      // Preserve the "Allow All" classifier opt-in across trust toggles (issue #628).
-      ...(existing?.allowAllUsesClassifier !== undefined && {
-        allowAllUsesClassifier: existing.allowAllUsesClassifier,
-      }),
+      ...(classifier !== undefined && { allowAllUsesClassifier: classifier }),
     };
   });
 }

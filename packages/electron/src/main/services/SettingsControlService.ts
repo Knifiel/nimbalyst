@@ -153,6 +153,11 @@ const FEATURE_BUCKETS = {
 
 // ─── Result type ─────────────────────────────────────────────────────
 
+export interface WorkspaceTrustState {
+  permissionMode: AgentPermissionMode;
+  allowAllUsesClassifier: boolean;
+}
+
 export interface SettingsToolResult<TBefore = unknown, TAfter = unknown> {
   ok: boolean;
   before?: TBefore;
@@ -613,10 +618,15 @@ export class SettingsControlService {
 
   async setWorkspaceTrust(
     sessionId: string,
-    args: { workspacePath: string; trusted: boolean; mode?: 'ask' | 'allow-all' | 'bypass-all' },
-  ): Promise<SettingsToolResult<AgentPermissionMode | undefined, AgentPermissionMode>> {
+    args: {
+      workspacePath: string;
+      trusted: boolean;
+      mode?: 'ask' | 'allow-all' | 'bypass-all';
+      allowAllUsesClassifier?: boolean;
+    },
+  ): Promise<SettingsToolResult<WorkspaceTrustState, WorkspaceTrustState>> {
     rateLimit(sessionId);
-    const { workspacePath, trusted, mode = 'ask' } = args;
+    const { workspacePath, trusted, mode = 'ask', allowAllUsesClassifier } = args;
     if (!workspacePath) {
       return { ok: false, message: 'workspacePath is required.' };
     }
@@ -626,13 +636,24 @@ export class SettingsControlService {
         message: `mode must be one of: ask, allow-all, bypass-all. Got "${mode}".`,
       };
     }
-    const before = getWorkspaceState(workspacePath).agentPermissions?.permissionMode;
-    setWorkspaceTrusted(workspacePath, trusted, mode);
-    const after = (trusted ? mode : null) as AgentPermissionMode;
+    if (allowAllUsesClassifier !== undefined && typeof allowAllUsesClassifier !== 'boolean') {
+      return { ok: false, message: 'allowAllUsesClassifier must be a boolean when provided.' };
+    }
+    const readTrustState = (): WorkspaceTrustState => {
+      const permissions = getWorkspaceState(workspacePath).agentPermissions;
+      return {
+        permissionMode: permissions?.permissionMode ?? null,
+        allowAllUsesClassifier: permissions?.allowAllUsesClassifier === true,
+      };
+    };
+    const before = readTrustState();
+    setWorkspaceTrusted(workspacePath, trusted, mode, allowAllUsesClassifier);
+    const after = readTrustState();
     this.audit('workspace_set_trust', sessionId, {
       workspacePath,
       trusted,
       mode,
+      allowAllUsesClassifier,
       before,
       after,
     });

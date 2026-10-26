@@ -73,10 +73,23 @@ export function resolveActiveWorkspacePathForWindowId(windowId: number | null | 
  * both the WindowManager and MultiProjectRailHandlers resolvers so they
  * can't diverge again (issue #591: WindowManager's resolver read the raw
  * `workspacePath`, leaking another project's tracker items in the rail).
+ *
+ * When the request names its own project (`requestedPath`), answer for that
+ * project, not the active one (#1822). The rail tells main about a project
+ * switch without waiting, so a request for project A can arrive while main
+ * already marks B active. A named project is accepted only if this window has
+ * it open (its primary project or a rail project). Otherwise the result is
+ * null, so main never answers with some other project's data.
  */
-export function resolveDocumentServicePath(state: WindowState | undefined): string | null {
+export function resolveDocumentServicePath(
+    state: WindowState | undefined,
+    requestedPath?: string | null,
+): string | null {
     if (!state) return null;
     if (state.mode !== 'workspace' && state.mode !== 'agentic-coding') return null;
+    if (requestedPath) {
+        return getWindowProjectPaths(state).includes(requestedPath) ? requestedPath : null;
+    }
     return resolveActiveWorkspacePath(state);
 }
 

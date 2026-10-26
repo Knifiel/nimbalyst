@@ -30,6 +30,14 @@ const server = await createServer(
 );
 await server.listen();
 server.printUrls();
+process.send?.({ type: 'ready' });
+
+// Leave a small memory breadcrumb in the dev terminal for multi-day failures.
+const memoryLog = setInterval(() => {
+  const { rss, heapUsed } = process.memoryUsage();
+  console.log(`[renderer-dev-server] pid=${process.pid} uptime=${Math.round(process.uptime())}s rss=${Math.round(rss / 1048576)}MiB heap=${Math.round(heapUsed / 1048576)}MiB`);
+}, 15 * 60_000);
+memoryLog.unref();
 
 const shutdown = async () => {
   await server.close();
@@ -37,3 +45,5 @@ const shutdown = async () => {
 };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+// Do not orphan Vite if its supervisor dies unexpectedly.
+process.on('disconnect', shutdown);

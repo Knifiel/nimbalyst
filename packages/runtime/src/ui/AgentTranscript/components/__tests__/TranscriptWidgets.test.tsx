@@ -1259,6 +1259,33 @@ describe('GitCommitConfirmationWidget', () => {
     expect(screen.getByTestId('git-commit-error').textContent).toContain('HOOK_DETAIL: lint failed');
   });
 
+  it.each([
+    ['committed', 'Commit hash: abc1234', 'Changes Committed'],
+    ['error', 'Error: hook failed', 'Commit Failed'],
+  ])('waits for the server result before showing auto-commit %s', async (state, result, title) => {
+    const { interactiveWidgetHostAtom } = await import('../../../../store/atoms/interactiveWidgetHost');
+    const testStore = createStore();
+    const gitCommit = vi.fn();
+    testStore.set(interactiveWidgetHostAtom('auto-result'), {
+      autoCommitEnabled: true, gitCommit, trackEvent: vi.fn(),
+    } as unknown as import('../CustomToolWidgets/InteractiveWidgetHost').InteractiveWidgetHost);
+    const message = makeToolMessage('git_commit_proposal', {
+      commitMessage: 'fix: wait for result', filesToStage: ['file.ts'],
+    });
+    const tree = (msg: typeof message) => <JotaiProvider store={testStore}>
+      <GitCommitConfirmationWidget message={msg} isExpanded={false} onToggle={() => {}} sessionId="auto-result" />
+    </JotaiProvider>;
+    const { rerender } = render(tree(message));
+    expect(screen.queryByText('Changes Committed')).toBeNull();
+    expect(screen.getByTestId('git-commit-widget').dataset.state).toBe('committing');
+    expect(gitCommit).not.toHaveBeenCalled();
+    rerender(tree({ ...message, toolCall: { ...message.toolCall!, result,
+      ...(state === 'error' ? { isError: true } : {}) } }));
+    expect(screen.getByTestId('git-commit-widget').dataset.state).toBe(state);
+    expect(screen.getByText(title).textContent).toBe(title);
+    expect(gitCommit).not.toHaveBeenCalled();
+  });
+
   it('sends cancel through the interactive host', async () => {
     const { interactiveWidgetHostAtom } = await import('../../../../store/atoms/interactiveWidgetHost');
 
@@ -2403,5 +2430,40 @@ describe('VisualDisplayWidget', () => {
     const enlarged = await screen.findByTestId('zoomable-image');
     await waitFor(() => expect(enlarged.getAttribute('src')).toBe(`data:image/png;base64,${pixel}`));
     expect(readFile).toHaveBeenCalledWith('/tmp/arch-mock/b.png');
+  });
+
+  it('holds a remounted image row at its loaded height until the image is back', async () => {
+    // The virtual list unmounts rows that leave its buffer. A remount that
+    // shrank to the "Loading..." box made the list move the reader back to
+    // the image, so they could not reach the bottom.
+    const { VisualDisplayWidget } = await import('../CustomToolWidgets/VisualDisplayWidget');
+    const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    let readCount = 0;
+    const readFile = vi.fn(() => (++readCount === 1
+      ? Promise.resolve({ success: true, content: pixel })
+      : new Promise<{ success: boolean; content?: string }>(() => {})));
+    const message = makeToolMessage(
+      'mcp__nimbalyst__display_to_user',
+      { items: [{ description: 'Remount shot', image: { path: '/tmp/remount-height/shot.png' } }] },
+      'ok',
+    );
+    const widget = (
+      <Wrapper>
+        <VisualDisplayWidget message={message} isExpanded={false} onToggle={() => {}} sessionId="visual-remount" readFile={readFile} />
+      </Wrapper>
+    );
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ height: 352 } as DOMRect);
+    try {
+      const first = render(widget);
+      fireEvent.load(await screen.findByAltText('Remount shot'));
+      first.unmount();
+
+      const second = render(widget);
+      screen.getByText('Loading...');
+      const row = second.container.querySelector('.visual-display-image') as HTMLElement;
+      expect(row.style.minHeight).toBe('352px');
+    } finally {
+      rect.mockRestore();
+    }
   });
 });

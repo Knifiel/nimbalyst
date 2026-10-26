@@ -13,6 +13,27 @@ vi.mock('../WorkspaceSummaryHeader', () => ({ generateWorkspaceAccentColor: () =
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+it('opens an inactive rail project in a separate window without switching the source window', async () => {
+  const invoke = vi.fn().mockResolvedValue({ success: true, action: 'created' });
+  vi.stubGlobal('electronAPI', { invoke });
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  const store = createStore();
+  const projects = ['A', 'B'].map(name => ({ path: `/p/${name}`, name, openedAt: 0 }));
+  store.set(multiProjectModeAtom, true);
+  store.set(openProjectsAtom, projects);
+  store.set(activeWorkspacePathAtom, projects[0].path);
+  const view = render(<Provider store={store}><ProjectRail /></Provider>);
+
+  fireEvent.contextMenu(view.getByRole('button', { name: 'Switch to project B' }));
+  fireEvent.click(view.getByText('Open in new window'));
+
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+    'workspace-manager:open-workspace', '/p/B', { forceNewWindow: true },
+  ));
+  expect(store.get(activeWorkspacePathAtom)).toBe('/p/A');
+  expect(store.get(openProjectsAtom)).toEqual(projects);
+});
+
 it('reveals restored and newly selected projects, handles resize, and leaves manual scrolling alone', () => {
   const store = createStore();
   const projects = Array.from({ length: 32 }, (_, i) => ({ path: `/p/${i}`, name: `Project ${i}`, openedAt: i }));

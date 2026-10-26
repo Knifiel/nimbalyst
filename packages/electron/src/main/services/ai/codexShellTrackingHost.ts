@@ -6,6 +6,7 @@ import http from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { SessionFilesRepository } from '@nimbalyst/runtime/storage/repositories/SessionFilesRepository';
 import { OpenAICodexProvider } from '@nimbalyst/runtime/ai/server';
+import { agentToolActivity } from '@nimbalyst/runtime/ai/server/agentToolActivity';
 import { subscribe, unsubscribe, getSubscriberIds, drainWorkspaceEvents } from '../../file/WorkspaceEventBus';
 import { contentFingerprint, isKnownFileWrite } from '../../file/knownFileWrites';
 import { getPackageRoot } from '../../utils/appPaths';
@@ -84,7 +85,13 @@ export const shellFileAttribution = new ShellFileAttribution({
     }
   },
   knownWrite: (file, state) => isKnownFileWrite(file, state?.fingerprint),
-  otherSessions: (workspace, filePath) => workspaceFileAttributionPolicy.getSessionIds(workspace, filePath),
+  // Sessions with a running turn, plus any whose reported tools are still live
+  // (a backgrounded command can outlive the watcher that marks the turn).
+  otherSessions: (workspace, filePath, observedAt) => [
+    ...workspaceFileAttributionPolicy.getSessionIds(workspace, filePath),
+    ...agentToolActivity.activeSessions(filePath, observedAt),
+  ],
+  otherWriter: (sessionId, filePath, observedAt) => agentToolActivity.writerEvidence(sessionId, filePath, observedAt),
   report: (generation, reason, turnId, toolUseId, hook) => shellTrackingCoverage.record(generation, reason, turnId, toolUseId, hook),
   currentTurn: (generation) => shellTrackingCoverage.currentTurn(generation),
   persist: async (evidence) => {
@@ -148,8 +155,6 @@ export async function prepareShellTracking(sessionId: string, workspace: string)
       for (const field of ['session_id', 'turn_id', 'agent_type'])
         if (p[field] !== undefined && (typeof p[field] !== 'string' || p[field].length > 256))
           throw new Error('Invalid hook context');
-      if (p.command !== undefined && (typeof p.command !== 'string' || p.command.length > 2000))
-        throw new Error('Invalid hook command');
       const identity = { sessionId: p.session_id, turnId: p.turn_id, agentType: p.agent_type };
       // Off by default; the real-Codex E2E and manual hook tracing set this.
       if (process.env.NIMBALYST_SHELL_HOOK_TRACE)
@@ -157,7 +162,7 @@ export async function prepareShellTracking(sessionId: string, workspace: string)
           sessionId, event: p.event, tool: p.tool, toolUseId: p.id, hookSessionId: p.session_id,
           hookTurnId: p.turn_id, currentTurnId: shellTrackingCoverage.currentTurn(generation), agentType: p.agent_type,
         }));
-      if (p.event === 'PreToolUse') await shellFileAttribution.pre(generation, p.id, p.tool, identity, p.command);
+      if (p.event === 'PreToolUse') await shellFileAttribution.pre(generation, p.id, p.tool, identity);
       else if (p.event === 'PostToolUse') await shellFileAttribution.post(generation, p.id, { ...identity, tool: p.tool });
       else throw new Error('Unsupported event');
       res.end('{}');

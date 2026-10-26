@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { initWiki, openWiki, type LocalWiki, type ReadBodyResult, type StaticSiteLink, type StaticSiteManifest } from '@nimbalyst/local-wiki';
 import { exportStaticSite, type CarriedTrackerItem } from '../exportSite.js';
+import { normalizeBasePath } from '../sitePaths.js';
 import { gatewayTrackerSource } from '../../commands/wikiExport.js';
 import type { TrackerGateway } from '../../gateway/types.js';
 
@@ -36,6 +37,40 @@ const read = (file: string) => readFileSync(file, 'utf8');
 const json = <T>(file: string) => JSON.parse(read(file)) as T;
 
 describe('exportStaticSite', () => {
+  it.each([['/', '/'], ['/docs', '/docs/'], ['/product/docs/', '/product/docs/'], ['/my wiki', '/my%20wiki/'], ['/my%20wiki/', '/my%20wiki/']])('normalizes base %s', (input, expected) => {
+    expect(normalizeBasePath(input)).toBe(expected);
+  });
+
+  it.each(['', 'docs', 'https://example.com/docs', '//host/docs', '/docs?x=1', '/docs#top', '/a/../b', '/%2e%2e/', '/a//b', '/a%2fb', '/a%5cb', '/%zz'])('refuses invalid base %s before writing output', async (base) => {
+    const { root, wiki, assets } = await fixture();
+    const out = path.join(root, 'site');
+    await expect(exportStaticSite({ wiki, assetsDir: assets, outDir: out, nimVersion: '9.9.9', base })).rejects.toThrow('--base');
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it('exports nested pages, assets and carried-item links under a site directory', async () => {
+    const { root, wiki, assets } = await fixture();
+    writeFileSync(path.join(assets, 'index.html'), '<html><head><title>Wiki</title><link rel="stylesheet" href="/assets/app.css"><link rel="modulepreload" href="/assets/shared.js"></head><body><div id="root"></div><script type="module" src="/assets/app.js"></script></body></html>');
+    const home = await wiki.command({ type: 'register-document', title: 'Home', parentFolderId: null, sortOrder: 0, body: '' });
+    const group = await wiki.command({ type: 'register-document', title: 'Guide', parentFolderId: null, body: '' });
+    const page = await wiki.command({ type: 'register-document', title: 'Setup', parentFolderId: group.id!, body: 'See [question](nimbalyst://USR.1).' });
+    const out = path.join(root, 'site');
+    await exportStaticSite({ wiki, assetsDir: assets, outDir: out, nimVersion: '9.9.9', base: '/product/docs', trackerItems: {
+      find: async () => ({ id: 'q1', issueKey: 'USR.1', type: 'question', title: 'Question', fields: {}, body: '', createdAt: 1, updatedAt: 1 }),
+    } });
+    const html = read(path.join(out, 'guide/setup/index.html'));
+    expect(html).toContain('src="/product/docs/assets/app.js"');
+    expect(html).toContain('href="/product/docs/assets/app.css"');
+    expect(html).toContain('href="/product/docs/assets/shared.js"');
+    expect(html).toContain('"dataPath":"/product/docs/_wiki/","basePath":"/product/docs/"');
+    expect(html).toContain('href="../../items/q1/">question</a>');
+    expect(json<ReadBodyResult>(path.join(out, '_wiki/bodies', `${page.id}.json`)).markdown).toContain('](/product/docs/items/q1/)');
+    expect(read(path.join(out, '404.html'))).toContain('src="/product/docs/assets/app.js"');
+    expect(json<StaticSiteManifest>(path.join(out, '_wiki/manifest.json')).pages[home.id!]).toBe('');
+    expect(existsSync(path.join(out, 'html-embed/shell/index.html'))).toBe(true);
+    expect(existsSync(path.join(out, 'product'))).toBe(false);
+  });
+
   it('writes a page per folder, leaves out export: false pages and person fields, and keeps links followable', async () => {
     const { root, wiki, assets } = await fixture();
     await wiki.command({ type: 'register-document', title: 'Home', parentFolderId: null, sortOrder: 0, body: 'Welcome.' });
@@ -97,7 +132,7 @@ describe('exportStaticSite', () => {
     expect(html).toContain('<title>Acme · Home</title>');
     expect(html).toContain('href="../../">Home</a>');
     expect(html).not.toContain('Do not publish');
-    expect(html).toContain('window.__NIMBALYST_WIKI_STATIC__={"format":1,"dataPath":"/_wiki/"}');
+    expect(html).toContain('window.__NIMBALYST_WIKI_STATIC__={"format":1,"dataPath":"/_wiki/","basePath":"/"}');
     expect(read(path.join(out, 'index.html'))).toContain('<h2>Linked from</h2><ul><li><a href="./competitors/acme/">Acme</a>');
     // The app build is copied without its Node-only models or its unrendered shell.
     expect(existsSync(path.join(out, 'assets', 'app.js'))).toBe(true);

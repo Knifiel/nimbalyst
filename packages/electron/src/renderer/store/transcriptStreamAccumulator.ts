@@ -25,7 +25,7 @@
  */
 
 import { TranscriptProjector } from '@nimbalyst/runtime/ai/server/transcript/TranscriptProjector';
-import { latestTranscriptGeneration, reconcileTranscriptMessages } from './transcriptReconciliation';
+import { latestTranscriptGeneration, preserveTranscriptMessageIdentity, reconcileTranscriptMessages } from './transcriptReconciliation';
 import type {
   TranscriptViewMessage,
 } from '@nimbalyst/runtime/ai/server/transcript/TranscriptProjector';
@@ -201,6 +201,9 @@ export class TranscriptStreamAccumulator {
       state.needsRebuild = false;
     }
 
+    // An unchanged rebuild returns the atom's own array; publishing it would
+    // still replace the session object and re-render every subscriber.
+    if (this.opts.readDbMessages(sessionId) === state.currentMessages) return;
     this.opts.emit({ sessionId, messages: state.currentMessages });
     // The atom normally holds this exact array after our synchronous emit.
     // Do not treat our own publication as a new external snapshot next frame.
@@ -237,7 +240,9 @@ export class TranscriptStreamAccumulator {
     const current = dbMessages.filter(message => message.id < 0 ||
       state.transcriptGeneration === undefined || message.transcriptGeneration === state.transcriptGeneration);
     const merged = reconcileTranscriptMessages(current, liveMessages, { stream: true });
-    state.currentMessages = merged;
+    // Compare against the atom, not our last emission: a reload may have
+    // inserted the same rows since, and those are the objects on screen.
+    state.currentMessages = preserveTranscriptMessageIdentity(dbMessages, merged);
     state.messageIndexById = new Map();
     for (let i = 0; i < merged.length; i++) {
       state.messageIndexById.set(merged[i].id, i);

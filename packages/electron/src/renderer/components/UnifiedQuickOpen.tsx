@@ -2903,12 +2903,12 @@ const SearchPane: React.FC<SearchPaneProps> = memo(({
     if (!issueKeyQuery || keyLookupRequested.current) return;
     keyLookupRequested.current = true;
     window.electronAPI
-      .invoke('document-service:tracker-items-list')
+      .invoke('document-service:tracker-items-list', workspacePath)
       .then((result: TrackerItem[] | null) => {
         setKeyLookupItems(Array.isArray(result) ? result : []);
       })
       .catch(() => setKeyLookupItems([]));
-  }, [issueKeyQuery]);
+  }, [issueKeyQuery, workspacePath]);
 
   // Exact issue-key hits are pinned above the semantic ranking.
   const results = useMemo(
@@ -3099,13 +3099,13 @@ const TrackersPane: React.FC<TrackersPaneProps> = memo(({
     if (!isOpen) return;
     setIsLoading(true);
     window.electronAPI
-      .invoke('document-service:tracker-items-list')
+      .invoke('document-service:tracker-items-list', workspacePath)
       .then((result: TrackerItem[] | null) => {
         setItems(Array.isArray(result) ? result : []);
       })
       .catch(() => setItems([]))
       .finally(() => setIsLoading(false));
-  }, [isOpen]);
+  }, [isOpen, workspacePath]);
 
   // The merged Memory Tracker scope keeps exact issue-key/title lookup first,
   // then appends semantic tracker hits in engine rank order.

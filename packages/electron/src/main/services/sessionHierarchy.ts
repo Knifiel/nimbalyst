@@ -184,7 +184,7 @@ export async function findSessionTreeRoot(db: HierarchyDatabase, sessionId: stri
   return rows[0].id;
 }
 
-/** `source` is unset for a local user move. 'remote' (snapshot apply) and 'system' (delete-lift) are not user moves and must not notify anyone. */
+/** `source` is unset for a local user move. 'remote' (snapshot apply) and 'system' (delete-lift) are not user moves. No move notifies a session (#1858). */
 export interface HierarchyMove { source?: 'remote' | 'system'; sessionId: string; workspaceId: string; title: string; previousParentId: string | null; previousManagerId: string | null; parentId: string | null; managerId: string | null }
 const moveListeners = new Set<(move: HierarchyMove) => Promise<void>>();
 const archiveListeners = new Set<(sessionIds: string[], archived: boolean) => Promise<void>>();
@@ -205,6 +205,24 @@ export async function publishHierarchyMove(move: HierarchyMove): Promise<void> {
   for (const listener of moveListeners) {
     try { await listener(move); } catch (error) { console.error('[SessionHierarchy] Failed to publish committed move:', error); }
   }
+}
+
+/**
+ * Tree placement is organizational and never assigns a manager (#1858): a
+ * manager receives the session's completion reports and is woken by them, so
+ * only a spawn may create that relationship. A moved session keeps its manager
+ * while the manager is still an ancestor at the new position, and loses it
+ * once moved out from under it.
+ */
+export function managerAfterMove(rows: Array<Pick<HierarchyRow, 'id' | 'parent_session_id'>>, managerId: string | null, parentId: string | null): string | null {
+  if (!managerId) return null;
+  const parents = new Map(rows.map(row => [row.id, row.parent_session_id ?? null]));
+  const seen = new Set<string>();
+  for (let id = parentId; id && !seen.has(id); id = parents.get(id) ?? null) {
+    if (id === managerId) return managerId;
+    seen.add(id);
+  }
+  return null;
 }
 
 export function managerReassignmentMetadata(node: HierarchyRow, managerId: string | null): Record<string, unknown> {
@@ -237,7 +255,8 @@ export function wrapSessionHierarchyWrites(store: SessionStore, db: HierarchyDat
         const hierarchy = await readHierarchy(db, current.workspace_id);
         assertHierarchyPlacement(hierarchy, proposed, parentId);
         const moved = patch.parentSessionId !== undefined && (current.parent_session_id ?? null) !== parentId;
-        const managerId = patch.createdBySessionId !== undefined ? patch.createdBySessionId : moved ? parentId : current.created_by_session_id ?? null;
+        const currentManagerId = current.created_by_session_id ?? null;
+        const managerId = patch.createdBySessionId !== undefined ? patch.createdBySessionId : moved ? managerAfterMove(hierarchy, currentManagerId, parentId) : currentManagerId;
         if (managerId && (managerId === sessionId || !hierarchy.some(row => row.id === managerId && row.workspace_id === current.workspace_id))) throw new Error('Invalid session manager in this workspace');
         const managerChanged = (current.created_by_session_id ?? null) !== managerId;
         const authoritativePatch = moved || managerChanged ? { ...patch, createdBySessionId: managerId,

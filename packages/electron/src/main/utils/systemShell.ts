@@ -69,6 +69,14 @@ const DEFAULT_RUNDLL32_PATH = '/mnt/c/Windows/System32/rundll32.exe';
 const DEFAULT_EXPLORER_PATH = '/mnt/c/Windows/explorer.exe';
 export const FILE_PROTOCOL_HANDLER = 'url.dll,FileProtocolHandler';
 
+// File types Windows can execute through file associations. Explicit Open file
+// reveals these instead; a missing Explorer must never fall back to execution.
+const WINDOWS_EXECUTABLE_EXTENSIONS = new Set([
+  '.exe', '.com', '.bat', '.cmd', '.lnk', '.scr', '.pif', '.cpl', '.msc',
+  '.msi', '.msp', '.mst', '.ps1', '.ps1xml', '.ps2', '.ps2xml', '.psc1', '.psc2',
+  '.vbs', '.vbe', '.js', '.jse', '.wsf', '.wsh', '.hta', '.reg', '.application', '.appref-ms',
+]);
+
 const WINDOWS_URL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
 
 export function isWslHost(facts: {
@@ -174,7 +182,7 @@ function runForOutput(command: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(command, args, { timeout: HELPER_TIMEOUT_MS, encoding: 'utf8' }, (error, stdout) => {
       if (error) reject(error);
-      else resolve(String(stdout).trim());
+      else resolve(String(stdout).replace(/[\r\n]+$/, ''));
     });
   });
 }
@@ -279,7 +287,7 @@ export function createSystemShell(deps: SystemShellDeps): SystemShell {
   let fileManagerPromise: Promise<boolean> | null = null;
   const hasLinuxFileManager = (): Promise<boolean> => {
     fileManagerPromise ??= runForOutput('xdg-mime', ['query', 'default', 'inode/directory']).then(
-      (desktopFile) => desktopFile.length > 0,
+      (desktopFile) => desktopFile.trim().length > 0,
       () => false,
     );
     return fileManagerPromise;
@@ -324,6 +332,20 @@ export function createSystemShell(deps: SystemShellDeps): SystemShell {
       return `Could not convert the path for Windows: ${error instanceof Error ? error.message : String(error)}`;
     }
     if (arg === null) return 'Windows cannot open this URL';
+
+    if (target.kind === 'path') {
+      try {
+        const resolvedPath = await fsPromises.realpath(target.path);
+        const executableName = [target.path, resolvedPath].some((candidate) =>
+          WINDOWS_EXECUTABLE_EXTENSIONS.has(path.extname(candidate.replace(/[ .]+$/, '')).toLowerCase()),
+        );
+        if ((await fsPromises.stat(resolvedPath)).isFile() && executableName) {
+          opener = 'explorer-select';
+        }
+      } catch (error) {
+        return `Could not inspect the file before opening it in Windows: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
 
     if (opener === 'explorer-select') {
       if (!env.explorer) return 'explorer.exe is unavailable';
@@ -419,3 +441,10 @@ export const systemShell: SystemShell = createSystemShell({
   isWsl: detectWsl,
   findOpeners: findWindowsOpeners,
 });
+
+/** For UI callbacks that cannot await an opener failure. Awaited callers keep the rejection. */
+export function openExternalInBackground(url: string): void {
+  void systemShell.openExternal(url).catch((error) => {
+    console.error('[systemShell] Failed to open external URL', error);
+  });
+}

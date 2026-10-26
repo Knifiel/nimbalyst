@@ -54,6 +54,7 @@ export function registerWindowHandlers() {
                 workspaceName: basename(state.workspacePath),
                 activeWorkspacePath,
                 openProjectPaths,
+                restorePreviousProjects: state.restorePreviousProjects,
             };
         }
 

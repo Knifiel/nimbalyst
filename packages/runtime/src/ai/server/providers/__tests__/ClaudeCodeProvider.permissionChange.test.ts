@@ -27,6 +27,8 @@ vi.mock('../../../../electron/claudeCodeEnvironment', () => ({
 
 import { ClaudeCodeProvider } from '../ClaudeCodeProvider';
 import { BaseAgentProvider } from '../BaseAgentProvider';
+import { TranscriptRuntime } from '../../transcript/TranscriptRuntime';
+import type { RawMessage } from '../../transcript/TranscriptTransformer';
 
 type TrustStatus = {
   trusted: boolean;
@@ -194,5 +196,67 @@ describe('ClaudeCodeProvider canUseTool with a PreToolUse hook ask', () => {
     expect(result).toMatchObject({ behavior: 'deny' });
     expect(requestToolPermission).toHaveBeenCalledTimes(1);
     expect(requestToolPermission).toHaveBeenCalledWith(expect.objectContaining({ toolInput: { command }, requiresUserDecision: 'hook-ask' }));
+  });
+});
+
+// #375: reconstruct the prompt from raw provider rows, including after cache eviction.
+describe('ClaudeCodeProvider approvals during settings lookup', () => {
+  afterEach(() => {
+    BaseAgentProvider.setTrustChecker(null);
+    ClaudeCodeProvider.setClaudeSettingsPatternSaver(null);
+    ClaudeCodeProvider.setClaudeSettingsPatternChecker(null);
+    vi.restoreAllMocks();
+  });
+
+  it('records the released approval so the waiting prompt stays answered after reload', async () => {
+    let releaseLookup!: (approved: boolean) => void;
+    const checker = vi.fn<() => Promise<boolean>>()
+      .mockResolvedValueOnce(false)
+      .mockImplementationOnce(() => new Promise(resolve => { releaseLookup = resolve; }));
+    trustIs({ trusted: true, mode: 'ask' });
+    ClaudeCodeProvider.setClaudeSettingsPatternSaver(async () => {});
+    ClaudeCodeProvider.setClaudeSettingsPatternChecker(checker);
+    const provider = new ClaudeCodeProvider();
+    vi.spyOn((provider as any).permissionService, 'pollForPermissionResponse').mockResolvedValue(undefined);
+    const rows: RawMessage[] = [];
+    vi.spyOn(provider as any, 'logAgentMessage').mockImplementation(async (...args: unknown[]) => {
+      const [sessionId, source, direction, content] = args as [string, RawMessage['source'], RawMessage['direction'], string];
+      rows.push({ id: rows.length + 1, sessionId, source, direction, content, createdAt: new Date() });
+    });
+    const pending = vi.fn();
+    provider.on('toolPermission:pending', pending);
+    const ask = () => (provider as any).handleToolPermissionWithService(
+      'mcp__serena__find_symbol', {}, { signal: new AbortController().signal },
+      'session', '/project', '/project', undefined, undefined, false,
+    );
+    const first = ask();
+    await vi.waitFor(() => expect(pending).toHaveBeenCalledTimes(1));
+    const second = ask();
+    await vi.waitFor(() => expect(checker).toHaveBeenCalledTimes(2));
+    const prompts = rows.map(row => JSON.parse(row.content));
+    expect(prompts).toHaveLength(2);
+    const releasedId = prompts[1].id;
+    const runtime = new TranscriptRuntime({
+      getMessages: async (sessionId, afterId = 0) => rows.filter(row => row.sessionId === sessionId && row.id > afterId),
+    });
+    await runtime.getCanonicalEvents('session', 'claude-code');
+    provider.resolveToolPermission(prompts[0].id, { decision: 'allow', scope: 'always' }, 'session');
+    await first;
+    releaseLookup(false);
+    expect(await second).toMatchObject({ behavior: 'allow' });
+    expect(pending).toHaveBeenCalledTimes(1);
+
+    await runtime.processNewMessages('session', 'claude-code');
+    for (const reload of [false, true]) {
+      if (reload) await runtime.forceReparseSession('session', 'claude-code');
+      const events = await runtime.getCanonicalEvents('session', 'claude-code');
+      const released = events.find(event => event.eventType === 'tool_call' && event.providerToolCallId === releasedId);
+      expect(released?.payload).toMatchObject({ status: 'completed' });
+      expect(JSON.parse((released?.payload as any).result)).toMatchObject({ decision: 'allow', scope: 'session' });
+    }
+    expect(rows.filter(row => {
+      const message = JSON.parse(row.content);
+      return message.type === 'nimbalyst_tool_result' && message.tool_use_id === releasedId;
+    })).toHaveLength(1);
   });
 });

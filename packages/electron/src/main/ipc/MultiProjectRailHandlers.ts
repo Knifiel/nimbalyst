@@ -72,13 +72,15 @@ import { notifyWorkspaceUsageChanged, pruneUnusedGitWatchers, releaseWhenWorkspa
 // (added below in this PR).
 import { fileSystemServices, getFileSystemService } from '../window/serviceRegistry';
 
-function resolveDocumentServiceForEvent(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): ElectronDocumentService | null {
+function resolveDocumentServiceForEvent(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent, workspacePath?: string): ElectronDocumentService | null {
     const browserWindow = BrowserWindow.fromWebContents(event.sender);
     if (!browserWindow) return null;
     const windowId = getWindowId(browserWindow);
     if (windowId === null) return null;
     const state = windowStates.get(windowId);
-    const path = resolveDocumentServicePath(state);
+    // A request that names its project (#1822) is answered for that project,
+    // whichever one the rail has marked active by now.
+    const path = resolveDocumentServicePath(state, workspacePath);
     if (!path) return null;
     return documentServices.get(path) ?? null;
 }

@@ -120,6 +120,33 @@ describe('windowState helpers', () => {
       });
       expect(resolveDocumentServicePath(state)).toBe('/ws/projectB');
     });
+
+    // #1822: the rail marks B active without waiting, so a request for A can
+    // arrive while B is still the active project. A request that names its
+    // project must be answered for that project.
+    it('serves the project the request names, even when another is active (#1822)', () => {
+      const state = makeState({
+        workspacePath: '/ws/projectA',
+        additionalWorkspacePaths: ['/ws/projectB'],
+        activeWorkspacePath: '/ws/projectB',
+      });
+      expect(resolveDocumentServicePath(state, '/ws/projectA')).toBe('/ws/projectA');
+      expect(resolveDocumentServicePath(state, '/ws/projectB')).toBe('/ws/projectB');
+    });
+
+    it('refuses a named project the window does not have open (#1822)', () => {
+      const state = makeState({
+        workspacePath: '/ws/projectA',
+        additionalWorkspacePaths: ['/ws/projectB'],
+        activeWorkspacePath: '/ws/projectB',
+      });
+      expect(resolveDocumentServicePath(state, '/ws/other')).toBeNull();
+    });
+
+    it('still refuses a named project for a non-workspace window (#1822)', () => {
+      const state = makeState({ mode: 'document', workspacePath: '/ws/a' });
+      expect(resolveDocumentServicePath(state, '/ws/a')).toBeNull();
+    });
   });
 
   describe('windowReferencesWorkspace', () => {

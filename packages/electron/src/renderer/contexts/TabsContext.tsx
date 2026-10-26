@@ -23,7 +23,7 @@ import {
   isFeedbackRequestTab,
 } from '../components/FeedbackRequest/feedbackRequestTab';
 import { store as jotaiStore, editorDirtyAtom, makeEditorKey } from '@nimbalyst/runtime/store';
-import { pushTabHistory, stepTabHistory, type TabHistory, type TabHistoryEntry } from './tabHistory';
+import { pushTabHistory, stepTabHistory, type PageScroll, type TabHistory, type TabHistoryEntry } from './tabHistory';
 
 export interface TabData {
   id: string;
@@ -33,7 +33,8 @@ export interface TabData {
   isDirty: boolean;
   isPinned: boolean;
   editorState?: any;
-  scrollPosition?: number;
+  /** Where to scroll the page Back or Forward just returned to, once it mounts. */
+  restoreScroll?: PageScroll;
   cursorPosition?: {
     line: number;
     column: number;
@@ -173,6 +174,8 @@ interface TabsContextValue {
    * dropping) entries `isAvailable` refuses; false when nothing that way is left.
    */
   stepTab: (tabId: string, direction: -1 | 1, isAvailable?: (entry: TabHistoryEntry) => boolean) => boolean;
+  /** The tab host reports how far a tab's page is scrolled, so history can return to it. */
+  setPageScrollReader: (reader: ((tabId: string) => PageScroll | undefined) | null) => void;
   updateTab: (tabId: string, updates: Partial<TabData>) => void;
   togglePin: (tabId: string) => void;
   reorderTabs: (fromIndex: number, toIndex: number) => void;
@@ -457,7 +460,7 @@ export function TabsProvider({
 
   // Show another page in an existing tab. TabContent sees the path change and
   // remounts the tab's editor for it.
-  const showInTab = useCallback((tab: TabData, filePath: string, displayName: string | undefined, history: TabHistory): void => {
+  const showInTab = useCallback((tab: TabData, filePath: string, displayName: string | undefined, history: TabHistory, restoreScroll?: PageScroll): void => {
     const store = slotRef.current.store;
     if (window.electronAPI && !isNonFilesystemTab(tab.filePath)) {
       window.electronAPI.invoke('stop-watching-file', tab.filePath).catch(() => {});
@@ -473,23 +476,35 @@ export function TabsProvider({
       contentHash: undefined,
       contentLoadedAt: undefined,
       history,
+      restoreScroll,
     });
     store.activeTabId = tab.id;
     notify();
   }, [notify]);
 
+  const pageScrollReaderRef = useRef<((tabId: string) => PageScroll | undefined) | null>(null);
+  const setPageScrollReader = useCallback((reader: ((tabId: string) => PageScroll | undefined) | null) => {
+    pageScrollReaderRef.current = reader;
+  }, []);
+  // The page a tab is leaving, with how far it was scrolled.
+  const leavingEntry = useCallback((tab: TabData): TabHistoryEntry => ({
+    filePath: tab.filePath,
+    fileName: tab.fileName,
+    scroll: pageScrollReaderRef.current?.(tab.id),
+  }), []);
+
   const navigateTab = useCallback((tabId: string, filePath: string, displayName?: string): void => {
     const tab = slotRef.current.store.tabs.get(tabId);
     if (!tab || tab.filePath === filePath) return;
-    showInTab(tab, filePath, displayName, pushTabHistory(tab.history, { filePath: tab.filePath, fileName: tab.fileName }));
-  }, [showInTab]);
+    showInTab(tab, filePath, displayName, pushTabHistory(tab.history, leavingEntry(tab)));
+  }, [leavingEntry, showInTab]);
 
   // The tab steps in place even when another tab shows the same page.
   const stepTab = useCallback((tabId: string, direction: -1 | 1, isAvailable?: (entry: TabHistoryEntry) => boolean): boolean => {
     const store = slotRef.current.store;
     const tab = store.tabs.get(tabId);
     if (!tab) return false;
-    const step = stepTabHistory(tab.history, { filePath: tab.filePath, fileName: tab.fileName }, direction, isAvailable);
+    const step = stepTabHistory(tab.history, leavingEntry(tab), direction, isAvailable);
     if (!step) return false;
     if (!step.target) {
       // Only gone pages were that way: drop them so the button disables.
@@ -497,9 +512,9 @@ export function TabsProvider({
       notify();
       return false;
     }
-    showInTab(tab, step.target.filePath, step.target.fileName, step.history);
+    showInTab(tab, step.target.filePath, step.target.fileName, step.history, step.target.scroll);
     return true;
-  }, [notify, showInTab]);
+  }, [leavingEntry, notify, showInTab]);
 
   // Update a tab
   // Only notifies subscribers if structural changes occurred (filePath, fileName changed)
@@ -820,6 +835,7 @@ export function TabsProvider({
     switchTab,
     navigateTab,
     stepTab,
+    setPageScrollReader,
     updateTab,
     togglePin,
     reorderTabs,
@@ -895,6 +911,7 @@ export function useTabsActions() {
     switchTab: context.switchTab,
     navigateTab: context.navigateTab,
     stepTab: context.stepTab,
+    setPageScrollReader: context.setPageScrollReader,
     updateTab: context.updateTab,
     togglePin: context.togglePin,
     reorderTabs: context.reorderTabs,

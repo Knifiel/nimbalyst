@@ -441,7 +441,7 @@ export function setupWorkspaceManagerHandlers() {
   });
 
   // Open workspace (reuse existing window if already open)
-  safeHandle('workspace-manager:open-workspace', async (event, workspacePath: string) => {
+  safeHandle('workspace-manager:open-workspace', async (event, workspacePath: string, options?: { forceNewWindow?: boolean }) => {
     // Add to recent workspaces
     addToRecentItems('workspaces', workspacePath, basename(workspacePath));
 
@@ -449,7 +449,10 @@ export function setupWorkspaceManagerHandlers() {
     // to a different project since it was created, in which case focusing it
     // alone leaves the user looking at the wrong project (#1427) -- the reuse
     // helper sends the navigation message that actually switches it back.
-    const reuse = reuseExistingWorkspaceWindow(workspacePath);
+    // The rail's explicit new-window action must bypass reuse even though the
+    // source window necessarily already references this project (#1856).
+    const forceNewWindow = options?.forceNewWindow === true;
+    const reuse = forceNewWindow ? null : reuseExistingWorkspaceWindow(workspacePath);
     if (reuse) {
       // Close workspace manager after handing off to the existing workspace
       if (workspaceManagerWindow && !workspaceManagerWindow.isDestroyed()) {
@@ -464,7 +467,8 @@ export function setupWorkspaceManagerHandlers() {
     const savedState = getWorkspaceWindowState(workspacePath);
 
     // Create window with saved bounds if available
-    const window = createWindow(false, true, workspacePath, savedState?.bounds);
+    const window = createWindow(false, true, workspacePath, savedState?.bounds,
+      forceNewWindow ? { restorePreviousProjects: false } : undefined);
 
     (async () => {
       try {

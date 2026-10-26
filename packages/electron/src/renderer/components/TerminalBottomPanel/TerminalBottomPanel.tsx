@@ -9,7 +9,7 @@
  * visibility, and panel height. No props needed for panel state.
  */
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { store } from '@nimbalyst/runtime/store';
@@ -18,6 +18,8 @@ import { TerminalTab } from './TerminalTab';
 import { usePostHog } from 'posthog-js/react';
 import {
   terminalListAtom,
+  terminalListWorkspaceAtom,
+  terminalsForWorkspace,
   activeTerminalIdAtom,
   terminalPanelVisibleAtom,
   terminalPanelHeightAtom,
@@ -84,8 +86,15 @@ export const TerminalBottomPanel: React.FC<TerminalBottomPanelProps> = ({
   const panelStateHydrated = useAtomValue(terminalPanelHydratedAtom);
   const closePanel = useSetAtom(closeTerminalPanelAtom);
 
-  // Terminal list state from Jotai atoms
-  const terminals = useAtomValue(terminalListAtom);
+  // Terminal list state from Jotai atoms. After a project switch the shared list
+  // still belongs to the old project until the new one loads, so only use it
+  // while it matches this project (#1818).
+  const loadedTerminals = useAtomValue(terminalListAtom);
+  const terminalListWorkspace = useAtomValue(terminalListWorkspaceAtom);
+  const terminals = useMemo(
+    () => terminalsForWorkspace(loadedTerminals, terminalListWorkspace, workspacePath),
+    [loadedTerminals, terminalListWorkspace, workspacePath]
+  );
   const activeTerminalId = useAtomValue(activeTerminalIdAtom);
   const [isResizing, setIsResizing] = useState(false);
   const resizeStartY = useRef<number>(0);

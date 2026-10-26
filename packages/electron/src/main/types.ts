@@ -40,6 +40,8 @@ export interface WindowState {
     additionalWorkspacePaths?: string[];
     /** Visible rail order for renderer reloads; independent of primary/active paths. */
     projectRailOrder?: string[];
+    /** Per-window override for bootstrapping the global saved rail; not an app setting. */
+    restorePreviousProjects?: boolean;
     documentEdited: boolean;
 
     // Tab management (optional for backward compatibility)

@@ -852,6 +852,34 @@ describe('ToolCallMatcher', () => {
       expect(result.reason).toBe('ambiguous');
       expect(result.candidates.length).toBe(2);
     });
+
+    it('does not let a command that names the file beat another session running an unnamed writer', async () => {
+      const assistantToolUse = (sessionId: string, id: number, toolUseId: string, command: string) => ({
+        session_id: sessionId,
+        id,
+        content: JSON.stringify({
+          type: 'assistant',
+          message: { content: [{ type: 'tool_use', id: toolUseId, name: 'Bash', input: { command } }] },
+        }),
+        created_at_ms: baseTime,
+      });
+      (database.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        rows: [
+          assistantToolUse('reader', 21, 'toolu_reader', 'cat /workspace/src/generated.ts'),
+          assistantToolUse('writer', 22, 'toolu_writer', 'node scripts/generate.js'),
+        ],
+      });
+
+      const result = await toolCallMatcher.matchWorkspaceFileEdit({
+        workspacePath: '/workspace',
+        filePath: '/workspace/src/generated.ts',
+        fileTimestamp: baseTime + 100,
+        candidateSessionIds: ['reader', 'writer'],
+      });
+
+      expect(result.winner).toBeNull();
+      expect(result.reason).toBe('competing_writer');
+    });
   });
 
   describe('getDiffsForToolCall (Codex synthetic ID lookup)', () => {

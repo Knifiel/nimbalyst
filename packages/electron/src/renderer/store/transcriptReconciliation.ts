@@ -1,6 +1,25 @@
 import type { TranscriptViewMessage } from '@nimbalyst/runtime/ai/server/transcript/TranscriptProjector';
 import deepEqual from 'fast-deep-equal';
 
+/** Keep unchanged rows stable even when projection adds, removes or moves rows. */
+export function preserveTranscriptMessageIdentity(
+  current: TranscriptViewMessage[],
+  next: TranscriptViewMessage[],
+): TranscriptViewMessage[] {
+  if (current === next) return current;
+  const previousById = new Map(current.map(message => [message.id, message]));
+  let unchanged = current.length === next.length;
+  const messages = next.map((message, index) => {
+    const previous = previousById.get(message.id);
+    // Equality includes generation, sequence and all tool/metadata fields:
+    // matching text alone must never hide a real update or a rebuilt generation.
+    const retained = previous && deepEqual(previous, message) ? previous : message;
+    if (retained !== current[index]) unchanged = false;
+    return retained;
+  });
+  return unchanged ? current : messages;
+}
+
 /** Missing tags are legacy data, never authority over a tagged generation. */
 export function latestTranscriptGeneration(
   messages: readonly { transcriptGeneration?: number }[],

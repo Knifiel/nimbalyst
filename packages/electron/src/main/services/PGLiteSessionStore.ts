@@ -793,7 +793,7 @@ export function createPGLiteSessionStore(db: PGliteLike, ensureDbReady?: EnsureR
         providerConfig: parseJsonColumn(row.provider_config) ?? undefined,
         providerSessionId: row.provider_session_id ?? undefined,
         lastReadMessageTimestamp: row.last_read_ms ? Number(row.last_read_ms) : undefined,
-        hasBeenNamed: row.has_been_named ?? false,
+        hasBeenNamed: !!row.has_been_named,
         isArchived: !!row.is_archived,
         isPinned: !!row.is_pinned,
         // Branch tracking fields - SEPARATE from hierarchical parentSessionId
@@ -853,7 +853,7 @@ export function createPGLiteSessionStore(db: PGliteLike, ensureDbReady?: EnsureR
           providerConfig: parseJsonColumn(row.provider_config) ?? undefined,
           providerSessionId: row.provider_session_id ?? undefined,
           lastReadMessageTimestamp: row.last_read_ms ? Number(row.last_read_ms) : undefined,
-          hasBeenNamed: row.has_been_named ?? false,
+          hasBeenNamed: !!row.has_been_named,
           isArchived: !!row.is_archived,
           isPinned: !!row.is_pinned,
           branchedFromSessionId: row.branched_from_session_id ?? undefined,

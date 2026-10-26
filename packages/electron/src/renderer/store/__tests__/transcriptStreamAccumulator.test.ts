@@ -85,6 +85,8 @@ function createHarness(dbMessages: TranscriptViewMessage[] = []): Harness {
     emit: (output) => {
       harness.emitCount++;
       harness.lastEmit = output;
+      // The real emit writes the session atom, which readDbMessages reads.
+      harness.dbMessages = output.messages;
     },
     readDbMessages: () => harness.dbMessages,
     schedule: (cb) => {
@@ -374,7 +376,7 @@ describe('TranscriptStreamAccumulator', () => {
       },
     ];
     h.tickFrame();
-    expect(h.lastEmit!.messages.map((m) => m.id)).toEqual([2]);
+    expect(h.dbMessages.map((m) => m.id)).toEqual([2]);
   });
   it('preserves generation when adjacent assistant events fuse into one projected message', () => {
     const h = createHarness();
@@ -505,6 +507,47 @@ describe('TranscriptStreamAccumulator', () => {
   });
 
   describe('structural changes', () => {
+    it('keeps unchanged rows and arrays stable across structural rebuilds', () => {
+      const h = createHarness();
+      const user = makeUserEvent(1, 'prompt');
+      h.acc.apply(user);
+      h.acc.apply(makeAssistantEvent(2, 'reply'));
+      h.tickFrame();
+      const initial = h.lastEmit!.messages;
+
+      h.acc.apply(makeUserEvent(3, 'next prompt'));
+      h.tickFrame();
+      const appended = h.lastEmit!.messages;
+      expect(appended.map(m => m.text)).toEqual(['prompt', 'reply', 'next prompt']);
+      expect(appended[0]).toBe(initial[0]);
+      expect(appended[1]).toBe(initial[1]);
+
+      // A repeated non-text event takes the rebuild path but changes nothing.
+      h.acc.apply({ ...user });
+      h.tickFrame();
+      expect(h.lastEmit!.messages).toBe(appended);
+    });
+
+    it('keeps a row a reload inserted before the next rebuild', () => {
+      const h = createHarness();
+      h.acc.apply(makeUserEvent(1, 'prompt'));
+      h.tickFrame();
+      h.dbMessages = h.lastEmit!.messages;
+
+      // The reload lands between the live event and the next frame's rebuild.
+      const event = makeUserEvent(2, 'next prompt');
+      h.acc.apply(event);
+      const reloaded = TranscriptProjector.project([event]).messages[0];
+      const atom = [...h.dbMessages, reloaded];
+      h.dbMessages = atom;
+      const emits = h.emitCount;
+      h.tickFrame();
+
+      // The rebuild matches what the atom holds, so nothing is republished.
+      expect(h.dbMessages).toBe(atom);
+      expect(h.emitCount).toBe(emits);
+    });
+
     it('rebuilds when an event payload gains a thinking field', () => {
       const h = createHarness();
       const seed = makeAssistantEvent(20, 'hello');
@@ -535,6 +578,7 @@ describe('TranscriptStreamAccumulator', () => {
       expect(h.lastEmit?.messages).toHaveLength(1);
 
       h.acc.unload(SESSION_ID);
+      h.dbMessages = []; // unload accompanies releasing the session atom
       // After unload, the next event for the same session starts from a
       // clean state -- if state had leaked, the live array would still
       // contain the prior event id.

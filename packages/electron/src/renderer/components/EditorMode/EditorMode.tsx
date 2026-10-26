@@ -1467,7 +1467,7 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
             onToggleCollapse={toggleAIChatCollapsed}
             width={aiChatWidth}
             onWidthChange={setAIChatWidth}
-            documentContext={{ filePath: currentFilePath || '' }}
+            documentContext={{ filePath: currentFilePath || '', fileName: currentFileName || undefined }}
             getDocumentContext={getDocumentContext}
             onFileOpen={handleChatFileOpen}
             onSwitchToAgentMode={onSwitchToAgentMode ? (sid?: string) => onSwitchToAgentMode(undefined, sid) : undefined}

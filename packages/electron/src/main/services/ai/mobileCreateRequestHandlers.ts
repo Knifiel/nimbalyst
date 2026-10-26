@@ -32,6 +32,9 @@ export interface MobileCreateRequestContext {
 /** Bulk-publish reason when a newer publication of the same row landed during encryption. */
 const INDEX_STATE_CHANGED_REASON = 'index state changed during publication';
 const MAX_ROW_PUBLISH_ATTEMPTS = 4;
+// The phone owns a 30-second create deadline. Bound confirmation reads
+// together so a slow read cannot consume that entire budget.
+const ROW_CONFIRMATION_BUDGET_MS = 20_000;
 
 /**
  * Publication must explicitly cover this row before the phone receives success.
@@ -43,22 +46,65 @@ const MAX_ROW_PUBLISH_ATTEMPTS = 4;
  * the full row (parent, host) is the last one published and the ack is honest.
  */
 async function publishSessionRow(syncProvider: SyncProvider, row: SessionIndexData): Promise<IndexPublishOutcome> {
-  let outcome = await syncProvider.syncSessionsToIndex?.([row]);
-  for (
-    let attempt = 1;
-    attempt < MAX_ROW_PUBLISH_ATTEMPTS && outcome?.reason === INDEX_STATE_CHANGED_REASON && syncProvider.isIndexReady?.() !== false;
-    attempt++
-  ) {
-    await new Promise<void>((resolve) => setTimeout(resolve, 25 * attempt));
-    outcome = await syncProvider.syncSessionsToIndex?.([row]);
+  const refused = (reason: string, retryable = false): IndexPublishOutcome => ({
+    published: false, reason, retryable, publishedSessionIds: [],
+  });
+  const expected = { id: row.id, project: row.workspaceId, parent: row.parentSessionId ?? null };
+  const deadline = Date.now() + ROW_CONFIRMATION_BUDGET_MS;
+  let last = refused('the sync provider did not confirm publication of this session');
+  for (let attempt = 0; attempt < MAX_ROW_PUBLISH_ATTEMPTS; attempt++) {
+    if (Date.now() >= deadline) return refused('the server confirmation deadline was reached', true);
+    if (attempt > 0) {
+      if (syncProvider.isIndexReady?.() === false) return refused('index disconnected before confirmation', true);
+      await new Promise<void>(resolve => setTimeout(resolve, 25 * attempt));
+      // Never replay the create-time snapshot over a title, model or hierarchy
+      // update that landed while the server read was pending.
+      const { AISessionsRepository } = await import('@nimbalyst/runtime/storage/repositories/AISessionsRepository');
+      const current = await AISessionsRepository.get(expected.id);
+      if (!current) return refused('the created session is no longer stored locally');
+      if (current.id !== expected.id || current.workspacePath !== expected.project || (current.parentSessionId ?? null) !== expected.parent) {
+        return refused('the created session moved before confirmation');
+      }
+      const { messages, workspacePath, ...fields } = current;
+      row = { ...fields, title: current.title ?? 'Untitled', workspaceId: workspacePath, workspacePath,
+        messageCount: messages.length, messageCountKnown: false,
+        hostDeviceId: typeof current.metadata?.hostDeviceId === 'string' ? current.metadata.hostDeviceId : row.hostDeviceId };
+    }
+    const outcome = await syncProvider.syncSessionsToIndex?.([row]);
+    if (!outcome?.published || !outcome.publishedSessionIds.includes(expected.id)) {
+      last = refused(outcome?.reason ?? last.reason!, outcome?.retryable ?? false);
+      if (outcome?.reason === INDEX_STATE_CHANGED_REASON) continue;
+      return last;
+    }
+    // A socket send can be refused asynchronously (for example, rate limiting).
+    // Only the separate server mirror proves that the phone can fetch this ID.
+    if (!syncProvider.fetchIndex) return refused('the sync provider cannot verify the server index');
+    let index: Awaited<ReturnType<NonNullable<SyncProvider['fetchIndex']>>>;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
+    try {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return refused('the server confirmation deadline was reached', true);
+      index = await Promise.race([
+        syncProvider.fetchIndex(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => { timedOut = true; reject(new Error('confirmation deadline')); }, remaining);
+        }),
+      ]);
+    } catch { return refused(timedOut ? 'the server confirmation deadline was reached' : 'the server index could not be checked', true); }
+    finally { clearTimeout(timer); }
+    if (index.complete === false) return refused('the server index is incomplete', true);
+    if (index.deletedSessionIds?.includes(expected.id)) return refused('the created session was deleted from sync');
+    const confirmed = index.sessions.find(entry => entry.sessionId === expected.id);
+    if (confirmed) {
+      if (confirmed.projectId !== expected.project || (confirmed.parentSessionId ?? null) !== expected.parent) {
+        return refused('the server session belongs to a different project or parent');
+      }
+      return outcome;
+    }
+    last = refused('the server has not indexed the created session', true);
   }
-  if (outcome?.published && outcome.publishedSessionIds.includes(row.id)) return outcome;
-  return {
-    published: false,
-    reason: outcome?.reason ?? 'the sync provider did not confirm publication of this session',
-    retryable: outcome?.retryable ?? false,
-    publishedSessionIds: outcome?.publishedSessionIds ?? [],
-  };
+  return last;
 }
 
 /** Avoid local side effects when the desktop already knows it cannot publish. */

@@ -316,7 +316,8 @@ import {
 } from './window/windowState';
 import { getRecentItems } from './utils/store';
 import { registerTeamCustodyHandlers } from './services/TeamCustodyService';
-import { purgeLegacyKeyFiles } from './services/LegacyKeyFilePurge';
+import { registerTeamRecoveryHandlers } from './services/TeamRecoveryService';
+import { findLegacyRecoveryKeyFiles } from './services/LegacyRecoveryKeyFiles';
 import { registerDocumentSyncHandlers } from './ipc/DocumentSyncHandlers';
 import { registerCollabTestIdentityHandlers } from './ipc/CollabTestIdentityHandlers';
 import { getCollabOutboxDrainCoordinator } from './services/CollabOutboxDrainerService';
@@ -1825,9 +1826,9 @@ app.whenReady().then(async () => {
     registerFeedbackRequestHandlers();
     registerOrgSettingsHandlers();
     registerTeamCustodyHandlers();
-    // Team custody is server-managed; drop the client key material the retired
-    // lane left in userData (some of it plaintext where safeStorage was off).
-    purgeLegacyKeyFiles();
+    registerTeamRecoveryHandlers();
+    // Custody retirement does not prove every old organization was recovered.
+    findLegacyRecoveryKeyFiles();
     registerCollabConversionClient();
     registerDocumentSyncHandlers();
     // No-op outside an unpackaged Playwright run with the collab harness env.
@@ -2473,6 +2474,12 @@ app.whenReady().then(async () => {
 
     ClaudeCodeProvider.setClaudeSettingsPatternSaver(patternSaver);
     ClaudeCodeProvider.setClaudeSettingsPatternChecker(patternChecker);
+    // Project-local rules only: "Always" approvals land there, while committed
+    // project settings stay under the CLI's auto-mode filter.
+    ClaudeCodeProvider.setClaudeLocalAllowRuleChecker(async (workspacePath, pattern) => {
+      const local = await claudeSettingsManager.getLocalPatterns(workspacePath);
+      return (local?.allow ?? []).some((allow) => matchesAllowPattern(pattern, allow));
+    });
     ClaudeCodeProvider.setTrustChecker(trustChecker);
 
     OpenAICodexProvider.setPermissionPatternSaver(patternSaver);

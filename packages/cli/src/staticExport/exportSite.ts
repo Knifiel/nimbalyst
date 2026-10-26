@@ -43,7 +43,7 @@ import {
 import { typeDefinitions, WIKI_API_VERSION } from '../serve/api.js';
 import { rewriteBodyLinks, trackerRef, type LinkIssue, type OutsideRefs } from './bodyLinks.js';
 import { describe, escapeHtml, pageHref, renderBodyHtml, renderShell, type PrerenderSite } from './prerender.js';
-import { assignSitePaths, rootPrefix } from './sitePaths.js';
+import { assignSitePaths, normalizeBasePath, rootPrefix } from './sitePaths.js';
 
 export interface StaticExportOptions {
   wiki: LocalWiki;
@@ -53,6 +53,8 @@ export interface StaticExportOptions {
   nimVersion: string;
   /** Site title; default the Home page's title. */
   title?: string;
+  /** URL path where the output folder will be hosted; defaults to `/`. */
+  base?: string;
   outsideRefs?: OutsideRefs;
   keepIdentity?: boolean;
   /** Export only this page and what is under it. */
@@ -168,6 +170,10 @@ function dataName(id: string): string {
 
 export async function exportStaticSite(options: StaticExportOptions): Promise<StaticExportReport> {
   const { wiki } = options;
+  let basePath: string;
+  try { basePath = normalizeBasePath(options.base); } catch (error) {
+    throw new StaticExportError((error as Error).message);
+  }
   const outDir = path.resolve(options.outDir);
   const outsideRefs = options.outsideRefs ?? 'text';
   const keepIdentity = options.keepIdentity ?? false;
@@ -313,7 +319,7 @@ export async function exportStaticSite(options: StaticExportOptions): Promise<St
   };
   const trackerItem = (ref: string) => {
     const id = carriedByRef.get(ref) ?? (carried.has(ref) ? ref : undefined);
-    return id ? { id, href: `/${sitePaths.pages[id].split('/').map(encodeURIComponent).join('/')}/` } : null;
+    return id ? { id, href: `${basePath}${sitePaths.pages[id].split('/').map(encodeURIComponent).join('/')}/` } : null;
   };
   const linkContext = { pages: live, included, outsideRefs, fileExists, trackerItem };
   const bodies = new Map<string, ReadBodyResult>();
@@ -462,8 +468,8 @@ export async function exportStaticSite(options: StaticExportOptions): Promise<St
     await writeText(path.join(stage, 'html-embed', 'shell', 'index.html'), shell);
 
     // ---------------------------------------------------------------- pages
-    const config: StaticSiteConfig = { format: STATIC_SITE_FORMAT, dataPath: `/${STATIC_SITE_DATA_DIR}/` };
-    const site: PrerenderSite = { pages: live, included, sitePaths: sitePaths.pages };
+    const config: StaticSiteConfig = { format: STATIC_SITE_FORMAT, dataPath: `${basePath}${STATIC_SITE_DATA_DIR}/`, basePath };
+    const site: PrerenderSite = { pages: live, included, sitePaths: sitePaths.pages, basePath };
     const writePage = (sitePath: string, pageTitle: string, description: string, content: string) =>
       writeText(path.join(stage, ...sitePath.split('/').filter(Boolean), 'index.html'), renderShell(template, title, { sitePath, title: pageTitle, description, content }, config));
     const nav = (prefix: string, current: string | null) => renderNav(prefix, current, exportedPages, children, included, sitePaths.pages, siteTypeDefs, sitePaths.types);

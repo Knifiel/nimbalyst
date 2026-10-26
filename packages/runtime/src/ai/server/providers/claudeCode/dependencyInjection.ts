@@ -147,6 +147,11 @@ export const ClaudeCodeDeps = {
   // Checks if a pattern is in the allow list of .claude/settings.local.json
   claudeSettingsPatternChecker: null as PatternChecker | null,
 
+  // Checks ONLY the project-local allow list (.claude/settings.local.json, where
+  // "Always" approvals are written). Auto mode honours these in PreToolUse
+  // because the CLI drops rules such as `Agent` before its classifier runs.
+  claudeLocalAllowRuleChecker: null as PatternChecker | null,
+
   // ---- Feature Capabilities ----
 
   // Compresses images to fit within API limits before sending
@@ -234,6 +239,10 @@ export const ClaudeCodeDeps = {
 
   setClaudeSettingsPatternChecker(checker: PatternChecker | null): void {
     this.claudeSettingsPatternChecker = checker;
+  },
+
+  setClaudeLocalAllowRuleChecker(checker: PatternChecker | null): void {
+    this.claudeLocalAllowRuleChecker = checker;
   },
 
   setImageCompressor(compressor: ImageCompressor | null): void {

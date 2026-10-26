@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Tests for TranscriptRuntime -- the in-memory canonical event runtime
  * that replaces the persisted ai_transcript_events table.
@@ -36,6 +37,49 @@ function userInput(id: number, sessionId: string, text: string, createdAt = new 
 }
 
 describe('TranscriptRuntime', () => {
+  describe('Codex commit proposal identity', () => {
+    for (const nativeFirst of [false, true]) {
+      it(`keeps one completed card across batches and replay (nativeFirst=${nativeFirst})`, async () => {
+        const rows: RawMessage[] = [];
+        const runtime = new TranscriptRuntime(makeRawStore(rows));
+        const append = async (content: unknown, metadata?: Record<string, unknown>) => {
+          rows.push({ id: rows.length + 1, sessionId: 'commit', source: 'openai-codex',
+            direction: 'output', content: JSON.stringify(content), metadata,
+            createdAt: new Date(1792862293000 + rows.length) });
+          await runtime.processNewMessages('commit', 'openai-codex');
+        };
+        // Reused raw IDs must still produce separate proposals in later turns.
+        for (const turn of [1, 2]) {
+          const id = 'item_0';
+          const args = { commitMessage: `commit ${turn}`, filesToStage: ['file.ts'] };
+          const enriched = { ...args, filesToStage: ['/repo/file.ts'], repoPath: '/repo',
+            targetWorktree: { path: '/repo', branch: 'feature' } };
+          const hostStart = { type: 'nimbalyst_tool_use', id,
+            name: 'developer_git_commit_proposal', input: enriched };
+          const item = { type: 'mcpToolCall', id, server: 'nimbalyst',
+            tool: 'developer_git_commit_proposal', arguments: args, status: 'inProgress' };
+          const metadata = { transport: 'app-server', editGroupId: `nimtc|item_0|1792862293286|${turn}` };
+          const start = { method: 'item/started', params: { turnId: `turn-${turn}`, item } };
+          if (nativeFirst) { await append(start, metadata); await append(hostStart); }
+          else { await append(hostStart); await append(start, metadata); }
+          const pending = await runtime.getViewMessages('commit', 'openai-codex');
+          expect(pending.filter(m => m.type === 'tool_call')).toHaveLength(turn);
+          expect(pending.at(-1)?.toolCall?.arguments).toEqual(enriched);
+          await append({ method: 'item/completed', params: { turnId: `turn-${turn}`, item: { ...item,
+            status: 'completed', result: { content: [{ type: 'text', text: `Commit hash: abc123${turn}` }] },
+          } } }, metadata);
+          const completed = await runtime.getViewMessages('commit', 'openai-codex');
+          expect(completed.filter(m => m.type === 'tool_call')).toHaveLength(turn);
+          expect(completed.at(-1)?.toolCall).toMatchObject({ status: 'completed', result: `Commit hash: abc123${turn}` });
+        }
+        await runtime.forceReparseSession('commit', 'openai-codex');
+        const replayed = await runtime.getViewMessages('commit', 'openai-codex');
+        expect(replayed.filter(m => m.type === 'tool_call')).toHaveLength(2);
+        expect(replayed.filter(m => m.type === 'tool_call').map(m => m.toolCall?.status)).toEqual(['completed', 'completed']);
+      });
+    }
+  });
+
   it('builds canonical events on first access for an unseen session', async () => {
     const raw = makeRawStore([userInput(1, 's1', 'hello world')]);
     const runtime = new TranscriptRuntime(raw);

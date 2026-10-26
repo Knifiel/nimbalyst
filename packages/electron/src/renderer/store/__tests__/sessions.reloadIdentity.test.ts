@@ -31,6 +31,28 @@ function makeSession(overrides: Partial<SessionData> = {}): SessionData {
 }
 
 describe('preserveReloadIdentity', () => {
+  it('preserves surviving row identities through append, removal and reorder', () => {
+    const messages = [makeMessage(1, 'one'), makeMessage(2, 'two')];
+    const appended = preserveReloadIdentity(makeSession({ messages }), makeSession({
+      messages: [makeMessage(1, 'one'), makeMessage(2, 'two'), makeMessage(3, 'three')],
+    }));
+    expect(appended.messages[0]).toBe(messages[0]);
+    expect(appended.messages[1]).toBe(messages[1]);
+    const reordered = preserveReloadIdentity(appended, makeSession({
+      messages: [makeMessage(3, 'three'), makeMessage(1, 'one')],
+    }));
+    expect(reordered.messages.map(m => m.id)).toEqual([3, 1]);
+    expect(reordered.messages[0]).toBe(appended.messages[2]);
+    expect(reordered.messages[1]).toBe(messages[0]);
+  });
+
+  it('does not reuse a row from a replaced transcript generation', () => {
+    const old = { ...makeMessage(1, 'same'), transcriptGeneration: 1 };
+    const replacement = { ...makeMessage(1, 'same'), transcriptGeneration: 2 };
+    const result = preserveReloadIdentity(makeSession({ messages: [old] }), makeSession({ messages: [replacement] }));
+    expect(result.messages[0]).toBe(replacement);
+  });
+
   it('reuses the existing messages array when reloaded content is identical', () => {
     const currentMessages = [makeMessage(1, 'hello')];
     const current = makeSession({ messages: currentMessages });

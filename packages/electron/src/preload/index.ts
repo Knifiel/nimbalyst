@@ -1864,6 +1864,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Server-managed custody status. `unmigrated` means the organization was
     // never converted and the server refuses its team content.
     getKeyCustodyStatus: (orgId: string) => ipcRenderer.invoke('team:get-key-custody-status', orgId) as Promise<{ success: boolean; mode?: 'server-managed' | 'unmigrated'; dekFingerprint?: string | null; error?: string }>,
+    recovery: (orgId: string, command: import('../shared/teamRecovery').TeamRecoveryCommand, options?: { workspacePath?: string; password?: string }) => ipcRenderer.invoke('team:recovery', orgId, command, options) as Promise<{ success: boolean; overview?: import('../shared/teamRecovery').TeamRecoveryOverview; error?: string }>,
     setProjectIdentity: (orgId: string, workspacePath: string) => ipcRenderer.invoke('team:set-project-identity', orgId, workspacePath),
     clearProjectIdentity: (orgId: string) => ipcRenderer.invoke('team:clear-project-identity', orgId),
   },

@@ -10,12 +10,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
-- Agents can propose a commit into another worktree of the session's repository; the commit card shows its branch and path and always asks for approval on desktop
-- In the iOS and Android apps, a synced Markdown file now shows an embedded `.html` diagram live instead of as a link; document sync now carries `.html` files so the phone has them
-- The Project Graph timeline has a "24 hours" time range with an hourly ruler and times in its tooltips
-- The session list can show a thin bar under each session with how full its context window is; turn it on with "Show context usage" in the session list's sort menu. Sessions from agents that don't report a context window show no bar
-- The GitHub pull request and issue lists can be searched by author: typing a login matches it, and `author:login` shows only that person's items. Pull request search also matches labels now
-- `nim wiki export --static <dir>` exports a local wiki as a static website for any static host, served from the root of a site: each page gets its own URL and readable HTML, and the browser view shows it read-only with charts, diagrams, embedded editor pages, backlinks and search. Tracker items a page links to get their own read-only page in the export when the Nimbalyst app is on the machine. Pages marked `export: false` and person fields are left out by default
 - New worktrees can be set up automatically: chosen project files such as `.env` are copied in and a setup command runs in a terminal of the worktree (Settings > Project > Worktree Setup)
 - The new-worktree dialog can branch a project's nested clones together with it: one task folder holds a worktree of each chosen clone at its own path, on one branch, with a repository picker in the Git panel, and is archived or deleted as a unit
 - Approving a plan can start its implementation in a new worktree, and sessions an agent spawns into a new worktree get the repositories last picked in the new-worktree dialog and the project's worktree setup, starting once the setup command finishes
@@ -24,6 +18,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- A worktree of a repository cloned inside the project uses the project's agent trust instead of asking again; the clone opened on its own still asks
+
+### Fixed
+<!-- Bug fixes go here -->
+- A worktree of a repository cloned inside the project is created next to the project instead of inside it, and the new-worktree dialog names the repository it branches from.
+- Archiving or deleting a worktree no longer deletes another repository's checkout of the same project that sits inside the worktree's folder
+- Archiving or deleting a worktree no longer deletes a folder or branch its repository does not own (another repository's worktree, or a moved, copied, locked or nested checkout), and no longer prunes the repository's other worktrees.
+- Edits inside a repository cloned in the project and ignored by its `.gitignore` now reach the file tree and open editors, following that clone's own ignore rules.
+- Git repositories cloned inside a project and ignored by its `.gitignore` now get status badges and appear in the Git panel's repo picker and the title-bar branch menu.
+- The pull request panel no longer reports the GitHub CLI as signed out when `gh auth status` is slow to answer.
+- After you start a new session to implement a plan, the planning session's plan card says "Deferred to new session" instead of "Denied"
+- Very long sessions open again instead of showing "Session not found" once their history grew too large to load in one read
+- A session that fails to load now says why and offers Try again, instead of showing "Session not found"
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.82.3] - 2026-10-25
+
+
+### Added
+- Admins can recover a legacy-encryption team organization in place from Settings > Security & Encryption, keeping ticket numbers (needs the updated sync server).
+
+### Fixed
+- Opening a rail project in a new window now shows the selected project even when restoring previous projects is enabled.
+- Automatic CPU profiles no longer accumulate and fill disk space.
+- Codex sessions no longer list files edited by concurrent sessions; edits of unknown origin are named in the file tracking notice.
+- Codex sessions no longer show duplicate commit cards, and automatic commits show success only after the result arrives.
+- Moving a session under another in the sidebar no longer appoints a manager or sends either session a message.
+- Images copied in Windows can now be pasted into agent chat and documents when Nimbalyst runs under WSL.
+- Wiki start and team skills load their descriptions correctly, and malformed skill metadata logs concise warnings.
+- Development builds no longer stop responding when React inspects props containing sandboxed HTML embed windows.
+- Scrolling past an agent-displayed image or editor screenshot in a transcript no longer jumps back to it.
+- A pasted image that finishes saving after you undo or switch sessions no longer reverts prompt edits.
+- Unchanged transcript rows are no longer re-rendered while a session runs or reloads.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.82.1] - 2026-10-23
+
+
+### Added
+<!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- Child sessions no longer send informational reports to their parent by default; the spawning session chooses what it hears back.
+- Document sync skips git worktrees nested inside a project, such as `.claude/worktrees`.
+
+### Fixed
+<!-- Bug fixes go here -->
+- Creating a session from iPhone or iPad no longer fails with "The desktop did not confirm session creation" on desktops using SQLite.
+- A malformed field on one session no longer hides that session on iOS.
+- Links, files, and folders opened from WSL fall back to Windows when no Linux handler works; executables are revealed instead of launched.
+- Sessions that finish in a background project or window now show as unread.
+- Clicking "Always" on one waiting permission prompt now also covers the other waiting prompts.
+- Permission prompts answered while settings were loading stay answered after reload.
+- A notification click opens its session instead of the one previously open in that project.
+- The saved session is restored before the fallback session is chosen on project switch.
+- Single-choice decisions that allow written answers show an Other choice with a text box.
+- Moving a local wiki to a team keeps embeds, map links, Home and types.
+- Document sync with a large upload backlog sends it in ~1 MB pieces instead of dropping and retrying every ~17 seconds; repeated drops back off up to 30 seconds.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.82.0] - 2026-10-23
+
+
+### Added
+<!-- New features go here -->
+- Agents can propose a commit into another worktree of the session's repository; the commit card shows its branch and path and always asks for approval on desktop
+- In the iOS and Android apps, a synced Markdown file now shows an embedded `.html` diagram live instead of as a link; document sync now carries `.html` files so the phone has them
+- The Project Graph timeline has a "24 hours" time range with an hourly ruler and times in its tooltips
+- The session list can show a thin bar under each session with how full its context window is; turn it on with "Show context usage" in the session list's sort menu. Sessions from agents that don't report a context window show no bar
+- The GitHub pull request and issue lists can be searched by author: typing a login matches it, and `author:login` shows only that person's items. Pull request search also matches labels now
+- `nim wiki export --static <dir>` exports a local wiki as a static website for any static host, served from the root of a site or a subdirectory with `--base /docs/`: each page gets its own URL and readable HTML, and the browser view shows it read-only with charts, diagrams, embedded editor pages, backlinks and search. Tracker items a page links to get their own read-only page in the export when the Nimbalyst app is on the machine. Pages marked `export: false` and person fields are left out by default
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- Chat now shows the file or page name being included as context and a short preview of selected text, including on Local and Personal wiki pages
+- Going Back or Forward in Pages, with the buttons, keyboard or a trackpad swipe, now returns a page to where it was scrolled instead of its top
 - Opening a local wiki page from Quick Open or from a file link in an AI transcript now shows it in Pages mode instead of Files
 - On the SQLite database, tool output older than 30 days in agent transcripts is now replaced with a placeholder by a daily background pass; your prompts, agent replies and tool calls are kept. Shrinking the file on disk is still the Vacuum action in the database dashboard
 - Completed and failed queued prompts older than 30 days are now deleted automatically
@@ -35,10 +112,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Saving a synced document without changing its content no longer uploads it again
 - Session groups in the session list no longer show a count of unread child sessions, which took up row space
 - The table of contents menu in a document's header now indents each heading under the heading it belongs to, and shows deeper headings in smaller, lighter text
-- A worktree of a repository cloned inside the project uses the project's agent trust instead of asking again; the clone opened on its own still asks
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Typing into a text cell in a tracker table no longer replaces the first typed character with the second (#1199)
+- Video, audio, WebP, AVIF and HEIC files are now read as binary instead of being decoded as text, and encoding detection for large non-UTF-8 text files only scans a bounded sample
+- Creating a session from mobile now waits for confirmation that it is available in sync, and reconnecting a phone restores missing session-list entries from the desktop.
+- In Claude Agent sessions with automatic review on, approving a tool call the automatic review blocked now lets that call run instead of being blocked again; "Always" approvals saved to the project's local Claude settings now apply to tools such as sub-agents, and an approval prompt whose turn already ended now shows as cancelled instead of staying clickable
+- `@` file mentions and Quick Open file and content search return results in large repositories instead of nothing.
 - In Claude Agent sessions on Opus 5.5 and Fable 5, the short summary the model returns in place of text written between tool calls now shows as a visible line in the transcript instead of inside a collapsed Thinking box; the full original text is not returned by the API and still can't be shown
 - The background scan for Claude Code and Codex session files now waits before retrying a file that failed to import, starting at 1 minute and growing to 30, instead of retrying it on every pass; a file that changes on disk is still retried right away
 - Files deleted from a synced project, including a whole deleted folder or files deleted while Nimbalyst was closed, are now removed from document sync instead of being written back to disk on the next sync; a file edited on another device since is still restored
@@ -60,16 +141,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The macOS Window menu now drops a project when you close its window and checks the window that has focus
 - The Pages sidebar now highlights the open page when it is a typed page in a local wiki or sits under a typed page, opening the collapsed rows above it
 - Cursor Agent sessions now receive attached text documents and the file paths of pasted images and PDFs, which the agent opens itself
-- A worktree of a repository cloned inside the project is created next to the project instead of inside it, and the new-worktree dialog names the repository it branches from.
-- Archiving or deleting a worktree no longer deletes another repository's checkout of the same project that sits inside the worktree's folder
-- Archiving or deleting a worktree no longer deletes a folder or branch its repository does not own (another repository's worktree, or a moved, copied, locked or nested checkout), and no longer prunes the repository's other worktrees.
-- Edits inside a repository cloned in the project and ignored by its `.gitignore` now reach the file tree and open editors, following that clone's own ignore rules.
-- Git repositories cloned inside a project and ignored by its `.gitignore` now get status badges and appear in the Git panel's repo picker and the title-bar branch menu.
-- The pull request panel no longer reports the GitHub CLI as signed out when `gh auth status` is slow to answer.
-- After you start a new session to implement a plan, the planning session's plan card says "Deferred to new session" instead of "Denied"
-- Very long sessions open again instead of showing "Session not found" once their history grew too large to load in one read
-- A session that fails to load now says why and offers Try again, instead of showing "Session not found"
-- When Nimbalyst runs under WSL, an image copied in Windows, such as a screenshot, can now be pasted into the agent chat input and into documents
+- On iPhone and iPad, a new session is no longer sent to an offline record of your computer, which left the request unanswered; the connection dot now reflects the selected computer, the picker and Settings mark offline computers, and choosing one shows an error instead of failing silently
+- With several projects on the rail, the Tracker board no longer shows another project's items after a switch, and starting a session from a tracker item that belongs to a different project is refused instead of running the agent in the wrong project's folder
+- The terminal no longer stops starting after many project switches in one window, because a closed terminal now frees its memory; when it cannot start, it shows the real reason instead of "Failed to fetch" and writes it to the app log
+- Editor errors, such as a file that failed to save or an editor that crashed, are now written to the app log instead of being dropped
+- Switching projects in one window no longer restarts the previous project's terminals inside the new project
+- Clicking a notification for a session in another open project opens that session, instead of the session that was open there before.
+- Choosing "Always" on one of several tool permission prompts that are waiting at once now approves the others too, instead of asking again
 
 ### Removed
 <!-- Removed features go here -->

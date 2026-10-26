@@ -23,10 +23,11 @@ import { ModelIdentifier, type ChatAttachment, type SessionData } from '@nimbaly
 import { stripMcpPrefix } from '@nimbalyst/runtime/ai/server/interactivePromptTools';
 import type { SessionMeta } from '@nimbalyst/runtime';
 import deepEqual from 'fast-deep-equal';
-import { captureTranscriptMessages, reconcileTranscriptMessages } from '../transcriptReconciliation';
+import { captureTranscriptMessages, preserveTranscriptMessageIdentity, reconcileTranscriptMessages } from '../transcriptReconciliation';
 import { sessionLaunchCountsAtom } from './sessionLaunchCounts';
 import { sessionListMetadata } from './sessionListMetadata';
 import { workstreamStateAtom, setWorkstreamActiveChildAtom } from './workstreamState';
+import { clearSessionUnreadAtom } from './sessionActivity';
 import { aiInputHistoryAtom } from './aiInputUndo';
 
 // SessionMeta is imported from @nimbalyst/runtime (canonical type).
@@ -1943,37 +1944,13 @@ export const updateSessionDataAtom = atom(
  */
 const pendingReloads = new Map<string, { version: number; aborted: boolean; workspacePath: string }>();
 
-function preserveEquivalentArrayRef<T>(current: T[] | undefined, next: T[] | undefined): T[] | undefined {
-  if (!current || !next) return next;
-  if (current === next) return current;
-  if (current.length !== next.length) return next;
-  if (deepEqual(current, next)) return current;
-  // Per-element preservation: if individual entries are deep-equal, reuse the
-  // current reference for that index so virtualized row memos can bail out.
-  // The outer array reference still changes (some element differs) — that's
-  // expected — but rows whose underlying message didn't change keep identity.
-  let changed = false;
-  const merged: T[] = new Array(next.length);
-  for (let i = 0; i < next.length; i++) {
-    const c = current[i];
-    const n = next[i];
-    if (c === n || deepEqual(c, n)) {
-      merged[i] = c;
-    } else {
-      merged[i] = n;
-      changed = true;
-    }
-  }
-  return changed ? merged : current;
-}
-
 function preserveEquivalentValue<T>(current: T | undefined, next: T | undefined): T | undefined {
   if (current === undefined || next === undefined) return next;
   return deepEqual(current, next) ? current : next;
 }
 
 export function preserveReloadIdentity(current: SessionData, next: SessionData): SessionData {
-  const normalizedMessages = preserveEquivalentArrayRef(current.messages, next.messages);
+  const normalizedMessages = preserveTranscriptMessageIdentity(current.messages, next.messages);
   const currentTeammates = Array.isArray(current.metadata?.currentTeammates)
     ? current.metadata.currentTeammates
     : undefined;
@@ -2164,6 +2141,7 @@ export const markSessionReadAtom = atom(null, (get, set, sessionId: string) => {
   const now = Date.now();
   set(sessionUnreadAtom(sessionId), false);
   set(sessionLastReadAtom(sessionId), now);
+  set(clearSessionUnreadAtom, { sessionId });
 
   // Always push lastReadAt through sync for cross-device read state.
   // Even if this device didn't consider the session "unread", another device

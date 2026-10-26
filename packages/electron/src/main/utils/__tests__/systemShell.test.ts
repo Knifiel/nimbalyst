@@ -16,6 +16,7 @@ vi.mock('electron', () => ({ shell: shellMock }));
 
 import {
   createSystemShell,
+  openExternalInBackground,
   FILE_PROTOCOL_HANDLER,
   isWslHost,
   LINUX_OPEN_SETTLE_MS,
@@ -149,6 +150,14 @@ describe('createSystemShell', () => {
   const wslShell = (openers: WindowsOpeners = ALL_OPENERS) =>
     createSystemShell({ isWsl: () => true, findOpeners: async () => openers });
 
+  it('logs a rejected background open without leaking an unhandled rejection', async () => {
+    const error = new Error('opener failed');
+    shellMock.openExternal.mockRejectedValueOnce(error);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    openExternalInBackground('https://example.com/');
+    await vi.waitFor(() => expect(log).toHaveBeenCalledWith('[systemShell] Failed to open external URL', error));
+  });
+
   it('passes straight through to Electron off WSL', async () => {
     const offWsl = createSystemShell({ isWsl: () => false, findOpeners });
     await offWsl.openExternal('https://example.com/');
@@ -205,6 +214,60 @@ describe('createSystemShell', () => {
       [RUNDLL32, [FILE_PROTOCOL_HANDLER, windowsPathOf(file)]],
     ]);
     expect(spawnMock.mock.calls[0][2]).toMatchObject({ cwd: tmpDir });
+  });
+
+  it.each(['exe', 'BAT', 'cmd', 'lnk', 'com', 'scr', 'msi', 'ps1', 'vbs', 'js', 'exe. '])('reveals a .%s file instead of executing it in Windows', async (extension) => {
+    const executable = path.join(tmpDir, `program.${extension}`);
+    fs.writeFileSync(executable, 'not executable test content');
+    scripts['xdg-open'] = { exit: 3 };
+    await expect(wslShell().openPath(executable)).resolves.toBe('');
+    expect(spawned()).toEqual([
+      ['xdg-open', [executable]],
+      [EXPLORER, [`/select,${windowsPathOf(executable)}`]],
+    ]);
+  });
+
+  it.each([['target.exe', 'alias.txt'], ['target.txt', 'alias.exe']])('reveals symlinks when either %s or %s is executable', async (targetName, aliasName) => {
+    const target = path.join(tmpDir, targetName);
+    const alias = path.join(tmpDir, aliasName);
+    fs.writeFileSync(target, 'not executable test content');
+    fs.symlinkSync(target, alias);
+    scripts['xdg-open'] = { exit: 3 };
+    await expect(wslShell().openPath(alias)).resolves.toBe('');
+    expect(spawned()).toEqual([
+      ['xdg-open', [alias]],
+      [EXPLORER, [`/select,${windowsPathOf(alias)}`]],
+    ]);
+  });
+
+  it('does not launch an executable when Explorer is unavailable', async () => {
+    const executable = path.join(tmpDir, 'blocked.exe');
+    fs.writeFileSync(executable, 'not executable test content');
+    scripts['xdg-open'] = { exit: 3 };
+    await expect(wslShell({ ...ALL_OPENERS, explorer: null }).openPath(executable)).resolves.toContain('explorer.exe is unavailable');
+    expect(spawned()).toEqual([['xdg-open', [executable]]]);
+  });
+
+  it('opens a directory using its Windows path, even with an executable suffix', async () => {
+    const directory = path.join(tmpDir, 'folder.exe');
+    fs.mkdirSync(directory);
+    scripts['xdg-open'] = { exit: 3 };
+    await expect(wslShell().openPath(directory)).resolves.toBe('');
+    expect(spawned()).toEqual([
+      ['xdg-open', [directory]],
+      [RUNDLL32, [FILE_PROTOCOL_HANDLER, windowsPathOf(directory)]],
+    ]);
+    expect(spawnMock.mock.calls[0][2]).toMatchObject({ cwd: tmpDir });
+  });
+
+  it('falls back to Electron when Explorer fails to spawn', async () => {
+    scripts[EXPLORER] = { error: 'spawn EACCES' };
+    wslShell().showItemInFolder(file);
+    await vi.waitFor(() => expect(shellMock.showItemInFolder).toHaveBeenCalledWith(file));
+    expect(console.warn).toHaveBeenCalledWith(
+      '[systemShell] Could not reveal the item in Windows; falling back to Electron',
+      expect.objectContaining({ error: expect.stringContaining('spawn EACCES') }),
+    );
   });
 
   it('counts only a zero exit from rundll32 as success', async () => {

@@ -9,7 +9,7 @@
  * the site is hosted.
  */
 import { Marked, type Tokens } from 'marked';
-import { encodeLinkPath, type LocalPage } from '@nimbalyst/local-wiki';
+import { encodeLinkPath, type LocalPage, type StaticSiteConfig } from '@nimbalyst/local-wiki';
 import { linkBase, resolveRelative } from './bodyLinks.js';
 
 export function escapeHtml(text: string): string {
@@ -24,6 +24,7 @@ export interface PrerenderSite {
   included: ReadonlySet<string>;
   /** Id to site path, as in the manifest. */
   sitePaths: Readonly<Record<string, string>>;
+  basePath: string;
 }
 
 /** Site-relative URL of a page from a page at `fromSitePath`. */
@@ -46,7 +47,7 @@ function siteUrl(site: PrerenderSite, page: Pick<LocalPage, 'path' | 'dir'>, pre
   const raw = href.trim();
   if (raw.startsWith('#')) return raw;
   // A site path the exporter wrote (`/items/<id>/`, a carried tracker item), made relative to this page.
-  if (raw.startsWith('/') && !raw.startsWith('//')) return `${prefix}${raw.slice(1)}`;
+  if (raw.startsWith(site.basePath) && !raw.startsWith('//')) return `${prefix}${raw.slice(site.basePath.length)}`;
   if (SCHEME.test(raw)) return SAFE_SCHEME.test(raw) ? raw : null;
   const hash = raw.indexOf('#');
   const bare = hash >= 0 ? raw.slice(0, hash) : raw;
@@ -117,7 +118,7 @@ export interface ShellPage {
 }
 
 /** Turns the app's built `index.html` into one exported page. */
-export function renderShell(template: string, wikiTitle: string, page: ShellPage, config: object): string {
+export function renderShell(template: string, wikiTitle: string, page: ShellPage, config: StaticSiteConfig): string {
   const fullTitle = page.title && page.title !== wikiTitle ? `${page.title} · ${wikiTitle}` : wikiTitle;
   const head = [
     `<meta name="description" content="${escapeHtml(page.description)}" />`,
@@ -128,7 +129,10 @@ export function renderShell(template: string, wikiTitle: string, page: ShellPage
     // Read by the app before it loads any data; `<` is escaped so no value can close the tag.
     `<script>window.__NIMBALYST_WIKI_STATIC__=${JSON.stringify(config).replace(/</g, '\\u003c')}</script>`,
   ].join('\n    ');
-  let html = template.replace(/<title>[\s\S]*?<\/title>/, `<title>${escapeHtml(fullTitle)}</title>`);
+  // Rebase only the app template, before adding the page's relative links.
+  let html = template.replace(/\b(src|href)=(['"])\/(?!\/)([^'"]*)\2/g,
+    (_match, attr: string, quote: string, url: string) => `${attr}=${quote}${escapeHtml(config.basePath ?? '/')}${url}${quote}`);
+  html = html.replace(/<title>[\s\S]*?<\/title>/, `<title>${escapeHtml(fullTitle)}</title>`);
   html = html.replace('</head>', `    ${head}\n  </head>`);
   html = html.replace('<div id="root"></div>', `<div id="root">${page.content}</div>`);
   return html;

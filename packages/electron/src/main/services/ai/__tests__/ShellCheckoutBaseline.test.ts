@@ -231,9 +231,10 @@ it.each(['alone', 'external session', 'overlapping shell'])('ignores cold-cache 
     await service.completed(generation, 'rebuild');
     if (other) await service.completed(other, 'other-command');
     expect(links).toEqual([]);
-    // A concurrent agent session is noted, never a fault; nothing else may report.
+    // Ownership is irrelevant when final bytes match the baseline, even with
+    // another active session. Do not warn about an edit that did not happen.
     const reasons = () => new Set(report.mock.calls.map(([, reason]) => reason));
-    expect([...reasons()]).toEqual(mode === 'external session' ? ['uninstrumented'] : []);
+    expect([...reasons()]).toEqual([]);
     await service.pre(generation, 'authored', 'Bash');
     if (other) await service.pre(other, 'other-authored', 'Bash');
     now++;
@@ -249,13 +250,12 @@ it.each(['alone', 'external session', 'overlapping shell'])('ignores cold-cache 
     }
     git('add', '-u'); git('commit', '-qm', 'authored');
     await service.completed(generation, 'authored');
-    if (mode === 'overlapping shell') {
+    if (mode !== 'alone') {
       expect(links).toEqual([]);
-      expect(reasons()).toContain('competingOwners');
+      expect(reasons()).toContain(mode === 'external session' ? 'unreportedSession' : 'competingOwners');
     } else {
-      // Another agent's turn in the workspace shares the link instead of withholding it.
       expect(links.map(e => path.basename(e.filePath)).sort()).toEqual(['committed.ts', 'deleted.ts', 'dirty.ts', 'revert.ts']);
-      expect([...reasons()]).toEqual(mode === 'external session' ? ['uninstrumented'] : []);
+      expect([...reasons()]).toEqual([]);
     }
   } finally {
     if (generation) await service.release(generation);

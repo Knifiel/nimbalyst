@@ -5,12 +5,29 @@
  * team document pass 1 registered, and the files pages link to are uploaded.
  * Then a second pass re-sends only the bodies whose links changed once every
  * page has its team link. The server upserts on (project, source.wikiId,
- * localId), so an interrupted run re-run resumes.
+ * localId), so an interrupted run re-run resumes. The local Home is named in
+ * every call and lands in the project's Home page; types are placed in the
+ * page tree after the first pass.
  */
 import { ExitCode } from '../cli/exitCodes.js';
 import { PagesToolError } from './pagesClient.js';
 import type { TeamContentWriter } from './teamContent.js';
-import { pathIndex, rewriteFileLinksForTeam, rewriteWikiLinks, shareCanvasCards, type ImportPage, type ImportType, type LocalWikiExport } from '../localWiki/teamExport.js';
+import {
+  pathIndex,
+  rewriteEmbedsForTeam,
+  rewriteFileLinksForTeam,
+  rewriteHtmlPageLinks,
+  rewriteWikiLinks,
+  shareCanvasCards,
+  type ImportPage,
+  type ImportType,
+  type ImportTypePlacement,
+  type LocalWikiExport,
+  type TeamEmbed,
+} from '../localWiki/teamExport.js';
+
+/** Editor page types that are HTML, whose links the move points at team pages. */
+const HTML_DOCUMENT_TYPES = new Set(['html', 'mockup.html']);
 
 export interface ImportedEntry {
   nodeId: string;
@@ -203,6 +220,8 @@ export async function importToTeam(exported: LocalWikiExport, target: ImportTarg
     ...(target.repo ? { repo: target.repo } : {}),
     project: target.project,
     source: { wikiId: target.wikiId },
+    // Every batch names it, so the server resolves Home as a parent or a re-sent body in any of them.
+    ...(exported.projectHomeLocalId ? { homeLocalId: exported.projectHomeLocalId } : {}),
   };
   const idMap: Record<string, ImportedEntry> = {};
   const errors: ImportError[] = [];
@@ -211,8 +230,8 @@ export async function importToTeam(exported: LocalWikiExport, target: ImportTarg
   let updated = 0;
   let batches = 0;
 
-  const send = async (pages: ImportPage[], types?: ImportType[]) => {
-    const result = asResult(await call('pages_import', { ...base, ...(types ? { types } : {}), pages }));
+  const send = async (pages: ImportPage[], extra: { types?: ImportType[]; typePlacements?: ImportTypePlacement[] } = {}) => {
+    const result = asResult(await call('pages_import', { ...base, ...extra, pages }));
     batches++;
     Object.assign(idMap, result.idMap);
     errors.push(...result.errors);
@@ -235,7 +254,7 @@ export async function importToTeam(exported: LocalWikiExport, target: ImportTarg
       message: `The definition of type ${type.id} is ${Math.round(jsonBytes(type) / 1024)} KB, over the ${limitKb} KB a single import request can carry; its typed pages cannot be imported until it is smaller.`,
     });
   }
-  for (const types of typePlan.batches) await send([], types);
+  for (const types of typePlan.batches) await send([], { types });
 
   // Pass 1: every page as written, minus relationship fields (their targets may not have team ids yet).
   // Pages come in tree order, so a page that did not make it is known before any of its children is sent;
@@ -258,6 +277,15 @@ export async function importToTeam(exported: LocalWikiExport, target: ImportTarg
     for (const page of batch) if (!result.idMap[page.localId]) notImported.add(page.localId);
   }
 
+  // Types into the page tree, now that the pages they sit under exist.
+  const placeable: ImportTypePlacement[] = [];
+  for (const placement of exported.typePlacements) {
+    if (placement.parentLocalId && notImported.has(placement.parentLocalId)) {
+      errors.push({ localId: `type:${placement.typeId}`, code: 'parent_not_imported', message: 'The page it sits under was not imported, so the type is not placed in the team page tree.' });
+    } else placeable.push(placement);
+  }
+  for (let at = 0; at < placeable.length; at += TYPE_BATCH_MAX) await send([], { typePlacements: placeable.slice(at, at + TYPE_BATCH_MAX) });
+
   // Between the passes: editor pages' content, then the files pages link to, each into its page's team document.
   let editorPagesWritten = 0;
   let filesUploaded = 0;
@@ -272,11 +300,20 @@ export async function importToTeam(exported: LocalWikiExport, target: ImportTarg
   };
   // A page the server mapped but refused as another document type keeps its links, never a write in another editor's format.
   const typeMismatch = new Set(errors.filter((error) => error.code === 'document_type_mismatch').map((error) => error.localId));
+  const linkFor = (localId: string) => idMap[localId]?.link;
+  let linksRewritten = 0;
   for (const [localId, file] of exported.editorFiles) {
     const entry = idMap[localId];
     if (!entry || typeMismatch.has(localId)) continue;
-    const canvasPath = file.documentType === 'canvas' ? exported.locations.get(localId)?.path : undefined;
-    const text = canvasPath ? shareCanvasCards(file.text, canvasPath, { prefix: exported.wikiPrefix, dir: exported.wikiDir }, byPath, teamDocument).text : file.text;
+    const location = exported.locations.get(localId);
+    let text = file.text;
+    if (file.documentType === 'canvas' && location?.path) {
+      text = shareCanvasCards(text, location.path, { prefix: exported.wikiPrefix, dir: exported.wikiDir }, byPath, teamDocument).text;
+    } else if (HTML_DOCUMENT_TYPES.has(file.documentType) && location) {
+      const html = rewriteHtmlPageLinks(text, location, byPath, linkFor);
+      text = html.text;
+      linksRewritten += html.rewritten;
+    }
     const written = await content!.writeEditorPage({ localId, documentId: entry.id, documentType: file.documentType, text });
     if (written.ok) editorPagesWritten++;
     else errors.push({ localId, code: written.code, message: written.message });
@@ -303,20 +340,26 @@ export async function importToTeam(exported: LocalWikiExport, target: ImportTarg
     if (uris.size) assetUris.set(localId, uris);
   }
 
-  // Pass 2: links between pages point at their team pages, files at their uploads, and relationship fields at team ids.
-  const linkFor = (localId: string) => idMap[localId]?.link;
+  // Pass 2: embeds become team embeds, links between pages point at their team pages, files at their uploads, and relationship fields at team ids.
   const teamId = (localId: string) => idMap[localId]?.id;
+  const editorPages = new Map(exported.pages.filter((page) => page.kind === 'editorPage').map((page) => [page.localId, page]));
+  const embedFor = (localId: string): TeamEmbed | undefined => {
+    const fileExtension = editorPages.get(localId)?.fileExtension;
+    const doc = typeMismatch.has(localId) ? undefined : teamDocument(localId);
+    if (!fileExtension || !doc) return undefined;
+    return { uri: `nimbalyst://doc/${encodeURIComponent(doc.documentId)}?orgId=${encodeURIComponent(doc.orgId)}`, fileExtension };
+  };
   const changed: ImportPage[] = [];
-  let linksRewritten = 0;
   for (const page of exported.pages) {
     if (!idMap[page.localId]) continue;
     const location = exported.locations.get(page.localId);
-    const pageLinks = location && page.body ? rewriteWikiLinks(page.body, location, byPath, linkFor) : { body: page.body, rewritten: 0 };
+    const embeds = location && page.body ? rewriteEmbedsForTeam(page.body, location, byPath, embedFor) : { body: page.body, rewritten: 0 };
+    const pageLinks = location && embeds.body ? rewriteWikiLinks(embeds.body, location, byPath, linkFor) : { body: embeds.body, rewritten: 0 };
     const uris = assetUris.get(page.localId);
     const fileLinks = location && pageLinks.body
       ? rewriteFileLinksForTeam(pageLinks.body, location, byPath, linkFor, (linkPath) => uris?.get(linkPath))
       : { body: pageLinks.body, rewritten: 0 };
-    const next = { body: fileLinks.body, rewritten: pageLinks.rewritten + fileLinks.rewritten };
+    const next = { body: fileLinks.body, rewritten: embeds.rewritten + pageLinks.rewritten + fileLinks.rewritten };
     const relations = exported.relations.get(page.localId);
     const remapped: Record<string, string | string[]> = {};
     const missing: string[] = [];

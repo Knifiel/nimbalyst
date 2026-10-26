@@ -1,5 +1,5 @@
 /**
- * `nim wiki export --static <dir> [--title T] [--subtree <page>] [--outside-refs text|console]
+ * `nim wiki export --static <dir> [--title T] [--base /docs/] [--subtree <page>] [--outside-refs text|console]
  * [--exclude-type <type>,...] [--keep-identity] [--tracker-items linked|none] [--assets <dir>] [--json]`:
  * the local wiki as a static website. See staticExport/exportSite.ts.
  *
@@ -18,6 +18,7 @@ import type { OpenedWiki } from '../localWiki/open.js';
 import { findPage } from '../localWiki/tree.js';
 import { installHint, resolveWikiWebAssets } from '../serve/assets.js';
 import { exportStaticSite, StaticExportError, type CarriedTrackerItem, type StaticExportReport, type TrackerItemSource } from '../staticExport/exportSite.js';
+import { normalizeBasePath } from '../staticExport/sitePaths.js';
 
 const ISSUE_LABEL: Record<string, string> = {
   'excluded-page': 'links to a page left out (shown as text)',
@@ -77,7 +78,7 @@ function openTrackerGateway(): { gateway: TrackerGateway | null; reason: string 
   }
 }
 
-function describe(report: StaticExportReport, outsideRefs: string, trackerNote: string | null): string {
+function describe(report: StaticExportReport, outsideRefs: string, trackerNote: string | null, base: string): string {
   const lines = [
     `Exported ${report.pages} pages, ${report.typedPages} typed pages, ${report.rows} table rows, ${report.trackerItems} linked tracker items, ${report.types} types and ${report.files} linked files to ${safeText(report.outDir)}`,
   ];
@@ -98,7 +99,7 @@ function describe(report: StaticExportReport, outsideRefs: string, trackerNote: 
     lines.push(`  ${count} ${label}`);
   }
   if (inItems) lines.push(`  ${inItems} links inside linked tracker items to things no page links to (shown as text)`);
-  lines.push('', 'Serve the folder from the root of a site (any static host, or `npx serve <dir>` to try it).');
+  lines.push('', base === '/' ? 'Serve the folder from the root of a site (any static host, or `npx serve <dir>` to try it).' : `Serve the contents of the output folder at ${base} on your site.`);
   return lines.join('\n');
 }
 
@@ -122,6 +123,7 @@ export async function runWikiExport(args: ParsedArgs, opened: OpenedWiki, versio
       assetsDir: resolution.assets.dir,
       outDir,
       nimVersion: version,
+      base: flagStr(args, 'base'),
       // A site is named for its project, not its Home page (which every wiki calls Home).
       title: flagStr(args, 'title') ?? (opened.projectRoot ? path.basename(opened.projectRoot) : undefined),
       outsideRefs,
@@ -136,6 +138,6 @@ export async function runWikiExport(args: ParsedArgs, opened: OpenedWiki, versio
   } finally {
     tracker.gateway?.close();
   }
-  process.stdout.write((flagBool(args, 'json') ? JSON.stringify(report, null, 2) : describe(report, outsideRefs, trackerNote)) + '\n');
+  process.stdout.write((flagBool(args, 'json') ? JSON.stringify(report, null, 2) : describe(report, outsideRefs, trackerNote, normalizeBasePath(flagStr(args, 'base')))) + '\n');
   return ExitCode.OK;
 }

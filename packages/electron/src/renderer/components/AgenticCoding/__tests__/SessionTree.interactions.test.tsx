@@ -72,7 +72,7 @@ beforeEach(() => {
           ? {
               ...r,
               parentSessionId: payload.newParentId,
-              createdBySessionId: payload.restoreManagerId ?? payload.newParentId,
+              createdBySessionId: payload.restoreManagerId !== undefined ? payload.restoreManagerId : r.createdBySessionId,
             }
           : r
       );

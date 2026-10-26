@@ -131,6 +131,58 @@ test('check mode reports drift in either target and either direction', (t) => {
   assert.deepEqual(checkGenerated({ sourceDir, targets, configs: false }), []);
 });
 
+test('CRLF skill sources generate the same content as LF sources', (t) => {
+  const sourceDir = fixtureSource(tempRoot(t), '<!-- desktop-only -->\nRead `readCollabDocComments`.\n<!-- /desktop-only -->\n<!-- remote-only -->\nCall `pages_status`.\n<!-- /remote-only -->\n<!-- local-only -->\nCall `wikiDoctor`.\n<!-- /local-only -->\n');
+  const expected = buildGeneratedFiles(sourceDir);
+  for (const skill of ['setup', 'update']) {
+    for (const rel of ['SKILL.md', 'references/kind.yaml']) {
+      const file = path.join(sourceDir, skill, rel);
+      writeFileSync(file, readFileSync(file, 'utf8').replace(/\n/g, '\r\n'));
+    }
+  }
+  assert.deepEqual(buildGeneratedFiles(sourceDir), expected);
+});
+
+test('CRLF generated skills pass check mode but content drift still fails', (t) => {
+  const root = tempRoot(t);
+  const sourceDir = fixtureSource(root);
+  const targets = fixtureTargets(root);
+  writeGenerated({ sourceDir, targets, configs: false });
+  for (const dir of Object.values(targets)) {
+    for (const skill of ['setup', 'update']) {
+      for (const rel of ['SKILL.md', 'references/kind.yaml']) {
+        const file = path.join(dir, skill, rel);
+        writeFileSync(file, readFileSync(file, 'utf8').replace(/\n/g, '\r\n'));
+      }
+    }
+  }
+  assert.deepEqual(checkGenerated({ sourceDir, targets, configs: false }), []);
+  appendFileSync(path.join(targets.remote, 'setup', 'SKILL.md'), 'Unexpected text.\r\n');
+  assert.deepEqual(checkGenerated({ sourceDir, targets, configs: false }), ['changed: remote:setup/SKILL.md']);
+});
+
+test('CRLF generated plugin configs pass check mode but content drift still fails', (t) => {
+  const root = tempRoot(t);
+  const sourceDir = fixtureSource(root);
+  const targets = fixtureTargets(root);
+  const pluginDir = path.join(root, 'plugin');
+  fixturePlugin(pluginDir, '1.2.3');
+  writeGenerated({ sourceDir, targets, configs: false });
+  for (const [rel, content] of buildPluginConfigs(pluginDir)) {
+    const file = path.join(pluginDir, rel);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, content.replace(/\n/g, '\r\n'));
+  }
+  assert.deepEqual(checkGenerated({ sourceDir, targets, pluginDir }), []);
+  for (const [rel, content] of buildPluginConfigs(pluginDir)) {
+    const file = path.join(pluginDir, rel);
+    writeFileSync(file, content.replace('1.2.3', '9.9.9').replace(/\n/g, '\r\n'));
+    const label = path.relative(path.resolve(PLUGIN_DIR, '../..'), file);
+    assert.deepEqual(checkGenerated({ sourceDir, targets, pluginDir }), [`changed: ${label}`]);
+    writeFileSync(file, content.replace(/\n/g, '\r\n'));
+  }
+});
+
 test('the skill references the web console reads stay where it reads them', () => {
   // nimbalyst-collab web-console/scripts/knowledge-wiki-codec.mjs reads these two paths.
   const source = fileURLToPath(new URL('../../packages/extensions/knowledge/skills-source', import.meta.url));

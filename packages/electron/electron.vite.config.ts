@@ -507,9 +507,6 @@ const config = {
         // Copy es-module-shims for extension loading (enables dynamic import maps)
         const esModuleShims = installedPackageFile('es-module-shims', 'dist/es-module-shims.js');
         targets.push({ src: toPosix(esModuleShims), dest: '', overwrite: true });
-        // Copy ghostty-web WASM file for terminal emulation
-        const ghosttyWasm = installedPackageFile('ghostty-web', 'ghostty-vt.wasm');
-        targets.push({ src: toPosix(ghosttyWasm), dest: '', overwrite: true });
         // Copy prismjs core so index.html can load it as a classic <script>
         // BEFORE any ESM module evaluates. Vite/esbuild's prebundling of
         // @lexical/code (which transitively imports @lexical/code-prism) ends
