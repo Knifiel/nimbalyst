@@ -25,6 +25,7 @@ import {
 } from "./interactivePromptAbandonment";
 import { findFreshInteractiveResponse } from "./interactiveResponsePolling";
 import { fallbackAnswerNamesAnotherCard } from "./interactivePromptFallback";
+import { releasedPromptResult } from "@nimbalyst/runtime/ai/server/interactivePromptTools";
 
 type McpToolResult = {
   content: Array<{ type: string; text: string }>;
@@ -249,6 +250,12 @@ export async function handleAskUserQuestion(
             }
             return true;
           },
+          // #1116: a desktop Stop; the question stays answerable.
+          release: () => {
+            if (settled || isCodex) return false;
+            settle({ cancelled: true }, "user-stop", "user-released");
+            return true;
+          },
         })
       : () => {};
 
@@ -284,7 +291,7 @@ export async function handleAskUserQuestion(
       // race the watcher's turn-ending 'idle' and stick the indicator on).
       if (
         sessionId &&
-        reason === "user-responded" &&
+        (reason === "user-responded" || reason === "user-released") &&
         (!isCodex ||
           (questionTurn?.active && !hasLiveInteractivePrompt(sessionId)))
       ) {
@@ -359,6 +366,11 @@ export async function handleAskUserQuestion(
         // The CLI renderer was told about each question (ai:askUserQuestion
         // above), so it takes this one down and keeps any other still open.
         broadcastResolved();
+      }
+
+      if (reason === "user-released") {
+        resolve({ content: [{ type: "text", text: releasedPromptResult() }], isError: false });
+        return;
       }
 
       if (cancelled) {

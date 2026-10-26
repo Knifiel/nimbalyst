@@ -11,6 +11,7 @@ import {
   isBackgroundedToolAck,
   isInteractiveWidgetTool,
   partitionUnansweredQuestions,
+  releasedPromptResult,
 } from '../interactivePromptTools';
 import { applyToolResultToToolCall } from '../providers/claudeCode/toolChunkUtils';
 
@@ -36,6 +37,14 @@ describe('isBackgroundedToolAck', () => {
     expect(isBackgroundedToolAck(JSON.stringify({ cancelled: true }))).toBe(false);
     expect(isBackgroundedToolAck('')).toBe(false);
     expect(isBackgroundedToolAck(undefined)).toBe(false);
+  });
+
+  // #1116: a desktop Stop releases a waiting prompt without aborting the turn.
+  // The agent reads the release; the card must stay answerable on it.
+  it('treats a released prompt as still unanswered', () => {
+    expect(isBackgroundedToolAck(releasedPromptResult())).toBe(true);
+    expect(isBackgroundedToolAck(releasedPromptResult('No commit was made.'))).toBe(true);
+    expect(releasedPromptResult()).toMatch(/stopped this turn[\s\S]*End your turn now and wait for the user's next message/);
   });
 });
 

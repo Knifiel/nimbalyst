@@ -14,6 +14,8 @@ import {
 import { agentCapabilitiesForProviderType } from '@nimbalyst/runtime/ai/server/agentCapabilities';
 import { safeSend } from '../aiServiceUtils';
 import { cancelTurnSetup } from '../turnSetupStages';
+import { getSessionStateManager } from '@nimbalyst/runtime/ai/server/SessionStateManager';
+import { releaseLivePromptsOnFirstStop } from '../../../mcp/tools/interactivePromptLiveness';
 import type { AIServiceContext } from './AIServiceContext';
 
 /**
@@ -25,7 +27,13 @@ import type { AIServiceContext } from './AIServiceContext';
  */
 export function registerTurnControlHandlers(ctx: AIServiceContext): void {
   // Cancel current request
-  safeHandle('ai:cancelRequest', async (_event, sessionId: string, chunksReceived?: number) => {
+  safeHandle('ai:cancelRequest', async (
+    _event,
+    sessionId: string,
+    chunksReceived?: number,
+    // Set by the desktop Stop button only; other callers always abort.
+    options?: { releasePrompts?: boolean },
+  ) => {
     // console.log(`[AIService] ai:cancelRequest received for sessionId: ${sessionId}`);
     // Abort the provider for the specific session
     if (!sessionId) {
@@ -43,7 +51,8 @@ export function registerTurnControlHandlers(ctx: AIServiceContext): void {
 
     // A turn still in setup has no provider stream to abort yet. Without this
     // it went on to call the provider after the user had cancelled.
-    if (cancelTurnSetup(sessionId)) {
+    const stoppingSetup = cancelTurnSetup(sessionId);
+    if (stoppingSetup) {
       logger.main.info(`[AIService] cancelRequest: stopping session ${sessionId} before its provider starts`);
     }
 
@@ -62,6 +71,18 @@ export function registerTurnControlHandlers(ctx: AIServiceContext): void {
       });
       ctx.analytics.sendEvent('cancel_ai_request', { provider: 'claude-code-cli' });
       return { success: true };
+    }
+
+    // #1116: the first Stop of a Claude turn blocked on a waiting prompt only
+    // releases the prompt. The agent is told to end its turn, the card stays
+    // answerable, and background subagents keep running; aborting would kill
+    // them. A second Stop of the same turn aborts as below.
+    if (options?.releasePrompts && !stoppingSetup && session.provider === 'claude-code') {
+      const released = releaseLivePromptsOnFirstStop(sessionId, getSessionStateManager().getSessionState(sessionId));
+      if (released.length > 0) {
+        logger.main.info(`[AIService] cancelRequest: released ${released.length} waiting prompt(s) for ${sessionId} instead of aborting`);
+        return { success: true, releasedPrompts: released };
+      }
     }
 
     // console.log(`[AIService] Session found, provider type: ${session.provider}`);

@@ -38,7 +38,8 @@ import { isGitLockFailure, noCommitNote, readProposalOutcome } from "../../servi
 import { COMMIT_TARGET_VERSION } from "../../services/ai/proposalCommitTarget";
 import { cancelCommitProposalOnce, commitProposalIdentity, runCommitProposalOnce } from "../../services/ai/CommitProposalExecution";
 import { persistSupersededCommitProposalResponse } from "../../services/ai/gitCommitProposalPromptUtils";
-import { beginCommitProposalCall, holdCommitProposalCall } from "@nimbalyst/runtime/ai/server/commitProposalInFlight";
+import { beginCommitProposalCall, holdCommitProposalCall, isCommitProposalInFlight } from "@nimbalyst/runtime/ai/server/commitProposalInFlight";
+import { releasedPromptResult } from "@nimbalyst/runtime/ai/server/interactivePromptTools";
 import { findGitCommitProposalResponse, findToolPermissionResponse } from "./promptResponsePoll";
 import { findFreshInteractiveResponse } from "./interactiveResponsePolling";
 import { isInteractivePromptClosed } from "../../services/ai/questionTerminalResultLookup";
@@ -900,6 +901,13 @@ async function runGitCommitProposal(
         await persistSupersededCommitProposalResponse(targetSessionId, proposalId);
         return true;
       },
+      // #1116: a desktop Stop; the card stays committable. A running commit
+      // is never released (#1682): the Stop aborts as before.
+      release: () => {
+        if (settled || isCommitProposalInFlight(targetSessionId)) return false;
+        settle({ action: "cancelled", released: true }, "user-stop");
+        return true;
+      },
     });
 
     type CommitResult = {
@@ -911,6 +919,8 @@ async function runGitCommitProposal(
       commitMessage?: string;
       /** Closed because the user sent a new message instead of answering. */
       superseded?: boolean;
+      /** Released by a desktop Stop; the proposal stays open. */
+      released?: boolean;
     };
 
     const settle = (result: CommitResult, source: string) => {
@@ -994,9 +1004,11 @@ async function runGitCommitProposal(
               type: "text",
               text: (result.error
                 ? `Commit failed: ${result.error}`
-                : result.superseded
-                  ? "Commit proposal cancelled: the user sent a new message instead of answering it. Read that message before proposing a commit again."
-                  : "User cancelled the commit proposal.") + outcomeNote,
+                : result.released
+                  ? releasedPromptResult()
+                  : result.superseded
+                    ? "Commit proposal cancelled: the user sent a new message instead of answering it. Read that message before proposing a commit again."
+                    : "User cancelled the commit proposal.") + outcomeNote,
             },
           ],
           isError: result.error ? true : false,
@@ -1382,6 +1394,12 @@ export async function handleRequestUserInput(
             void settle({ cancelled: true }, "superseded", reason);
             return true;
           },
+          // #1116: a desktop Stop; the form stays answerable.
+          release: () => {
+            if (settled) return false;
+            void settle({ cancelled: true }, "user-stop", "user-released");
+            return true;
+          },
         })
       : () => {};
 
@@ -1480,6 +1498,11 @@ export async function handleRequestUserInput(
         } catch (err) {
           console.warn("[MCP Server] Failed to persist synthetic PromptForUserInput tool_result:", err);
         }
+      }
+
+      if (reason === 'user-released') {
+        resolve({ content: [{ type: "text", text: releasedPromptResult() }], isError: false });
+        return;
       }
 
       if (cancelled) {

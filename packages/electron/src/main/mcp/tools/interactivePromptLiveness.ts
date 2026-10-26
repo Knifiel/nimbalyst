@@ -67,6 +67,13 @@ export interface LiveInteractivePrompt {
    * that arrives later has to find the waiter already settled.
    */
   settleTerminally(reason: 'superseded'): boolean | Promise<boolean>;
+  /**
+   * Bring the waiter down without closing the prompt (reason `user-released`):
+   * the agent is told the user stopped the turn, and the card stays
+   * answerable (#1116). Returns false when it cannot be released (already
+   * settling, or a commit is running). Absent means never released.
+   */
+  release?(): boolean;
 }
 
 const liveWaiters = new Map<string, Set<LiveInteractivePrompt>>();
@@ -112,4 +119,27 @@ export async function settleLiveInteractivePrompts(
 function settleFailed(prompt: LiveInteractivePrompt, error: unknown): false {
   console.warn(`[interactivePromptLiveness] Could not settle ${prompt.kind} ${prompt.promptId}:`, error);
   return false;
+}
+
+const releasedTurns = new WeakSet<object>();
+
+/**
+ * #1116: a desktop Stop of a turn blocked on live prompts. The first Stop of
+ * `turn` releases them, so the agent ends the turn itself and background
+ * subagents keep running. Returns the released ids; empty (a second Stop of
+ * the same turn, no turn, or nothing releasable) means abort as before.
+ */
+export function releaseLivePromptsOnFirstStop(sessionKey: string, turn: object | null | undefined): string[] {
+  if (!turn || releasedTurns.has(turn)) return [];
+  const released = [...(liveWaiters.get(sessionKey) ?? [])]
+    .filter(prompt => {
+      try {
+        return prompt.release?.() === true;
+      } catch (error) {
+        return settleFailed(prompt, error);
+      }
+    })
+    .map(prompt => prompt.promptId);
+  if (released.length > 0) releasedTurns.add(turn);
+  return released;
 }

@@ -164,12 +164,29 @@ export function partitionUnansweredQuestions(
  * The wording has been widened twice already, so match loosely and let callers
  * decide how much to trust it.
  */
+/**
+ * #1116: the opening of the tool result a desktop Stop gives a prompt it
+ * releases instead of aborting the turn. Plain prose on purpose: like the
+ * backgrounded acknowledgement below, it is not an answer, and the prompt
+ * stays answerable.
+ */
+export const RELEASED_PROMPT_RESULT_PREFIX = 'The user stopped this turn without answering.';
+
+/** The tool result for a prompt released by a desktop Stop (see above). */
+export function releasedPromptResult(detail?: string): string {
+  return `${RELEASED_PROMPT_RESULT_PREFIX} End your turn now and wait for the user's next message.`
+    + (detail ? ` ${detail}` : '')
+    + ' The prompt stays open on their screen; if they answer it later, the answer arrives as a new message.';
+}
+
 const BACKGROUNDED_TOOL_ACK =
   /moved to the background|running in (?:the )?background|working in the background|async agent launched/i;
 
 /**
  * Whether a tool result is one of those acknowledgements rather than a real
- * result.
+ * result. A prompt released by a desktop Stop (`releasedPromptResult`) is
+ * treated the same way: the call returned, but nobody answered, so every layer
+ * that reads this leaves the prompt answerable.
  *
  * Interactive prompts settle with a JSON payload (`{"answers":…}`,
  * `{"cancelled":true}`), so anything that parses as JSON is a genuine result —
@@ -181,5 +198,6 @@ export function isBackgroundedToolAck(resultText: unknown): boolean {
   const trimmed = resultText.trim();
   if (!trimmed) return false;
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) return false;
+  if (trimmed.startsWith(RELEASED_PROMPT_RESULT_PREFIX)) return true;
   return BACKGROUNDED_TOOL_ACK.test(trimmed);
 }

@@ -12,7 +12,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { handleAskUserQuestion } from '../tools/askUserQuestionHandler';
-import { countLiveInteractivePrompts, settleLiveInteractivePrompts } from '../tools/interactivePromptLiveness';
+import { countLiveInteractivePrompts, releaseLivePromptsOnFirstStop, settleLiveInteractivePrompts } from '../tools/interactivePromptLiveness';
 
 import { attachInteractivePromptCall } from '../tools/interactivePromptKeepalive';
 import { settleReasonFromResponse, shouldTerminalizePrompt } from '../tools/interactivePromptAbandonment';
@@ -259,6 +259,37 @@ describe('AskUserQuestion in an SDK session', () => {
       seams.cli = true;
       seams.windows = [];
       ipc.removeAllListeners();
+    }
+  });
+
+  // #1116: the first desktop Stop releases the waiter instead of aborting the
+  // turn. The agent is told to end its turn; the question stays answerable.
+  it('releases a question on a Stop without closing it, and resumes the turn state', async () => {
+    vi.clearAllMocks();
+    const sessionId = 'sdk-stop-release';
+    const controller = new AbortController();
+    seams.cli = false;
+    try {
+      const pending = handleAskUserQuestion(
+        { questions: [{ header: 'Choice', question: 'Select', options: [{ label: 'A', description: 'Option A' }] }] },
+        sessionId,
+        { params: { _meta: { toolUseId: 'q-stop' } } },
+        { sendNotification: vi.fn(), signal: controller.signal },
+      );
+      await vi.waitFor(() => expect(countLiveInteractivePrompts(sessionId)).toBe(1));
+
+      expect(releaseLivePromptsOnFirstStop(sessionId, {})).toEqual(['q-stop']);
+      controller.abort();
+
+      const result = await pending;
+      expect(result.isError).toBe(false);
+      expect(result.content[0].text).toMatch(/^The user stopped this turn[\s\S]*End your turn now/);
+      expect(seams.persistResult).not.toHaveBeenCalled();
+      expect(countLiveInteractivePrompts(sessionId)).toBe(0);
+      await vi.waitFor(() => expect(seams.activity).toHaveBeenCalledWith(expect.objectContaining({ sessionId, status: 'running' })));
+    } finally {
+      seams.cli = true;
+      (ipcMain as unknown as EventEmitter).removeAllListeners();
     }
   });
 

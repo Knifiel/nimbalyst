@@ -39,7 +39,13 @@ export type InteractivePromptSettleReason =
    * question is closed for good: no later answer can resume the session with
    * it. A user Stop is never this; it is `client-abandoned`.
    */
-  | 'superseded';
+  | 'superseded'
+  /**
+   * #1116: the user pressed Stop while the turn waited on this prompt. The
+   * waiter comes down with a result telling the agent to end its turn, but
+   * the user decided nothing, so the prompt stays answerable.
+   */
+  | 'user-released';
 
 /**
  * Settle reason carried by a response payload. The supersede path emits

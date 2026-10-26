@@ -1437,7 +1437,10 @@ const LocalSessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscrip
         return;
       }
 
-      await window.electronAPI.invoke('ai:cancelRequest', sessionId);
+      const result = await window.electronAPI.invoke('ai:cancelRequest', sessionId, undefined, { releasePrompts: true });
+      // #1116: the first Stop on a waiting prompt only released it. The turn is
+      // still running until the agent ends it, and a second Stop aborts it.
+      if (result?.releasedPrompts?.length) return;
       // Note: session:interrupted event will also set this to false via sessionStateListeners
       setIsProcessing(false);
     } catch (error) {

@@ -54,7 +54,7 @@ vi.mock('../../services/SessionCommitService', () => ({ SessionCommitService: { 
 
 import { handleGitCommitProposal, handleRequestUserInput } from '../tools/interactiveToolHandlers';
 import { beginCommitProposalExecution, isCommitProposalInFlight } from '@nimbalyst/runtime/ai/server/commitProposalInFlight';
-import { settleLiveInteractivePrompts } from '../tools/interactivePromptLiveness';
+import { releaseLivePromptsOnFirstStop, settleLiveInteractivePrompts } from '../tools/interactivePromptLiveness';
 
 const LOCK_TIMEOUT = "Git operation 'git:commit' timed out waiting for lock on /worktree";
 const text = (result: any) => result.content.map((c: any) => c.text).join('\n');
@@ -261,4 +261,42 @@ it('closes a waiting PromptForUserInput for good when Nimbalyst settles it as su
   const results = mocks.create.mock.calls.map(([row]) => JSON.parse(row.content)).filter(row => row.type === 'nimbalyst_tool_result');
   expect(results).toHaveLength(1);
   expect(JSON.parse(results[0].result)).toMatchObject({ cancelled: true, reason: 'superseded' });
+});
+
+// #1116: the first desktop Stop releases a waiting proposal without closing it.
+it('releases a waiting proposal on a Stop, leaving it committable and unanswered', async () => {
+  mocks.auto = false;
+  const pending = handleGitCommitProposal({ filesToStage: ['shared.txt'], commitMessage: 'fix: x' }, 'session', '/parent', {});
+  await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
+
+  expect(releaseLivePromptsOnFirstStop('session', {})).toEqual(['tool-1']);
+  const result = await pending;
+  expect(result.isError).toBe(false);
+  expect(text(result)).toMatch(/^The user stopped this turn[\s\S]*No commit was made/);
+  expect(mocks.cancel).not.toHaveBeenCalled();
+  expect(mocks.create.mock.calls.some(([row]) => JSON.parse(row.content).type === 'git_commit_proposal_response')).toBe(false);
+});
+
+it('does not release a proposal whose commit is running; the Stop aborts instead', async () => {
+  mocks.auto = false;
+  const pending = handleGitCommitProposal({ filesToStage: ['shared.txt'], commitMessage: 'fix: x' }, 'session', '/parent', {});
+  await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
+  const endExecution = beginCommitProposalExecution('session', 'tool-1');
+
+  expect(releaseLivePromptsOnFirstStop('session', {})).toEqual([]);
+  endExecution();
+  await answerWidget({ action: 'committed', commitHash: 'abc1234' });
+  expect(text(await pending)).toContain('abc1234');
+});
+
+it('releases a waiting PromptForUserInput on a Stop without writing its result', async () => {
+  const pending = handleRequestUserInput(
+    { title: 'Pick', fields: [{ type: 'confirm', id: 'ok', label: 'OK?' }] },
+    'session', '/parent', {}, { sendNotification: vi.fn(), signal: new AbortController().signal },
+  );
+  await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
+
+  expect(releaseLivePromptsOnFirstStop('session', {})).toEqual(['tool-1']);
+  expect(text(await pending)).toMatch(/^The user stopped this turn[\s\S]*End your turn now/);
+  expect(mocks.create.mock.calls.some(([row]) => JSON.parse(row.content).type === 'nimbalyst_tool_result')).toBe(false);
 });

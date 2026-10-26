@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Answering or cancelling an older Claude Code question card now closes that card instead of reaching the question the agent is waiting on, and no longer interrupts the running turn; a form whose tool call was denied no longer stays open.
 - Sending a message while a commit proposal waits for approval no longer holds the message: the proposal closes as cancelled and the agent is told you moved on.
 - A question still waiting when a background task wakes the session now closes as skipped instead of staying open with nothing listening for the answer.
+- Pressing Stop while a Claude session waits on a question, form or commit proposal now asks the agent to end its turn instead of killing it, so background subagents keep running and the prompt stays answerable; pressing Stop again stops the turn.
 
 ### Removed
 <!-- Removed features go here -->
