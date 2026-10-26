@@ -251,11 +251,9 @@ export async function handleAskUserQuestion(
             return true;
           },
           // #1116: a desktop Stop; the question stays answerable.
-          release: () => {
-            if (settled || isCodex) return false;
-            settle({ cancelled: true }, "user-stop", "user-released");
-            return true;
-          },
+          prepareRelease: () => settled || isCodex
+            ? null
+            : () => settle({ cancelled: true }, "user-stop", "user-released"),
         })
       : () => {};
 

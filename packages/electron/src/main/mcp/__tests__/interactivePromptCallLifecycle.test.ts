@@ -278,7 +278,7 @@ describe('AskUserQuestion in an SDK session', () => {
       );
       await vi.waitFor(() => expect(countLiveInteractivePrompts(sessionId)).toBe(1));
 
-      expect(releaseLivePromptsOnFirstStop(sessionId, {})).toEqual(['q-stop']);
+      expect(releaseLivePromptsOnFirstStop(sessionId, {}, { toolUseIds: ['q-stop'], providerPromptPending: false })).toEqual(['q-stop']);
       controller.abort();
 
       const result = await pending;

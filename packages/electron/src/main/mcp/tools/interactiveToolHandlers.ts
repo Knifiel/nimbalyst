@@ -904,11 +904,9 @@ async function runGitCommitProposal(
       },
       // #1116: a desktop Stop; the card stays committable. A proposal the
       // user confirmed is never released (#1682): the Stop aborts as before.
-      release: () => {
-        if (settled || isCommitProposalExecuting(targetSessionId, proposalId)) return false;
-        settle({ action: "cancelled", released: true }, "user-stop");
-        return true;
-      },
+      prepareRelease: () => settled || isCommitProposalExecuting(targetSessionId, proposalId)
+        ? null
+        : () => settle({ action: "cancelled", released: true }, "user-stop"),
     });
 
     type CommitResult = {
@@ -1396,11 +1394,9 @@ export async function handleRequestUserInput(
             return true;
           },
           // #1116: a desktop Stop; the form stays answerable.
-          release: () => {
-            if (settled) return false;
-            void settle({ cancelled: true }, "user-stop", "user-released");
-            return true;
-          },
+          prepareRelease: () => settled
+            ? null
+            : () => { void settle({ cancelled: true }, "user-stop", "user-released"); },
         })
       : () => {};
 

@@ -260,6 +260,63 @@ describe('ClaudeCodeProvider.sendMessage chunk sequence', () => {
     ]);
   });
 
+  // #1116 round 2 review: a Stop released every waiting prompt in the session,
+  // a background subagent's included, while the lead was still running. The
+  // provider reports only the lead's own tool calls still waiting on a result.
+  it("reports the lead turn's own unanswered tool calls, never a subagent's", async () => {
+    const { provider } = await makeProvider();
+    queryMock.mockImplementation(() =>
+      scriptQuery([
+        INIT_CHUNK,
+        {
+          type: 'assistant',
+          session_id: 'sdk-session-1',
+          message: { id: 'msg_1', content: [{ type: 'tool_use', id: 'toolu_task', name: 'Task', input: { prompt: 'look around', run_in_background: true } }] },
+        },
+        {
+          type: 'user',
+          message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_task', content: 'Async agent launched', is_error: false }] },
+        },
+        {
+          type: 'assistant',
+          session_id: 'sdk-session-1',
+          message: { id: 'msg_2', content: [{ type: 'tool_use', id: 'toolu_ask', name: 'mcp__nimbalyst-mcp__PromptForUserInput', input: {} }] },
+        },
+        {
+          type: 'assistant',
+          session_id: 'sub-session',
+          parent_tool_use_id: 'toolu_task',
+          message: { id: 'msg_sub', content: [{ type: 'tool_use', id: 'toolu_sub', name: 'mcp__nimbalyst-mcp__AskUserQuestion', input: {} }] },
+        },
+        {
+          type: 'user',
+          message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_ask', content: 'answered', is_error: false }] },
+        },
+        { type: 'result', subtype: 'success', is_error: false, num_turns: 2 },
+      ]),
+    );
+
+    expect(provider.getLeadTurnBlockers()).toBeNull();
+    const pendingPermissions = (provider as unknown as { permissions: { pendingToolPermissions: Map<string, unknown> } }).permissions.pendingToolPermissions;
+    const seen: Record<string, unknown> = {};
+    await runTurn(provider, 'ask me', (chunk) => {
+      if (chunk.type !== 'tool_call') return;
+      const id = String(chunk.toolCall?.id);
+      seen[id] = provider.getLeadTurnBlockers();
+      if (id === 'toolu_sub') {
+        pendingPermissions.set('perm-1', {});
+        seen.withPermission = provider.getLeadTurnBlockers();
+        pendingPermissions.delete('perm-1');
+      }
+    });
+
+    expect(seen.toolu_task).toEqual({ toolUseIds: ['toolu_task'], providerPromptPending: false });
+    expect(seen.toolu_ask).toEqual({ toolUseIds: ['toolu_ask'], providerPromptPending: false });
+    expect(seen.toolu_sub).toEqual({ toolUseIds: ['toolu_ask'], providerPromptPending: false });
+    expect(seen.withPermission).toEqual({ toolUseIds: ['toolu_ask'], providerPromptPending: true });
+    expect(provider.getLeadTurnBlockers()).toBeNull();
+  });
+
   it('classifies an is_error result chunk as an error followed by complete', async () => {
     const { provider, stubs } = await makeProvider();
     queryMock.mockImplementation(() =>

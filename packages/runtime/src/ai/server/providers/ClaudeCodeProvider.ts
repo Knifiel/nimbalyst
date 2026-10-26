@@ -150,6 +150,7 @@ import {
 } from './claudeCode/streamClosedRecovery';
 import { normalizeStructuredContextUsage } from '../utils/contextUsage';
 import { createTurnState } from './claudeCode/turnState';
+import { LeadToolCalls, type LeadTurnBlockers } from './claudeCode/leadToolCalls';
 import { blockingUsageLimit, rateLimitMarker, usageLimitSystemMessage } from './claudeCode/usageLimit';
 import { buildTurnQuery, prepareTurnAttachments, resolveTurnPaths } from './claudeCode/turnPrologue';
 import { buildTurnCompleteUsage, finishTurn, handleTurnError, type TurnEpilogueHost } from './claudeCode/turnEpilogue';
@@ -513,6 +514,8 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   // AskUserQuestion tool - stores pending question resolvers
   // When Claude calls AskUserQuestion, we block until the UI provides answers via IPC
   private pendingAskUserQuestions: Map<string, PendingAskUserQuestionEntry> = new Map();
+  /** The streaming lead turn's own unanswered tool calls; null between turns. */
+  private leadToolCalls: LeadToolCalls | null = null;
 
   static readonly DEFAULT_MODEL = ClaudeCodeDeps.DEFAULT_MODEL;
 
@@ -660,6 +663,10 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     // reference (see turnState.ts). `state.originalMessage` is the caller's
     // message before the rewrites below; the crash-retry path replays it (#1361).
     const state = createTurnState({ startTime, hideMessages, originalMessage: message });
+    // #1116: what this lead turn is blocked on, for a Stop that releases a
+    // waiting prompt instead of aborting. Published inside the try below, so
+    // the finally always withdraws it; a newer turn replaces it.
+    const leadToolCalls = new LeadToolCalls();
 
     // Session mode (incl. the trust-level upgrade) and the worktree-aware paths.
     // Track session mode for MCP server configuration and tool filtering.
@@ -717,6 +724,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     const resumedConversation = !!sessionId && !!this.sessions.getSessionId(sessionId);
 
     try {
+      this.leadToolCalls = leadToolCalls;
       // Prompt rewriting, system prompt, SDK options, input logging and the
       // transcript adapter. Inside the try, as before: `buildTurnQuery` throws
       // on an unusable workspace and the catch below turns that into the
@@ -1190,6 +1198,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
                 state.outstandingToolCalls++;
                 state.sawAssistantOutputThisTurn = true;
                 const { toolId, toolName, args, isMcp, isSubagent } = item;
+                leadToolCalls.started(toolId, item.parentToolUseId);
 
                 if (toolName === 'TodoWrite' && args?.todos) {
                   this.emitTodoUpdate(sessionId, args.todos as any[]).catch(() => {});
@@ -1230,6 +1239,8 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
               case 'tool_result': {
                 // A failed or denied call may never reach PostToolUse.
                 if (sessionId) agentToolActivity.finished(sessionId, item.toolUseId);
+                // A backgrounded call no longer blocks the lead either.
+                leadToolCalls.finished(item.toolUseId);
                 const toolCall = state.toolCallsById.get(item.toolUseId);
                 if (toolCall) {
                   const { isDuplicate, isBackgroundAck } = applyToolResultToToolCall(toolCall, item.content, item.isError);
@@ -1641,6 +1652,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
         return;
       }
     } finally {
+      if (this.leadToolCalls === leadToolCalls) this.leadToolCalls = null;
       if (this.drainExitCause === 'handoff' && this.drainHandoff && !this.drainHandoff.cancelled) {
         this.releaseToFollowUpTurn(this.drainHandoff, sessionId);
       } else {
@@ -2166,6 +2178,16 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
    */
   public hasActiveTeammates(): boolean {
     return this.teammateManager.hasActiveTeammates();
+  }
+
+  /**
+   * #1116: what the streaming lead turn is blocked on, so a desktop Stop can
+   * release a waiting prompt only when that prompt is all the lead waits for.
+   * Null when no lead turn is streaming in this provider.
+   */
+  public getLeadTurnBlockers(): LeadTurnBlockers | null {
+    if (!this.leadToolCalls) return null;
+    return { toolUseIds: this.leadToolCalls.ids(), providerPromptPending: this.hasPendingUserInteraction() };
   }
 
   /**

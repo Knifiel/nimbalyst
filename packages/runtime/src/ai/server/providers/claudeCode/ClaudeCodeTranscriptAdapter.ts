@@ -26,7 +26,7 @@ const SUBAGENT_TOOLS = new Set(['Task', 'Agent']);
 export type ParsedItem =
   // Transcript-relevant items (written to canonical events)
   | { kind: 'text'; text: string }
-  | { kind: 'tool_use'; toolId: string; toolName: string; args: Record<string, unknown>; isMcp: boolean; isSubagent: boolean }
+  | { kind: 'tool_use'; toolId: string; toolName: string; args: Record<string, unknown>; isMcp: boolean; isSubagent: boolean; parentToolUseId?: string }
   | { kind: 'tool_result'; toolUseId: string; content: unknown; isError: boolean }
   | { kind: 'usage'; usage: any; modelUsage?: any; isPerStep: boolean }
   // Structured twin of the `/context` markdown table, attached by the SDK to
@@ -285,7 +285,7 @@ export class ClaudeCodeTranscriptAdapter {
         isBackground: args.run_in_background === true,
         prompt: typeof args.prompt === 'string' ? args.prompt : JSON.stringify(args),
       });
-      return { kind: 'tool_use', toolId: toolId, toolName, args, isMcp: false, isSubagent: true };
+      return { kind: 'tool_use', toolId: toolId, toolName, args, isMcp: false, isSubagent: true, parentToolUseId };
     }
 
     // Dedup
@@ -321,7 +321,7 @@ export class ClaudeCodeTranscriptAdapter {
       subagentId: subagentId ?? null,
     });
 
-    return { kind: 'tool_use', toolId: toolId ?? `tool-anon`, toolName, args, isMcp, isSubagent: false };
+    return { kind: 'tool_use', toolId: toolId ?? `tool-anon`, toolName, args, isMcp, isSubagent: false, parentToolUseId };
   }
 
   private parseToolResultBlock(block: any): ParsedItem | null {

@@ -22,6 +22,7 @@
 // session-is-tracked-in-memory check rather than trusting it alone.
 
 import type { InteractivePromptKind } from './interactivePromptAbandonment';
+import type { LeadTurnBlockers } from '@nimbalyst/runtime/ai/server/providers/claudeCode/leadToolCalls';
 
 /** Per-session count of interactive prompts currently blocking a turn. */
 const liveInteractivePrompts = new Map<string, number>();
@@ -68,12 +69,14 @@ export interface LiveInteractivePrompt {
    */
   settleTerminally(reason: 'superseded'): boolean | Promise<boolean>;
   /**
-   * Bring the waiter down without closing the prompt (reason `user-released`):
-   * the agent is told the user stopped the turn, and the card stays
-   * answerable (#1116). Returns false when it cannot be released (already
-   * settling, or a commit is running). Absent means never released.
+   * #1116: how to bring the waiter down without closing the prompt (reason
+   * `user-released`): the agent is told the user stopped the turn, and the
+   * card stays answerable. Null when it cannot be released (already settling,
+   * or a commit the user confirmed). Every prompt a Stop would release is
+   * asked before any is released, so a Stop releases all of them or none.
+   * Absent means never released.
    */
-  release?(): boolean;
+  prepareRelease?(): (() => void) | null;
 }
 
 const liveWaiters = new Map<string, Set<LiveInteractivePrompt>>();
@@ -124,22 +127,40 @@ function settleFailed(prompt: LiveInteractivePrompt, error: unknown): false {
 const releasedTurns = new WeakSet<object>();
 
 /**
- * #1116: a desktop Stop of a turn blocked on live prompts. The first Stop of
- * `turn` releases them, so the agent ends the turn itself and background
- * subagents keep running. Returns the released ids; empty (a second Stop of
- * the same turn, no turn, or nothing releasable) means abort as before.
+ * #1116: a desktop Stop of a lead turn blocked on live prompts. The first Stop
+ * of `turn` releases them, so the agent ends the turn itself and background
+ * subagents keep running. Only when the lead waits on nothing else: every one
+ * of its outstanding tool calls must be a releasable prompt of this session,
+ * and no provider prompt (tool permission) may be pending. A subagent's
+ * prompt is never released. Returns the released ids; empty (a second Stop of
+ * the same turn, no turn, unknown blockers, or anything else outstanding)
+ * means abort as before.
  */
-export function releaseLivePromptsOnFirstStop(sessionKey: string, turn: object | null | undefined): string[] {
-  if (!turn || releasedTurns.has(turn)) return [];
-  const released = [...(liveWaiters.get(sessionKey) ?? [])]
-    .filter(prompt => {
-      try {
-        return prompt.release?.() === true;
-      } catch (error) {
-        return settleFailed(prompt, error);
-      }
-    })
-    .map(prompt => prompt.promptId);
-  if (released.length > 0) releasedTurns.add(turn);
-  return released;
+export function releaseLivePromptsOnFirstStop(
+  sessionKey: string,
+  turn: object | null | undefined,
+  blockers: LeadTurnBlockers | null,
+): string[] {
+  if (!turn || releasedTurns.has(turn) || !blockers) return [];
+  if (blockers.providerPromptPending || blockers.toolUseIds.length === 0) return [];
+  const live = [...(liveWaiters.get(sessionKey) ?? [])];
+  const releases: Array<() => void> = [];
+  for (const toolUseId of blockers.toolUseIds) {
+    const prompt = live.find(candidate => candidate.promptId === toolUseId);
+    const release = prompt ? prepareRelease(prompt) : null;
+    if (!release) return [];
+    releases.push(release);
+  }
+  for (const release of releases) release();
+  releasedTurns.add(turn);
+  return [...blockers.toolUseIds];
+}
+
+function prepareRelease(prompt: LiveInteractivePrompt): (() => void) | null {
+  try {
+    return prompt.prepareRelease?.() ?? null;
+  } catch (error) {
+    settleFailed(prompt, error);
+    return null;
+  }
 }

@@ -16,6 +16,7 @@ import { safeSend } from '../aiServiceUtils';
 import { cancelTurnSetup } from '../turnSetupStages';
 import { getSessionStateManager } from '@nimbalyst/runtime/ai/server/SessionStateManager';
 import { releaseLivePromptsOnFirstStop } from '../../../mcp/tools/interactivePromptLiveness';
+import type { LeadTurnBlockers } from '@nimbalyst/runtime/ai/server/providers/claudeCode/leadToolCalls';
 import type { AIServiceContext } from './AIServiceContext';
 
 /**
@@ -25,6 +26,11 @@ import type { AIServiceContext } from './AIServiceContext';
  * why compaction lives here rather than with the model handlers: it is a
  * mid-conversation control operation, not a configuration read.
  */
+function leadTurnBlockers(provider: AIProvider | null | undefined): LeadTurnBlockers | null {
+  const source = provider as { getLeadTurnBlockers?: () => LeadTurnBlockers | null } | null | undefined;
+  return typeof source?.getLeadTurnBlockers === 'function' ? source.getLeadTurnBlockers() : null;
+}
+
 export function registerTurnControlHandlers(ctx: AIServiceContext): void {
   // Cancel current request
   safeHandle('ai:cancelRequest', async (
@@ -76,9 +82,15 @@ export function registerTurnControlHandlers(ctx: AIServiceContext): void {
     // #1116: the first Stop of a Claude turn blocked on a waiting prompt only
     // releases the prompt. The agent is told to end its turn, the card stays
     // answerable, and background subagents keep running; aborting would kill
-    // them. A second Stop of the same turn aborts as below.
+    // them. Only when that prompt is all the lead waits on, per the provider's
+    // live stream; when it cannot say, the Stop aborts. A second Stop of the
+    // same turn aborts as below.
     if (options?.releasePrompts && !stoppingSetup && session.provider === 'claude-code') {
-      const released = releaseLivePromptsOnFirstStop(sessionId, getSessionStateManager().getSessionState(sessionId));
+      const released = releaseLivePromptsOnFirstStop(
+        sessionId,
+        getSessionStateManager().getSessionState(sessionId),
+        leadTurnBlockers(ProviderFactory.getProvider('claude-code', sessionId)),
+      );
       if (released.length > 0) {
         logger.main.info(`[AIService] cancelRequest: released ${released.length} waiting prompt(s) for ${sessionId} instead of aborting`);
         return { success: true, releasedPrompts: released };

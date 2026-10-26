@@ -61,6 +61,7 @@ import { releaseLivePromptsOnFirstStop, settleLiveInteractivePrompts } from '../
 
 const LOCK_TIMEOUT = "Git operation 'git:commit' timed out waiting for lock on /worktree";
 const text = (result: any) => result.content.map((c: any) => c.text).join('\n');
+const leadBlockedOn = (...toolUseIds: string[]) => ({ toolUseIds, providerPromptPending: false });
 const proposalRow = () => mocks.create.mock.calls.map(([row]) => JSON.parse(row.content)).find(row => row.type === 'git_commit_proposal');
 /** Answers the manual widget's IPC channel once the handler has registered it. */
 async function answerWidget(response: Record<string, unknown>) {
@@ -174,7 +175,7 @@ it("refuses a Stop release and a supersede once the user's Confirm is accepted",
   await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
   const endConfirm = beginCommitProposalConfirm('session', 'tool-1');
 
-  expect(releaseLivePromptsOnFirstStop('session', {})).toEqual([]);
+  expect(releaseLivePromptsOnFirstStop('session', {}, leadBlockedOn('tool-1'))).toEqual([]);
   await expect(settleLiveInteractivePrompts('session', 'superseded')).resolves.toEqual([]);
   expect(mocks.reserve).not.toHaveBeenCalled();
   endConfirm();
@@ -256,7 +257,7 @@ it('settles a superseded proposal before a Stop in the same tick can release it'
   await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
 
   const superseding = settleLiveInteractivePrompts('session', 'superseded');
-  expect(releaseLivePromptsOnFirstStop('session', {})).toEqual([]);
+  expect(releaseLivePromptsOnFirstStop('session', {}, leadBlockedOn('tool-1'))).toEqual([]);
   await expect(superseding).resolves.toEqual(['tool-1']);
   expect(text(await pending)).toMatch(/user sent a new message instead of answering/);
 });
@@ -326,12 +327,25 @@ it('releases a waiting proposal on a Stop, leaving it committable and unanswered
   const pending = handleGitCommitProposal({ filesToStage: ['shared.txt'], commitMessage: 'fix: x' }, 'session', '/parent', {});
   await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
 
-  expect(releaseLivePromptsOnFirstStop('session', {})).toEqual(['tool-1']);
+  expect(releaseLivePromptsOnFirstStop('session', {}, leadBlockedOn('tool-1'))).toEqual(['tool-1']);
   const result = await pending;
   expect(result.isError).toBe(false);
   expect(text(result)).toMatch(/^The user stopped this turn[\s\S]*No commit was made/);
   expect(mocks.cancel).not.toHaveBeenCalled();
   expect(mocks.create.mock.calls.some(([row]) => JSON.parse(row.content).type === 'git_commit_proposal_response')).toBe(false);
+});
+
+// Round 2 review: a Stop released every waiting prompt in the session. A
+// background subagent's proposal must keep waiting while the lead runs on.
+it("does not release a proposal the lead turn is not blocked on; the Stop aborts instead", async () => {
+  mocks.auto = false;
+  const pending = handleGitCommitProposal({ filesToStage: ['shared.txt'], commitMessage: 'fix: x' }, 'session', '/parent', {});
+  await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
+
+  expect(releaseLivePromptsOnFirstStop('session', {}, leadBlockedOn('toolu_bash'))).toEqual([]);
+  expect(releaseLivePromptsOnFirstStop('session', {}, leadBlockedOn())).toEqual([]);
+  await answerWidget({ action: 'cancelled' });
+  expect(text(await pending)).toMatch(/^User cancelled the commit proposal/);
 });
 
 it('does not release a proposal whose commit is running; the Stop aborts instead', async () => {
@@ -340,7 +354,7 @@ it('does not release a proposal whose commit is running; the Stop aborts instead
   await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
   const endExecution = beginCommitProposalExecution('session', 'tool-1');
 
-  expect(releaseLivePromptsOnFirstStop('session', {})).toEqual([]);
+  expect(releaseLivePromptsOnFirstStop('session', {}, leadBlockedOn('tool-1'))).toEqual([]);
   endExecution();
   await answerWidget({ action: 'committed', commitHash: 'abc1234' });
   expect(text(await pending)).toContain('abc1234');
@@ -353,7 +367,7 @@ it('releases a waiting PromptForUserInput on a Stop without writing its result',
   );
   await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
 
-  expect(releaseLivePromptsOnFirstStop('session', {})).toEqual(['tool-1']);
+  expect(releaseLivePromptsOnFirstStop('session', {}, leadBlockedOn('tool-1'))).toEqual(['tool-1']);
   expect(text(await pending)).toMatch(/^The user stopped this turn[\s\S]*End your turn now/);
   expect(mocks.create.mock.calls.some(([row]) => JSON.parse(row.content).type === 'nimbalyst_tool_result')).toBe(false);
 });
