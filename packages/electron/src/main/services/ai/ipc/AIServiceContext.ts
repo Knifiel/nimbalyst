@@ -7,6 +7,7 @@ import type { HooklessAgentFileWatcher } from '../HooklessAgentFileWatcher';
 import type { DriveOutcome, DriveReason } from '../QueueDriveService';
 import type { ProviderWorkflowCatalog } from '../providerWorkflowCatalog';
 import type { InterruptCurrentTurnResult } from '../AIService';
+import type { InterruptOrigin } from '../commitInterruptDeferral';
 
 /**
  * The AIService members its IPC handlers actually use.
@@ -73,7 +74,7 @@ export interface AIServiceContext {
     reason: DriveReason,
   ): Promise<DriveOutcome>;
   forceSessionIdleOnCancel(sessionId: string): Promise<void>;
-  interruptCurrentTurn(sessionId: string): Promise<InterruptCurrentTurnResult>;
+  interruptCurrentTurn(sessionId: string, origin?: InterruptOrigin): Promise<InterruptCurrentTurnResult>;
 
   // --- misc ---------------------------------------------------------------
   createToolHandler(

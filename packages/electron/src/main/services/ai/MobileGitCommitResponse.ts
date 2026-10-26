@@ -25,6 +25,7 @@ import {
   cancelCommitProposalOnce,
   acceptsCommitProposalResponse,
 } from "./CommitProposalExecution";
+import { beginCommitProposalConfirm } from "@nimbalyst/runtime/ai/server/commitProposalInFlight";
 
 const log = logger.ai;
 interface GitCommitResponse {
@@ -72,6 +73,28 @@ export async function handleGitCommitResponse(
     workspacePath: string
   ) => BrowserWindow | null | undefined
 ): Promise<GitCommitProposalResponse> {
+  // #1682: an approval holds the proposal from the moment it arrives, before
+  // the lookups below, so no interrupt, Stop release or supersede lands
+  // between the user's Confirm and the commit's start.
+  const confirmHolds = response.action === "committed"
+    ? [beginCommitProposalConfirm(sessionId, promptId)]
+    : [];
+  try {
+    return await answerGitCommit(sessionId, promptId, response, findWindowByWorkspace, confirmHolds);
+  } finally {
+    for (const end of confirmHolds) end();
+  }
+}
+
+async function answerGitCommit(
+  sessionId: string,
+  promptId: string,
+  response: GitCommitResponse,
+  findWindowByWorkspace: (
+    workspacePath: string
+  ) => BrowserWindow | null | undefined,
+  confirmHolds: Array<() => void>
+): Promise<GitCommitProposalResponse> {
   log.info(
     "Handling GitCommit response:",
     promptId,
@@ -92,6 +115,8 @@ export async function handleGitCommitResponse(
         "Cannot identify this exact commit proposal. Refresh the session before answering.",
     };
   }
+  if (confirmHolds.length > 0 && canonicalPromptId !== promptId)
+    confirmHolds.push(beginCommitProposalConfirm(sessionId, canonicalPromptId));
 
   // Helper to emit the proposal response to unblock the MCP tool
   const emitProposalResponse = async (

@@ -38,7 +38,7 @@ import { isGitLockFailure, noCommitNote, readProposalOutcome } from "../../servi
 import { COMMIT_TARGET_VERSION } from "../../services/ai/proposalCommitTarget";
 import { commitProposalIdentity, reserveCommitProposalCancel, runCommitProposalOnce } from "../../services/ai/CommitProposalExecution";
 import { persistSupersededCommitProposalResponse } from "../../services/ai/gitCommitProposalPromptUtils";
-import { beginCommitProposalCall, holdCommitProposalCall, isCommitProposalInFlight } from "@nimbalyst/runtime/ai/server/commitProposalInFlight";
+import { beginCommitProposalCall, holdCommitProposalCall, isCommitProposalExecuting } from "@nimbalyst/runtime/ai/server/commitProposalInFlight";
 import { releasedPromptResult } from "@nimbalyst/runtime/ai/server/interactivePromptTools";
 import { findGitCommitProposalResponse, findToolPermissionResponse } from "./promptResponsePoll";
 import { findFreshInteractiveResponse } from "./interactiveResponsePolling";
@@ -582,8 +582,11 @@ async function runGitCommitProposal(
       .substring(7)}`;
 
   const targetSessionId = sessionId || "unknown";
-  // #1682: a commit of this proposal holds send-now, meta-agent and teammate
-  // interrupts until this call returns. The wait for the user holds nothing.
+  // #1682: meta-agent and teammate interrupts wait while this call is open,
+  // the wait for the user included. The user's own send-now goes through the
+  // wait, closing the proposal, but waits for a commit of it the user
+  // confirmed until this call returns.
+  cleanups.push(beginCommitProposalCall(targetSessionId));
   cleanups.push(holdCommitProposalCall(targetSessionId, proposalId));
 
   // Decide before publishing: voice must never request approval for an automatic commit.
@@ -596,8 +599,6 @@ async function runGitCommitProposal(
   }
   // #1756: a commit into a sibling worktree is always approved by hand.
   if (target.worktree) isAutoCommit = false;
-  // #1682: an automatic commit has no human wait; the whole call is the commit.
-  if (isAutoCommit) cleanups.push(beginCommitProposalCall(targetSessionId));
 
   // Persist the proposal to database for durability
   try {
@@ -892,19 +893,19 @@ async function runGitCommitProposal(
       kind: "git_commit_proposal",
       promptId: proposalId,
       settleTerminally: () => {
-        if (settled) return false;
         // The cancel reservation is what refuses a later Commit press on the
-        // card. A refusal means this proposal's commit already started; its
+        // card. A confirmed proposal or a refusal means the commit owns it; its
         // own result settles this call. Both happen before returning, so a
         // Stop in the same tick finds this waiter settled, not releasable.
+        if (settled || isCommitProposalExecuting(targetSessionId, proposalId)) return false;
         if (!reserveCommitProposalCancel(targetSessionId, proposalId)) return false;
         settle({ action: "cancelled", superseded: true }, "superseded");
         return persistSupersededCommitProposalResponse(targetSessionId, proposalId).then(() => true);
       },
-      // #1116: a desktop Stop; the card stays committable. A running commit
-      // is never released (#1682): the Stop aborts as before.
+      // #1116: a desktop Stop; the card stays committable. A proposal the
+      // user confirmed is never released (#1682): the Stop aborts as before.
       release: () => {
-        if (settled || isCommitProposalInFlight(targetSessionId)) return false;
+        if (settled || isCommitProposalExecuting(targetSessionId, proposalId)) return false;
         settle({ action: "cancelled", released: true }, "user-stop");
         return true;
       },

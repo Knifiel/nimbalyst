@@ -31,6 +31,16 @@ vi.mock('../../services/GitOperationLogService', () => ({
   withGitOperationLog: vi.fn(),
 }));
 vi.mock('../../services/ai/proposalCommitTarget', () => ({ resolveProposalCommitPaths: vi.fn() }));
+const proposal = vi.hoisted(() => ({ resolveId: vi.fn(async (_s: string, id: string) => id) }));
+vi.mock('../../services/ai/gitCommitProposalPromptUtils', () => ({ resolveGitCommitProposalPromptId: proposal.resolveId }));
+vi.mock('../../services/ai/CommitProposalExecution', () => ({
+  commitProposalIdentity: () => 'identity',
+  runCommitProposalOnce: async () => ({ success: true, commitHash: 'abc1234' }),
+}));
+vi.mock('../../services/SessionCommitService', () => ({ SessionCommitService: { getInstance: () => ({ recordCommit: async () => {} }) } }));
+vi.mock('@nimbalyst/runtime/storage/repositories/AISessionsRepository', () => ({ AISessionsRepository: { get: async () => null } }));
+import { ipcMain } from 'electron';
+import { isCommitProposalExecuting } from '@nimbalyst/runtime/ai/server/commitProposalInFlight';
 import { registerGitHandlers } from '../GitHandlers';
 
 beforeEach(() => {
@@ -242,5 +252,22 @@ describe('exact argv and preserved behavior', () => {
     for (const [channel, args] of [['git:rebase', [{ action: 'continue' }]], ['git:cherry-pick', ['HEAD^']]] as const) {
       await expect(invoke(channel, '/fixture', ...args)).resolves.toEqual({ success: false, error: 'CONFLICT', conflicts: ['file.txt'] });
     }
+  });
+});
+
+// Round 2 review: the card's Confirm awaited path resolution before the commit
+// marked itself, so a send-now or Stop in that gap said "No commit was made"
+// and then the commit landed.
+describe('git:commit for a commit proposal', () => {
+  it("holds the proposal from the moment the user's Confirm arrives, before any await", async () => {
+    let resolveId!: (id: string) => void;
+    proposal.resolveId.mockImplementationOnce(() => new Promise<string>((resolve) => { resolveId = resolve; }));
+    const handler = vi.mocked(ipcMain.handle).mock.calls.find(([channel]) => channel === 'git:commit')![1] as (...args: unknown[]) => Promise<unknown>;
+
+    const pending = handler({}, '/fixture', 'fix: x', ['a.txt'], 'session', undefined, undefined, 'proposal');
+    expect(isCommitProposalExecuting('session', 'proposal')).toBe(true);
+    resolveId('proposal');
+    await expect(pending).resolves.toMatchObject({ success: true });
+    expect(isCommitProposalExecuting('session', 'proposal')).toBe(false);
   });
 });

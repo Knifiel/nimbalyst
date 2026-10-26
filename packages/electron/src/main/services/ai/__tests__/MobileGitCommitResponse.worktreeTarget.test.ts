@@ -33,6 +33,7 @@ vi.mock('../CommitProposalExecution', () => ({
 }));
 
 import { handleGitCommitResponse } from '../MobileGitCommitResponse';
+import { isCommitProposalExecuting } from '@nimbalyst/runtime/ai/server/commitProposalInFlight';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -52,4 +53,17 @@ it('still commits an ordinary proposal from mobile', async () => {
   const result = await handleGitCommitResponse('session', 'proposal', { action: 'committed', files: ['/main/a.txt'], message: 'fix: x' }, () => null);
   expect(result.action).toBe('committed');
   expect(mocks.commit).toHaveBeenCalled();
+});
+
+// Round 2 review: mobile's Confirm awaits the proposal lookup and paths before
+// the commit marks itself; the hold starts when the Confirm arrives.
+it("holds the proposal from the moment mobile's Confirm arrives, and not for a cancel", async () => {
+  const pending = handleGitCommitResponse('session', 'proposal', { action: 'committed', files: ['/main/a.txt'], message: 'fix: x' }, () => null);
+  expect(isCommitProposalExecuting('session', 'proposal')).toBe(true);
+  await pending;
+  expect(isCommitProposalExecuting('session', 'proposal')).toBe(false);
+
+  const cancelling = handleGitCommitResponse('session', 'proposal', { action: 'cancelled' }, () => null);
+  expect(isCommitProposalExecuting('session', 'proposal')).toBe(false);
+  await cancelling;
 });

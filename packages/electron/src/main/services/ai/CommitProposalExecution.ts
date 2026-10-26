@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import Store from "../../utils/privateSettingsStore";
 import type { GitCommitExecutionResult } from "../GitCommitService";
-import { beginCommitProposalExecution } from "@nimbalyst/runtime/ai/server/commitProposalInFlight";
+import { beginCommitProposalExecution, isCommitProposalExecuting } from "@nimbalyst/runtime/ai/server/commitProposalInFlight";
 
 interface ProposalExecution {
   identity: string;
@@ -159,8 +159,9 @@ export async function commitProposalOutcome(
 
 /**
  * Close this proposal as cancelled, decided before returning: true when it is
- * now (or already was) cancelled, false when a commit of it owns the record.
- * A supersede settles its waiter on this answer in the same tick, so a Stop
+ * now (or already was) cancelled, false when a commit of it owns the record or
+ * the user's Confirm for it was accepted and is still resolving its paths. A
+ * supersede settles its waiter on this answer in the same tick, so a Stop
  * arriving later cannot release a proposal that is closing.
  */
 export function reserveCommitProposalCancel(
@@ -170,6 +171,7 @@ export function reserveCommitProposalCancel(
   const key = proposalKey(sessionId, promptId);
   const old = lookupExecution(key);
   if (old) return old.identity === "cancelled" && old.result?.success === true;
+  if (isCommitProposalExecuting(sessionId, promptId)) return false;
   const execution: ProposalExecution = { identity: "cancelled", result: { success: true } };
   executions.set(key, execution);
   try {

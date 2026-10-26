@@ -55,7 +55,8 @@ vi.mock('../../services/PermissionService', () => ({}));
 vi.mock('../../services/SessionCommitService', () => ({ SessionCommitService: { getInstance: () => ({ recordCommit: async () => {} }) } }));
 
 import { handleGitCommitProposal, handleRequestUserInput } from '../tools/interactiveToolHandlers';
-import { beginCommitProposalExecution, isCommitProposalInFlight } from '@nimbalyst/runtime/ai/server/commitProposalInFlight';
+import { beginCommitProposalConfirm, beginCommitProposalExecution, isCommitProposalExecuting, isCommitProposalInFlight } from '@nimbalyst/runtime/ai/server/commitProposalInFlight';
+import { prepareInterrupt } from '../../services/ai/commitInterruptDeferral';
 import { releaseLivePromptsOnFirstStop, settleLiveInteractivePrompts } from '../tools/interactivePromptLiveness';
 
 const LOCK_TIMEOUT = "Git operation 'git:commit' timed out waiting for lock on /worktree";
@@ -149,15 +150,55 @@ it('reports a landed commit when the manual widget answers with an error', async
   expect(isCommitProposalInFlight('session')).toBe(false);
 });
 
-// #1682 narrowed: the wait for the user holds nothing. The user's "Did you hang?"
-// sat behind a waiting proposal for six hours, send-now included.
-it('does not hold interrupts while a manual proposal waits for the user', async () => {
+// #1682: teammate and meta-agent interrupts wait out the whole call, as before.
+// Round 2 review: letting them through told the agent "rejected" while the card
+// stayed committable. Only the user's own message gets through the wait (the
+// user's "Did you hang?" sat behind one for six hours) and closes the proposal.
+it("holds other interrupts while a manual proposal waits, but not the user's own", async () => {
   mocks.auto = false;
   const pending = handleGitCommitProposal({ filesToStage: ['shared.txt'], commitMessage: 'fix: x' }, 'session', '/parent', {});
   await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
-  expect(isCommitProposalInFlight('session')).toBe(false);
+  expect(isCommitProposalInFlight('session')).toBe(true);
+  expect(isCommitProposalExecuting('session')).toBe(false);
   await answerWidget({ action: 'cancelled' });
   await pending;
+  expect(isCommitProposalInFlight('session')).toBe(false);
+});
+
+// Round 2 review: between Confirm and the commit's start the card's handler
+// still awaits path resolution; a Stop or supersede there said "No commit was
+// made" and then the commit landed. The hold starts when Confirm is accepted.
+it("refuses a Stop release and a supersede once the user's Confirm is accepted", async () => {
+  mocks.auto = false;
+  const pending = handleGitCommitProposal({ filesToStage: ['shared.txt'], commitMessage: 'fix: x' }, 'session', '/parent', {});
+  await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
+  const endConfirm = beginCommitProposalConfirm('session', 'tool-1');
+
+  expect(releaseLivePromptsOnFirstStop('session', {})).toEqual([]);
+  await expect(settleLiveInteractivePrompts('session', 'superseded')).resolves.toEqual([]);
+  expect(mocks.reserve).not.toHaveBeenCalled();
+  endConfirm();
+  await answerWidget({ action: 'committed', commitHash: 'abc1234' });
+  expect(text(await pending)).toContain('abc1234');
+});
+
+// Round 2 review: the user's send-now interrupt made the SDK abort the call
+// before any turn supersede ran, so the card stayed committable.
+it("closes a waiting proposal for good when the user's send-now interrupts the turn", async () => {
+  mocks.auto = false;
+  const controller = new AbortController();
+  const pending = handleGitCommitProposal({ filesToStage: ['shared.txt'], commitMessage: 'fix: x' }, 'session', '/parent', {}, { signal: controller.signal } as any);
+  await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
+
+  const deps = { hasPendingPrompts: async () => true, interrupt: vi.fn(), drive: vi.fn(), logWarn: vi.fn() };
+  await expect(prepareInterrupt('session', deps, { userInitiated: true })).resolves.toBe('ready');
+  controller.abort();
+
+  expect(text(await pending)).toMatch(/user sent a new message instead of answering[\s\S]*No commit was made/);
+  expect(mocks.reserve).toHaveBeenCalledWith('session', 'tool-1');
+  const responses = mocks.create.mock.calls.map(([row]) => JSON.parse(row.content)).filter(row => row.type === 'git_commit_proposal_response');
+  expect(responses).toEqual([expect.objectContaining({ proposalId: 'tool-1', action: 'cancelled', reason: 'superseded' })]);
+  expect(isCommitProposalInFlight('session')).toBe(false);
 });
 
 it('holds interrupts from the moment the user commit starts until this call returns', async () => {

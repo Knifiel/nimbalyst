@@ -97,7 +97,7 @@ import { publishQueuedPromptClaim } from './queuedPromptClaimEvents';
 import { canDispatchIntoDrain, isLeadTurnPending } from './drainFollowUp';
 import { hasLiveInteractivePrompt } from '../../mcp/tools/interactivePromptLiveness';
 import { isCommitProposalInFlight } from '@nimbalyst/runtime/ai/server/commitProposalInFlight';
-import { deferInterruptDuringCommit } from './commitInterruptDeferral';
+import { prepareInterrupt, type InterruptOrigin } from './commitInterruptDeferral';
 import { ensureClaudeCliSession } from './claudeCliLauncherSingleton';
 import {
   resolveProviderWorkflowCatalog,
@@ -490,25 +490,30 @@ export class AIService {
    * sweepExecutingForSession (delivery-aware -- already delivered prompts are
    * marked completed, not rolled back, so a follow-up queue drive doesn't
    * re-send the same input -- NIM-615).
+   *
+   * `origin.userInitiated` marks the user's own send-now; meta-agent and
+   * orchestrator interrupts leave it unset.
    */
-  public async interruptCurrentTurn(sessionId: string): Promise<InterruptCurrentTurnResult> {
+  public async interruptCurrentTurn(sessionId: string, origin: InterruptOrigin = {}): Promise<InterruptCurrentTurnResult> {
     if (!sessionId) {
       throw new Error('Session ID is required to interrupt');
     }
 
     const { AISessionsRepository } = await import('@nimbalyst/runtime/storage/repositories/AISessionsRepository');
-    // #1682: an interrupt mid-commit makes the SDK report a rejection while the
-    // commit lands. Hold it and replay the send-now once the call settles.
-    if (deferInterruptDuringCommit(sessionId, {
+    // #1682: an interrupt during a commit proposal makes the SDK report a
+    // rejection while the commit lands or the card stays committable. Hold it
+    // and replay the send-now once the proposal settles. The user's own
+    // send-now goes through a proposal waiting on them and closes it first.
+    if (await prepareInterrupt(sessionId, {
       hasPendingPrompts: async (id) => (await (await import('../RepositoryManager')).getQueuedPromptsStore().listPending(id)).length > 0,
-      interrupt: (id) => this.interruptCurrentTurn(id),
+      interrupt: (id) => this.interruptCurrentTurn(id, origin),
       drive: async (id) => {
         const row = await AISessionsRepository.get(id);
         const path = row?.worktreePath || row?.workspacePath;
         if (path) await this.driveQueuedPrompts(id, path, 'send-now');
       },
       logWarn: (message) => logger.main.warn(message),
-    })) {
+    }, origin) === 'deferred') {
       return { success: false, deferred: 'commit-in-flight', error: 'A commit proposal is in progress; the interrupt runs when it settles.' };
     }
     const session = await AISessionsRepository.get(sessionId);
@@ -1276,7 +1281,7 @@ export class AIService {
       publishQueueStateToSync: (sessionId) => this.publishQueueStateToSync(sessionId),
       driveQueuedPrompts: (sessionId, workspacePath, reason) => this.driveQueuedPrompts(sessionId, workspacePath, reason),
       forceSessionIdleOnCancel: (sessionId) => this.forceSessionIdleOnCancel(sessionId),
-      interruptCurrentTurn: (sessionId) => this.interruptCurrentTurn(sessionId),
+      interruptCurrentTurn: (sessionId, origin) => this.interruptCurrentTurn(sessionId, origin),
 
       createToolHandler: (webContents, documentContext, sessionId, workspaceId) =>
         this.createToolHandler(webContents, documentContext, sessionId, workspaceId),

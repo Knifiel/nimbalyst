@@ -141,8 +141,10 @@ export function registerTurnControlHandlers(ctx: AIServiceContext): void {
     return { success: true };
   });
 
+  // Only the user's send-now invokes this; it goes through a commit proposal
+  // that is waiting on them (#1682).
   safeHandle('ai:interruptCurrentTurn', (_event, sessionId: string) =>
-    ctx.interruptCurrentTurn(sessionId)
+    ctx.interruptCurrentTurn(sessionId, { userInitiated: true })
   );
 
   // #1252: compact via the provider's real RPC. The renderer used to send

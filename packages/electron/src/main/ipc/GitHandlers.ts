@@ -21,6 +21,7 @@
 
 import { runCommitProposalOnce, commitProposalIdentity } from '../services/ai/CommitProposalExecution';
 import { resolveGitCommitProposalPromptId } from '../services/ai/gitCommitProposalPromptUtils';
+import { beginCommitProposalConfirm } from '@nimbalyst/runtime/ai/server/commitProposalInFlight';
 import { resolveProposalCommitPaths } from '../services/ai/proposalCommitTarget';
 import { ipcMain } from 'electron';
 import type { SimpleGit } from 'simple-git';
@@ -1193,64 +1194,77 @@ export function registerGitHandlers(): void {
       /** Selected files that belong to no repository and were not committed. */
       uncommittableFiles?: string[];
     }> => {
-      // A worktree session commits against the worktree path, which owns no
-      // attached folders -- they are keyed by the parent workspace. Without
-      // this every attached-folder file resolves to no repo and is dropped.
-      const canonicalProposalId = sessionId && proposalId
-        ? await resolveGitCommitProposalPromptId(sessionId, proposalId, false)
-        : undefined;
-      // #1756 / #1529: a proposal commits where its stored record says (a
-      // sibling worktree is re-checked first); the caller's paths are ignored.
-      const proposalPaths = sessionId && canonicalProposalId
-        ? await resolveProposalCommitPaths(sessionId, canonicalProposalId)
-        : null;
-      const commitPath = proposalPaths?.workspacePath ?? workspacePath;
-      const commitRepoPath = proposalPaths ? proposalPaths.repoPath : repoPath;
-      const extraRoots = sessionId
-        ? await resolveSessionExtraCommitRoots(sessionId, commitPath)
+      // #1682: the user's Confirm holds the proposal from the moment it
+      // arrives, before the lookups below, so no interrupt, Stop release or
+      // supersede lands between the Confirm and the commit's start.
+      const endConfirm = sessionId && proposalId
+        ? [beginCommitProposalConfirm(sessionId, proposalId)]
         : [];
-
-      const execute = () => withGitOperationLog(
-        operationLog,
-        workspacePath,
-        ['commit', '-m', message],
-        // Resolves the owning repo per file and splits across repos when the
-        // selection spans more than one. A single-repo selection -- every
-        // ordinary commit -- behaves exactly as before.
-        entry => executeGitCommitAcrossRepos(commitPath, message, filesToStage, {
-          logContext: '[git:commit]',
-          env: getGitSubprocessEnv(),
-          onOutput: (stream, chunk) => operationLog.appendOutput(workspacePath, entry.id, stream, chunk),
-          hunkSelections,
-          repoPath: commitRepoPath,
-          extraRoots,
-        }),
-        result => result.commitHash ? `[${result.commitHash}] commit created` : undefined,
-      );
-
-      const result = sessionId && canonicalProposalId
-        ? await runCommitProposalOnce(sessionId, canonicalProposalId, commitProposalIdentity(commitPath, message, filesToStage, hunkSelections, commitRepoPath), execute)
-        : await execute();
-
-      if (sessionId) {
-        // Record every commit the operation produced. A selection spanning two
-        // repos makes two commits, and recording only `result.commitHash` --
-        // the first repo's -- leaves the second unattributed in the Git Log
-        // panel. Per-repo results also carry the successful ones on a partial
-        // failure, which is exactly when attribution matters most.
-        const commitHashes = result.repoResults
-          ? result.repoResults.filter((r) => r.success && r.commitHash).map((r) => r.commitHash!)
-          : result.success && result.commitHash ? [result.commitHash] : [];
-        for (const commitSha of commitHashes) {
-          void SessionCommitService.getInstance().recordCommit({
-            commitSha,
-            sessionId,
-            workspaceId: workspacePath,
-          });
+      try {
+        // A worktree session commits against the worktree path, which owns no
+        // attached folders -- they are keyed by the parent workspace. Without
+        // this every attached-folder file resolves to no repo and is dropped.
+        const canonicalProposalId = sessionId && proposalId
+          ? await resolveGitCommitProposalPromptId(sessionId, proposalId, false)
+          : undefined;
+        if (sessionId && canonicalProposalId && canonicalProposalId !== proposalId) {
+          endConfirm.push(beginCommitProposalConfirm(sessionId, canonicalProposalId));
         }
-      }
+        // #1756 / #1529: a proposal commits where its stored record says (a
+        // sibling worktree is re-checked first); the caller's paths are ignored.
+        const proposalPaths = sessionId && canonicalProposalId
+          ? await resolveProposalCommitPaths(sessionId, canonicalProposalId)
+          : null;
+        const commitPath = proposalPaths?.workspacePath ?? workspacePath;
+        const commitRepoPath = proposalPaths ? proposalPaths.repoPath : repoPath;
+        const extraRoots = sessionId
+          ? await resolveSessionExtraCommitRoots(sessionId, commitPath)
+          : [];
 
-      return result;
+        const execute = () => withGitOperationLog(
+          operationLog,
+          workspacePath,
+          ['commit', '-m', message],
+          // Resolves the owning repo per file and splits across repos when the
+          // selection spans more than one. A single-repo selection -- every
+          // ordinary commit -- behaves exactly as before.
+          entry => executeGitCommitAcrossRepos(commitPath, message, filesToStage, {
+            logContext: '[git:commit]',
+            env: getGitSubprocessEnv(),
+            onOutput: (stream, chunk) => operationLog.appendOutput(workspacePath, entry.id, stream, chunk),
+            hunkSelections,
+            repoPath: commitRepoPath,
+            extraRoots,
+          }),
+          result => result.commitHash ? `[${result.commitHash}] commit created` : undefined,
+        );
+
+        const result = sessionId && canonicalProposalId
+          ? await runCommitProposalOnce(sessionId, canonicalProposalId, commitProposalIdentity(commitPath, message, filesToStage, hunkSelections, commitRepoPath), execute)
+          : await execute();
+
+        if (sessionId) {
+          // Record every commit the operation produced. A selection spanning two
+          // repos makes two commits, and recording only `result.commitHash` --
+          // the first repo's -- leaves the second unattributed in the Git Log
+          // panel. Per-repo results also carry the successful ones on a partial
+          // failure, which is exactly when attribution matters most.
+          const commitHashes = result.repoResults
+            ? result.repoResults.filter((r) => r.success && r.commitHash).map((r) => r.commitHash!)
+            : result.success && result.commitHash ? [result.commitHash] : [];
+          for (const commitSha of commitHashes) {
+            void SessionCommitService.getInstance().recordCommit({
+              commitSha,
+              sessionId,
+              workspaceId: workspacePath,
+            });
+          }
+        }
+
+        return result;
+      } finally {
+        for (const end of endConfirm) end();
+      }
     }
   );
 

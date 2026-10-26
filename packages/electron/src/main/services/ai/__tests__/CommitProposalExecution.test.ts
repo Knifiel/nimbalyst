@@ -23,7 +23,10 @@ import {
   resetCommitProposalExecutionMemoryForTests,
 } from "../CommitProposalExecution";
 import { reservePromptAnswer } from "../PromptAnswerReservation";
-import { isCommitProposalInFlight } from "@nimbalyst/runtime/ai/server/commitProposalInFlight";
+import {
+  beginCommitProposalConfirm,
+  isCommitProposalInFlight,
+} from "@nimbalyst/runtime/ai/server/commitProposalInFlight";
 beforeEach(() => {
   records.clear();
   resetCommitProposalExecutionMemoryForTests();
@@ -127,6 +130,16 @@ describe("shared card and voice answer boundary", () => {
     finish();
     await commit;
     expect(reserveCommitProposalCancel("s", "q")).toBe(false);
+  });
+
+  // Round 2 review: the card's Confirm awaits path resolution before the commit
+  // reserves its record; a cancel in that gap must lose to the Confirm.
+  it("refuses a cancel once the user's Confirm for that proposal is accepted", () => {
+    const endConfirm = beginCommitProposalConfirm("s", "confirmed");
+    expect(reserveCommitProposalCancel("s", "confirmed")).toBe(false);
+    expect(reserveCommitProposalCancel("s", "other")).toBe(true);
+    endConfirm();
+    expect(reserveCommitProposalCancel("s", "confirmed")).toBe(true);
   });
 
   // Re-review: git succeeded but recording the result threw, which left the tool call unsettled.
