@@ -11,6 +11,12 @@
 export interface TeammateIdleWakeData {
   sessionId: string;
   message: string;
+  /**
+   * Set by the background-task drain, which closed the process before waking.
+   * A prompt that process was still waiting on has nowhere to deliver its
+   * answer, and its dropped call would otherwise leave the card open.
+   */
+  supersedesLivePrompts?: boolean;
 }
 
 export interface WakeTargetWindow {
@@ -31,6 +37,12 @@ export interface TeammateIdleWakeDeps<W extends WakeTargetWindow = WakeTargetWin
     sessionId: string,
     workspacePath: string,
   ) => Promise<unknown>;
+  /**
+   * Close the session's waiting prompts for good, with their results written.
+   * Called synchronously, before the dropped calls' aborts can arrive and
+   * leave the cards open with no waiter.
+   */
+  supersedeLivePrompts?: (sessionId: string) => void;
   /** Defers the send off the provider's event emission. */
   defer: (fn: () => void) => void;
   logInfo: (message: string) => void;
@@ -50,6 +62,9 @@ export function createTeammateIdleWakeListener<W extends WakeTargetWindow>(deps:
       deps.logInfo(`[AIService] Ignoring teammate message for ended session ${data.sessionId}`);
       return;
     }
+    // Before any await: the closed process's MCP calls abort on a later tick.
+    // A user Stop never sets the flag, so its question stays answerable (#1116).
+    if (data.supersedesLivePrompts) deps.supersedeLivePrompts?.(data.sessionId);
     deps.logInfo(`[AIService] Teammate message while lead idle, triggering sendMessage for session ${data.sessionId}`);
     // Load with the workspace that owns the session row. The turn's path can be
     // a worktree the agent cd'd into and was adopted only in memory; loading

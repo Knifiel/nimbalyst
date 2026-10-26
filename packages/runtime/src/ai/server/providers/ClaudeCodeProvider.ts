@@ -2448,6 +2448,9 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
         sessionId,
         message:
           '[System: A sub-agent you launched did not finish — its process was interrupted before returning results. Do not keep waiting for it; continue without it, or retry the delegation if the work still matters.]',
+        // The process closed above asked any prompt still waiting; its call is
+        // about to be dropped, so the wake closes the prompt (see teammateIdleWake).
+        supersedesLivePrompts: true,
       });
       return;
     }
@@ -2465,7 +2468,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       const message = buildTaskResultContinuationMessage(this.drainTerminalNotifications);
       console.log(`[CLAUDE-CODE] SUBAGENT_DRAIN: waking session ${sessionId} with ${this.drainTerminalNotifications.length} background task result(s)`);
       this.teammateIdleMessagePending = true;
-      this.emit('teammate:messageWhileIdle', { sessionId, message });
+      this.emit('teammate:messageWhileIdle', { sessionId, message, supersedesLivePrompts: true });
       return;
     }
 

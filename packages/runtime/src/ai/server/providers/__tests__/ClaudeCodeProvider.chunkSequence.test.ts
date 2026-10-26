@@ -534,6 +534,9 @@ describe('ClaudeCodeProvider.sendMessage chunk sequence', () => {
     expect(idleMessages[0].sessionId).toBe('nimbalyst-session-1');
     expect(idleMessages[0].message).toContain('npm run build');
     expect(idleMessages[0].message).toContain('build succeeded');
+    // The closed process asked any question still waiting; the wake closes it
+    // rather than leaving a card whose call is about to be dropped.
+    expect(idleMessages[0]).toMatchObject({ supersedesLivePrompts: true });
   });
 
   // The negative half of #1410's gate: a FOREGROUND Task settles via its own

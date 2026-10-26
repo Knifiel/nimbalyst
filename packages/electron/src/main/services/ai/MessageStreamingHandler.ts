@@ -98,6 +98,7 @@ import { publishContextUsage } from './publishContextUsage';
 import { requestMobilePush } from './mobilePushRequest';
 import { createAskUserQuestionListeners } from './askUserQuestionListeners';
 import { createTeammateIdleWakeListener } from './teammateIdleWake';
+import { settleLiveInteractivePrompts } from '../../mcp/tools/interactivePromptLiveness';
 // The per-session pending-prompt bit is derived from the set of prompts still
 // open, so one prompt settling cannot clear the indicator for another that is
 // still waiting on the user. Refs #1549.
@@ -1103,6 +1104,11 @@ export class MessageStreamingHandler {
         return this.svc.sendMessageHandler(mockEvent, message, {} as any, wakeSessionId, wakePath);
       },
       defer: (fn) => { setImmediate(fn); },
+      supersedeLivePrompts: (wakeSessionId) => {
+        void settleLiveInteractivePrompts(wakeSessionId, 'superseded').then((closed) => {
+          if (closed.length > 0) logger.main.info(`[AIService] Drain wake closed ${closed.length} waiting prompt(s) for ${wakeSessionId}`);
+        });
+      },
       logInfo: (message) => logger.main.info(message),
       logWarn: (message) => logger.main.warn(message),
       logError: (message, error) => logger.main.error(`${message}:`, error),

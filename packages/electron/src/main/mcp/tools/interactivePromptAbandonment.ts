@@ -34,8 +34,10 @@ export type InteractivePromptSettleReason =
   | 'user-responded'
   | 'client-abandoned'
   /**
-   * The user started a new turn instead of answering. The question is closed
-   * for good: no later answer can resume the session with it.
+   * The user started a new turn instead of answering, or Nimbalyst closed the
+   * asking process to wake the session with background-task results. The
+   * question is closed for good: no later answer can resume the session with
+   * it. A user Stop is never this; it is `client-abandoned`.
    */
   | 'superseded';
 

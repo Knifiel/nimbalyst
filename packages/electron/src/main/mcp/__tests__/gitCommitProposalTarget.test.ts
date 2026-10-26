@@ -33,15 +33,18 @@ vi.mock('@nimbalyst/runtime/storage/repositories/AgentMessagesRepository', () =>
 vi.mock('@nimbalyst/runtime/storage/repositories/AISessionsRepository', () => ({ AISessionsRepository: { get: async () => ({ title: 'Session' }) } }));
 vi.mock('../../database/PGLiteDatabaseWorker', () => ({ database: { query: async () => ({ rows: [] }) } }));
 vi.mock('../mcpWorkspaceResolver', () => ({ findWindowIdForWorkspacePath: async () => 1 }));
-vi.mock('../tools/codexToolCallResolver', () => ({ resolveToolUseIdFromMcpRequest: async () => 'tool-1' }));
+vi.mock('../tools/codexToolCallResolver', () => ({
+  resolveToolUseIdFromMcpRequest: async () => 'tool-1',
+  resolveRequestUserInputPromptTargets: (id: string) => ({ promptId: id, waiterPromptIds: [id] }),
+}));
 vi.mock('../../services/gitEnv', () => ({ getGitSubprocessEnv: () => ({}) }));
 vi.mock('../../services/ai/pendingPromptPersistence', () => ({ setSessionPendingPrompt: async () => {} }));
 vi.mock('../tools/askUserQuestionHandler', () => ({}));
-vi.mock('@nimbalyst/runtime/ai/server/SessionStateManager', () => ({}));
+vi.mock('@nimbalyst/runtime/ai/server/SessionStateManager', () => ({ getSessionStateManager: () => ({ updateActivity: async () => {} }) }));
 vi.mock('../../services/NotificationService', () => ({ notificationService: { showBlockedNotification: vi.fn() } }));
-vi.mock('../tools/interactivePromptTranscript', () => ({}));
-vi.mock('../tools/interactivePromptSettleState', () => ({}));
-vi.mock('../../services/ai/claudeCliToolResultSeen', () => ({}));
+vi.mock('../tools/interactivePromptTranscript', () => ({ isClaudeCliSession: async () => false }));
+vi.mock('../tools/interactivePromptSettleState', () => ({ applyInteractivePromptSettleTurnState: async () => {} }));
+vi.mock('../../services/ai/claudeCliToolResultSeen', () => ({ markToolResultPersisted: () => {} }));
 vi.mock('../../services/ai/claudeCliToolPermission', () => ({}));
 vi.mock('../../services/ai/claudeCliPermissionCache', () => ({}));
 vi.mock('../../services/ai/claudeCliUserPromptLog', () => ({}));
@@ -49,7 +52,7 @@ vi.mock('../../services/ClaudeSettingsManager', () => ({}));
 vi.mock('../../services/PermissionService', () => ({}));
 vi.mock('../../services/SessionCommitService', () => ({ SessionCommitService: { getInstance: () => ({ recordCommit: async () => {} }) } }));
 
-import { handleGitCommitProposal } from '../tools/interactiveToolHandlers';
+import { handleGitCommitProposal, handleRequestUserInput } from '../tools/interactiveToolHandlers';
 import { beginCommitProposalExecution, isCommitProposalInFlight } from '@nimbalyst/runtime/ai/server/commitProposalInFlight';
 import { settleLiveInteractivePrompts } from '../tools/interactivePromptLiveness';
 
@@ -239,4 +242,23 @@ it('always asks for manual approval for a sibling worktree target, even with aut
   expect(mocks.send).toHaveBeenCalledWith('ai:gitCommitProposal', expect.objectContaining({ autoApproved: false }));
   await answerWidget({ action: 'cancelled' });
   await pending;
+});
+
+// A drain wake tore down the SDK process that asked: the form closes for good
+// with its result written, and the dropped call cannot reopen it.
+it('closes a waiting PromptForUserInput for good when Nimbalyst settles it as superseded', async () => {
+  const controller = new AbortController();
+  const pending = handleRequestUserInput(
+    { title: 'Pick', fields: [{ type: 'confirm', id: 'ok', label: 'OK?' }] },
+    'session', '/parent', {}, { sendNotification: vi.fn(), signal: controller.signal },
+  );
+  await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
+
+  await expect(settleLiveInteractivePrompts('session', 'superseded')).resolves.toEqual(['tool-1']);
+  controller.abort();
+
+  expect(JSON.parse(text(await pending))).toMatchObject({ cancelled: true, reason: 'superseded' });
+  const results = mocks.create.mock.calls.map(([row]) => JSON.parse(row.content)).filter(row => row.type === 'nimbalyst_tool_result');
+  expect(results).toHaveLength(1);
+  expect(JSON.parse(results[0].result)).toMatchObject({ cancelled: true, reason: 'superseded' });
 });

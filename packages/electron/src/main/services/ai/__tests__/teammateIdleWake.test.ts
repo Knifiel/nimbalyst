@@ -46,4 +46,21 @@ describe('teammate idle wake', () => {
     expect(noWindow.deps.endSession).toHaveBeenCalledWith('s1');
     expect(noWindow.deps.sendMessage).not.toHaveBeenCalled();
   });
+
+  // The drain wake follows a teardown Nimbalyst made: the closed process's
+  // waiting questions must close before its dropped calls abandon them.
+  it('closes the waiting prompts of a torn-down process before anything awaits', () => {
+    const supersedeLivePrompts = vi.fn();
+    const { wake } = setup({ supersedeLivePrompts, resolveOwnerWorkspacePath: () => new Promise(() => {}) });
+    void wake({ sessionId: 's1', message: 'background task finished', supersedesLivePrompts: true });
+    expect(supersedeLivePrompts).toHaveBeenCalledWith('s1');
+  });
+
+  it('leaves waiting prompts alone for a teammate message or an ended session', async () => {
+    const supersedeLivePrompts = vi.fn();
+    await setup({ supersedeLivePrompts }).wake({ sessionId: 's1', message: 'teammate says hi' });
+    await setup({ supersedeLivePrompts, isSessionActive: () => false })
+      .wake({ sessionId: 's1', message: 'x', supersedesLivePrompts: true });
+    expect(supersedeLivePrompts).not.toHaveBeenCalled();
+  });
 });

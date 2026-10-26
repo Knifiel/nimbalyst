@@ -11,9 +11,8 @@ import {
 } from "./interactivePromptTranscript";
 import { applyInteractivePromptSettleTurnState } from "./interactivePromptSettleState";
 import {
-  clearLiveInteractivePrompt,
-  noteLiveInteractivePrompt,
   hasLiveInteractivePrompt,
+  registerLiveInteractivePrompt,
 } from "./interactivePromptLiveness";
 import {
   attachInteractivePromptCall,
@@ -220,16 +219,38 @@ export async function handleAskUserQuestion(
     }
   }
 
-  // NIM-2208: registered immediately before the wait and cleared in settle, so
-  // the stale-prompt reconcile can never clear the "awaiting input" bit while
-  // this handler is genuinely blocked.
-  if (sessionId) noteLiveInteractivePrompt(sessionId);
-
   return new Promise((resolve) => {
     let settled = false;
     let unregisterTurn: (() => void) | undefined;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     let detachCall: (() => void) | null = null;
+
+    // NIM-2208: registered immediately before the wait and cleared in settle, so
+    // the stale-prompt reconcile can never clear the "awaiting input" bit while
+    // this handler is genuinely blocked. A drain wake that closed the process
+    // which asked settles it as superseded (see teammateIdleWake). Codex
+    // questions belong to their turn and are not settled here.
+    const unregisterLive = sessionId
+      ? registerLiveInteractivePrompt(sessionId, {
+          kind: "ask_user_question",
+          promptId: questionId,
+          settleTerminally: (reason) => {
+            if (settled || isCodex) return false;
+            settle({ cancelled: true }, "superseded", reason);
+            // A CLI waiter writes its row in settle. Otherwise the process that
+            // would have recorded the tool result is gone, so write it here.
+            if (!isCliSession) {
+              void persistInteractivePromptToolResult({
+                sessionId,
+                toolUseId: questionId,
+                result: { answers: {}, cancelled: true, reason, respondedBy: "desktop", respondedAt: Date.now() },
+                isError: true,
+              });
+            }
+            return true;
+          },
+        })
+      : () => {};
 
     const settle = (
       result: {
@@ -244,7 +265,7 @@ export async function handleAskUserQuestion(
       settled = true;
       detachCall?.();
       unregisterTurn?.();
-      if (sessionId) clearLiveInteractivePrompt(sessionId);
+      unregisterLive();
 
       // The client walking away does not answer the question. Tear the waiter
       // down (below) but leave the widget answerable -- a later answer finds no

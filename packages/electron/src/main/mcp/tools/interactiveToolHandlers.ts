@@ -50,11 +50,7 @@ import {
   notePendingInteractiveWaiter,
   shouldSettleFromSessionFallback,
 } from "./interactivePromptFallback";
-import {
-  clearLiveInteractivePrompt,
-  noteLiveInteractivePrompt,
-  registerLiveInteractivePrompt,
-} from "./interactivePromptLiveness";
+import { registerLiveInteractivePrompt } from "./interactivePromptLiveness";
 import {
   attachInteractivePromptCall,
   type InteractivePromptCallExtra,
@@ -1368,14 +1364,26 @@ export async function handleRequestUserInput(
   // NIM-1981: track this waiter so the session-scoped fallback can be accepted
   // safely when it is the only pending prompt for the session.
   notePendingInteractiveWaiter(sessionKey);
-  // NIM-2208: separate registry (see interactivePromptLiveness) so the
-  // stale-prompt reconcile knows this session is genuinely blocked.
-  if (sessionId) noteLiveInteractivePrompt(sessionId);
 
   return new Promise((resolve) => {
     let settled = false;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     let detachCall: (() => void) | null = null;
+    // NIM-2208: separate registry (see interactivePromptLiveness) so the
+    // stale-prompt reconcile knows this session is genuinely blocked. A drain
+    // wake that closed the asking process settles it as superseded; settle
+    // writes the terminal row for every provider.
+    const unregisterLive = sessionId
+      ? registerLiveInteractivePrompt(sessionId, {
+          kind: "request_user_input",
+          promptId,
+          settleTerminally: (reason) => {
+            if (settled) return false;
+            void settle({ cancelled: true }, "superseded", reason);
+            return true;
+          },
+        })
+      : () => {};
 
     const settle = async (
       result: { answers?: Record<string, unknown>; cancelled?: boolean; respondedBy?: "desktop" | "mobile" },
@@ -1392,7 +1400,7 @@ export async function handleRequestUserInput(
         kind: 'request_user_input',
         reason,
       });
-      if (sessionId) clearLiveInteractivePrompt(sessionId);
+      unregisterLive();
 
       console.log(
         `[MCP Server] PromptForUserInput settled via ${source}: promptId=${promptId}, cancelled=${result?.cancelled}`,

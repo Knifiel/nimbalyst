@@ -12,7 +12,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { handleAskUserQuestion } from '../tools/askUserQuestionHandler';
-import { countLiveInteractivePrompts } from '../tools/interactivePromptLiveness';
+import { countLiveInteractivePrompts, settleLiveInteractivePrompts } from '../tools/interactivePromptLiveness';
 
 import { attachInteractivePromptCall } from '../tools/interactivePromptKeepalive';
 import { settleReasonFromResponse, shouldTerminalizePrompt } from '../tools/interactivePromptAbandonment';
@@ -259,6 +259,40 @@ describe('AskUserQuestion in an SDK session', () => {
       seams.cli = true;
       seams.windows = [];
       ipc.removeAllListeners();
+    }
+  });
+
+  // A drain wake closed the process that asked: nothing else will write this
+  // question's result, and the dropped call must not reopen it.
+  it('closes a question for good when Nimbalyst tears down the process that asked it', async () => {
+    vi.clearAllMocks();
+    const sessionId = 'sdk-drain-wake';
+    const controller = new AbortController();
+    seams.cli = false;
+    try {
+      const pending = handleAskUserQuestion(
+        { questions: [{ header: 'Choice', question: 'Select', options: [{ label: 'A', description: 'Option A' }] }] },
+        sessionId,
+        { params: { _meta: { toolUseId: 'q-drain' } } },
+        { sendNotification: vi.fn(), signal: controller.signal },
+      );
+      await vi.waitFor(() => expect(countLiveInteractivePrompts(sessionId)).toBe(1));
+
+      await expect(settleLiveInteractivePrompts(sessionId, 'superseded')).resolves.toEqual(['q-drain']);
+      controller.abort();
+
+      const result = await pending;
+      expect(JSON.parse(result.content[0].text)).toMatchObject({ cancelled: true, reason: 'superseded' });
+      expect(seams.persistResult).toHaveBeenCalledTimes(1);
+      expect(seams.persistResult).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId,
+        toolUseId: 'q-drain',
+        result: expect.objectContaining({ cancelled: true, reason: 'superseded' }),
+      }));
+      expect(countLiveInteractivePrompts(sessionId)).toBe(0);
+    } finally {
+      seams.cli = true;
+      (ipcMain as unknown as EventEmitter).removeAllListeners();
     }
   });
 });
