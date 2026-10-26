@@ -1,3 +1,5 @@
+import { BrowserWindow } from 'electron';
+import { AgentMessagesRepository } from '@nimbalyst/runtime/storage/repositories/AgentMessagesRepository';
 import {
   resolveGitCommitProposalLookup,
   parseCodexToolLookupId,
@@ -9,6 +11,38 @@ export function getGitCommitProposalResponseChannel(
   proposalId: string,
 ): string {
   return `git-commit-proposal-response:${sessionId || 'unknown'}:${proposalId}`;
+}
+
+/**
+ * Close a proposal the user moved past without answering: the response row
+ * renders its card as cancelled and is what a restart reads. The caller must
+ * already hold the proposal's cancel reservation, so no commit can follow.
+ */
+export async function persistSupersededCommitProposalResponse(
+  sessionId: string,
+  proposalId: string,
+): Promise<void> {
+  await AgentMessagesRepository.create({
+    sessionId,
+    source: 'nimbalyst',
+    direction: 'output',
+    createdAt: new Date(),
+    content: JSON.stringify({
+      type: 'git_commit_proposal_response',
+      proposalId,
+      action: 'cancelled',
+      reason: 'superseded',
+      respondedBy: 'desktop',
+      respondedAt: Date.now(),
+    }),
+  });
+  try {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('ai:gitCommitProposalResolved', { sessionId, proposalId });
+    }
+  } catch (error) {
+    console.warn('[gitCommitProposalPromptUtils] Failed to announce a superseded proposal:', error);
+  }
 }
 
 export function resolveGitCommitProposalPromptIdFromRows(

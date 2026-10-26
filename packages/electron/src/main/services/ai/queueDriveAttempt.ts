@@ -37,8 +37,9 @@ export interface QueueDriveAttemptDeps<W> {
    */
   isAwaitingUserInput?(sessionId: string): boolean;
   /**
-   * #1682: a `developer_git_commit_proposal` call is in flight. Holds the queue
-   * even for send-now; the deferred send-now replays once the call settles.
+   * #1682: a `developer_git_commit_proposal` commit is in flight (not merely
+   * waiting on the user). Holds the queue even for send-now; the deferred
+   * send-now replays once the call settles.
    */
   isCommitProposalInFlight?(sessionId: string): boolean;
   resolveWindow(workspacePath: string, allowAutoOpen: boolean): Promise<WindowResolution<W>>;

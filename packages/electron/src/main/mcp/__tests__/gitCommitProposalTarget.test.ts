@@ -9,8 +9,12 @@ const mocks = vi.hoisted(() => ({
   auto: true,
   ipcOn: vi.fn(),
   outcome: vi.fn(async (_opts: any): Promise<any> => ({ kind: 'not-committed' })),
+  cancel: vi.fn(async (_s: string, _p: string) => true),
 }));
-vi.mock('electron', () => ({ BrowserWindow: { fromId: () => ({ isDestroyed: () => false, webContents: { send: mocks.send } }) }, ipcMain: { on: mocks.ipcOn, removeListener: vi.fn() } }));
+vi.mock('electron', () => {
+  const window = { isDestroyed: () => false, webContents: { send: mocks.send } };
+  return { BrowserWindow: { fromId: () => window, getAllWindows: () => [window] }, ipcMain: { on: mocks.ipcOn, removeListener: vi.fn() } };
+});
 vi.mock('../../utils/privateSettingsStore', () => ({ default: class { get() { return mocks.auto; } } }));
 vi.mock('../../services/gitCommitProposalTarget', () => ({ resolveGitCommitProposalTarget: mocks.target }));
 vi.mock('../../services/GitCommitService', () => ({
@@ -21,6 +25,7 @@ vi.mock('../../services/ai/CommitProposalExecution', () => ({
   runCommitProposalOnce: async (_s: string, _p: string, _i: string, run: () => Promise<unknown>) => run(),
   commitProposalIdentity: () => 'identity',
   commitProposalOutcome: mocks.outcome,
+  cancelCommitProposalOnce: mocks.cancel,
 }));
 vi.mock('../tools/promptResponsePoll', () => ({ findGitCommitProposalResponse: async () => null, findToolPermissionResponse: async () => null }));
 vi.mock('../../services/CommitTrackerLinker', () => ({ commitTrackerLinker: { linkBySession: async () => ({ closedItemIds: [] }) } }));
@@ -45,7 +50,8 @@ vi.mock('../../services/PermissionService', () => ({}));
 vi.mock('../../services/SessionCommitService', () => ({ SessionCommitService: { getInstance: () => ({ recordCommit: async () => {} }) } }));
 
 import { handleGitCommitProposal } from '../tools/interactiveToolHandlers';
-import { isCommitProposalInFlight } from '@nimbalyst/runtime/ai/server/commitProposalInFlight';
+import { beginCommitProposalExecution, isCommitProposalInFlight } from '@nimbalyst/runtime/ai/server/commitProposalInFlight';
+import { settleLiveInteractivePrompts } from '../tools/interactivePromptLiveness';
 
 const LOCK_TIMEOUT = "Git operation 'git:commit' timed out waiting for lock on /worktree";
 const text = (result: any) => result.content.map((c: any) => c.text).join('\n');
@@ -61,6 +67,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.auto = true;
   mocks.outcome.mockResolvedValue({ kind: 'not-committed' });
+  mocks.cancel.mockResolvedValue(true);
   mocks.target.mockResolvedValue({ workspacePath: '/worktree', repoPath: '/worktree', files: ['/worktree/shared.txt'] });
 });
 
@@ -129,12 +136,69 @@ it('reports a landed commit when the manual widget answers with an error', async
   mocks.outcome.mockResolvedValue({ kind: 'committed', commitHash: 'def5678', commitDate: '2026-10-16T00:00:00Z' });
   const pending = handleGitCommitProposal({ filesToStage: ['shared.txt'], commitMessage: 'fix: x' }, 'session', '/parent', {});
   await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
-  expect(isCommitProposalInFlight('session')).toBe(true);
   await answerWidget({ action: 'error', error: LOCK_TIMEOUT });
   const result = await pending;
   expect(result.isError).toBe(false);
   expect(text(result)).toContain('def5678');
   expect(isCommitProposalInFlight('session')).toBe(false);
+});
+
+// #1682 narrowed: the wait for the user holds nothing. The user's "Did you hang?"
+// sat behind a waiting proposal for six hours, send-now included.
+it('does not hold interrupts while a manual proposal waits for the user', async () => {
+  mocks.auto = false;
+  const pending = handleGitCommitProposal({ filesToStage: ['shared.txt'], commitMessage: 'fix: x' }, 'session', '/parent', {});
+  await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
+  expect(isCommitProposalInFlight('session')).toBe(false);
+  await answerWidget({ action: 'cancelled' });
+  await pending;
+});
+
+it('holds interrupts from the moment the user commit starts until this call returns', async () => {
+  mocks.auto = false;
+  mocks.outcome.mockResolvedValue({ kind: 'committed', commitHash: 'def5678' });
+  const pending = handleGitCommitProposal({ filesToStage: ['shared.txt'], commitMessage: 'fix: x' }, 'session', '/parent', {});
+  await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
+  // The widget's git:commit runs this proposal's commit through its execution record.
+  const endExecution = beginCommitProposalExecution('session', 'tool-1');
+  endExecution();
+  // The commit landed, but the agent has not been told yet.
+  expect(isCommitProposalInFlight('session')).toBe(true);
+  await answerWidget({ action: 'committed', commitHash: 'def5678' });
+  await pending;
+  expect(isCommitProposalInFlight('session')).toBe(false);
+});
+
+// A new user message closes a waiting proposal for good: the card completes as
+// cancelled, a late Commit press is refused, and the agent learns why.
+it('closes a waiting proposal as superseded when the user sends a new message instead', async () => {
+  mocks.auto = false;
+  const pending = handleGitCommitProposal({ filesToStage: ['shared.txt'], commitMessage: 'fix: x' }, 'session', '/parent', {});
+  await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
+
+  await expect(settleLiveInteractivePrompts('session', 'superseded')).resolves.toEqual(['tool-1']);
+
+  const result = await pending;
+  expect(result.isError).toBe(false);
+  expect(text(result)).toMatch(/user sent a new message instead of answering[\s\S]*No commit was made/);
+  expect(mocks.cancel).toHaveBeenCalledWith('session', 'tool-1');
+  const responses = mocks.create.mock.calls.map(([row]) => JSON.parse(row.content)).filter(row => row.type === 'git_commit_proposal_response');
+  expect(responses).toEqual([expect.objectContaining({ proposalId: 'tool-1', action: 'cancelled', reason: 'superseded' })]);
+  expect(mocks.send).toHaveBeenCalledWith('ai:gitCommitProposalResolved', { sessionId: 'session', proposalId: 'tool-1' });
+  await expect(settleLiveInteractivePrompts('session', 'superseded')).resolves.toEqual([]);
+});
+
+it('leaves a proposal whose commit is already executing to that commit', async () => {
+  mocks.auto = false;
+  mocks.cancel.mockResolvedValue(false);
+  const pending = handleGitCommitProposal({ filesToStage: ['shared.txt'], commitMessage: 'fix: x' }, 'session', '/parent', {});
+  await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
+
+  await expect(settleLiveInteractivePrompts('session', 'superseded')).resolves.toEqual([]);
+  expect(mocks.create.mock.calls.some(([row]) => JSON.parse(row.content).type === 'git_commit_proposal_response')).toBe(false);
+
+  await answerWidget({ action: 'committed', commitHash: 'abc1234' });
+  expect(text(await pending)).toContain('abc1234');
 });
 
 it('says no commit was made when the manual widget is cancelled and nothing landed', async () => {

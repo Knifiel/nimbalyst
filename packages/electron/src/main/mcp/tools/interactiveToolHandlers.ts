@@ -36,8 +36,9 @@ import { SessionCommitService } from "../../services/SessionCommitService";
 import { resolveGitCommitProposalTarget } from "../../services/gitCommitProposalTarget";
 import { isGitLockFailure, noCommitNote, readProposalOutcome } from "../../services/commitOutcomeCheck";
 import { COMMIT_TARGET_VERSION } from "../../services/ai/proposalCommitTarget";
-import { commitProposalIdentity, runCommitProposalOnce } from "../../services/ai/CommitProposalExecution";
-import { beginCommitProposalCall } from "@nimbalyst/runtime/ai/server/commitProposalInFlight";
+import { cancelCommitProposalOnce, commitProposalIdentity, runCommitProposalOnce } from "../../services/ai/CommitProposalExecution";
+import { persistSupersededCommitProposalResponse } from "../../services/ai/gitCommitProposalPromptUtils";
+import { beginCommitProposalCall, holdCommitProposalCall } from "@nimbalyst/runtime/ai/server/commitProposalInFlight";
 import { findGitCommitProposalResponse, findToolPermissionResponse } from "./promptResponsePoll";
 import { findFreshInteractiveResponse } from "./interactiveResponsePolling";
 import { isInteractivePromptClosed } from "../../services/ai/questionTerminalResultLookup";
@@ -52,6 +53,7 @@ import {
 import {
   clearLiveInteractivePrompt,
   noteLiveInteractivePrompt,
+  registerLiveInteractivePrompt,
 } from "./interactivePromptLiveness";
 import {
   attachInteractivePromptCall,
@@ -583,8 +585,9 @@ async function runGitCommitProposal(
       .substring(7)}`;
 
   const targetSessionId = sessionId || "unknown";
-  // #1682: send-now, meta-agent and teammate interrupts wait while this is set.
-  cleanups.push(beginCommitProposalCall(targetSessionId));
+  // #1682: a commit of this proposal holds send-now, meta-agent and teammate
+  // interrupts until this call returns. The wait for the user holds nothing.
+  cleanups.push(holdCommitProposalCall(targetSessionId, proposalId));
 
   // Decide before publishing: voice must never request approval for an automatic commit.
   let isAutoCommit = false;
@@ -596,6 +599,8 @@ async function runGitCommitProposal(
   }
   // #1756: a commit into a sibling worktree is always approved by hand.
   if (target.worktree) isAutoCommit = false;
+  // #1682: an automatic commit has no human wait; the whole call is the commit.
+  if (isAutoCommit) cleanups.push(beginCommitProposalCall(targetSessionId));
 
   // Persist the proposal to database for durability
   try {
@@ -877,9 +882,6 @@ async function runGitCommitProposal(
   // Wait for user confirmation with DB polling fallback.
   // The IPC listener is the fast path; DB polling catches responses when the
   // transport drops (the bug that caused this tool to hang indefinitely).
-  // NIM-2208: see handleAskUserQuestion — paired with the clear in settle below.
-  if (targetSessionId) noteLiveInteractivePrompt(targetSessionId);
-
   return new Promise((resolve) => {
     const getFilePath = (f: FileToStage) =>
       typeof f === "string" ? f : f.path;
@@ -887,6 +889,22 @@ async function runGitCommitProposal(
     let settled = false;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     let detachCall: (() => void) | null = null;
+    // NIM-2208: see handleAskUserQuestion — paired with the unregister in settle below.
+    // A user message sent instead of an answer closes the proposal for good.
+    const unregisterLive = registerLiveInteractivePrompt(targetSessionId, {
+      kind: "git_commit_proposal",
+      promptId: proposalId,
+      settleTerminally: async () => {
+        if (settled) return false;
+        // The cancel reservation is what refuses a later Commit press on the
+        // card. A refusal means this proposal's commit already started; its
+        // own result settles this call.
+        if (!(await cancelCommitProposalOnce(targetSessionId, proposalId))) return false;
+        settle({ action: "cancelled", superseded: true }, "superseded");
+        await persistSupersededCommitProposalResponse(targetSessionId, proposalId);
+        return true;
+      },
+    });
 
     type CommitResult = {
       action: "committed" | "cancelled" | "error";
@@ -895,13 +913,15 @@ async function runGitCommitProposal(
       error?: string;
       filesCommitted?: string[];
       commitMessage?: string;
+      /** Closed because the user sent a new message instead of answering. */
+      superseded?: boolean;
     };
 
     const settle = (result: CommitResult, source: string) => {
       if (settled) return;
       settled = true;
       detachCall?.();
-      if (targetSessionId) clearLiveInteractivePrompt(targetSessionId);
+      unregisterLive();
 
       console.log(
         `[MCP Server] Git commit proposal settled via ${source}: action=${result.action}, hash=${result.commitHash || "none"}`
@@ -978,7 +998,9 @@ async function runGitCommitProposal(
               type: "text",
               text: (result.error
                 ? `Commit failed: ${result.error}`
-                : "User cancelled the commit proposal.") + outcomeNote,
+                : result.superseded
+                  ? "Commit proposal cancelled: the user sent a new message instead of answering it. Read that message before proposing a commit again."
+                  : "User cancelled the commit proposal.") + outcomeNote,
             },
           ],
           isError: result.error ? true : false,

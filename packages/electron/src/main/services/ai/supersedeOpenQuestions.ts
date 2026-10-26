@@ -14,16 +14,27 @@
  * last-user-message boundary is not used here). Only human turns supersede:
  * an agent `send_prompt`, a child-session update, a wakeup, an automation or
  * the answer auto-resume leave open questions alone.
+ *
+ * An unanswered commit proposal is closed the same way: a user message no
+ * longer waits behind it (#1682), so the proposal it moved past must not stay
+ * committable.
  */
 
 import { ipcMain } from 'electron';
-import { partitionUnansweredQuestions, type UnansweredQuestion } from '@nimbalyst/runtime/ai/server/interactivePromptTools';
+import {
+  isCommitProposalTool,
+  isQuestionTool,
+  partitionUnansweredQuestions,
+  type UnansweredQuestion,
+} from '@nimbalyst/runtime/ai/server/interactivePromptTools';
 import { getCodexToolLookupAliases } from '@nimbalyst/runtime/ai/server/toolLookupIds';
 import type { PromptProvenance } from '@nimbalyst/runtime/ai/server/types';
 import { loadViewMessages } from '../../utils/transcriptHelpers';
 import { getQueuedPromptsStore } from '../RepositoryManager';
 import { getRequestUserInputResponseChannel } from '../../mcp/tools/interactivePromptFallback';
-import { hasLiveInteractivePrompt } from '../../mcp/tools/interactivePromptLiveness';
+import { hasLiveInteractivePrompt, settleLiveInteractivePrompts } from '../../mcp/tools/interactivePromptLiveness';
+import { cancelCommitProposalOnce } from './CommitProposalExecution';
+import { persistSupersededCommitProposalResponse, resolveGitCommitProposalPromptId } from './gitCommitProposalPromptUtils';
 import { reservePromptAnswer } from './PromptAnswerReservation';
 import {
   hasTerminalizedAskUserQuestion,
@@ -103,7 +114,11 @@ export async function snapshotQuestionsToSupersede(args: {
     if (elapsedMs > 100) logger.main.warn(timing);
     else logger.main.info(timing);
     if (!view.success) throw new Error(view.error);
-    const { open, superseded } = partitionUnansweredQuestions(view.messages);
+    // A commit proposal the user moved past is closed the same way (#1682).
+    const { open, superseded } = partitionUnansweredQuestions(
+      view.messages,
+      (toolName) => isQuestionTool(toolName) || isCommitProposalTool(toolName),
+    );
     return { sessionId, provider, questions: [...superseded, ...open] };
   } catch (error) {
     // Cleanup only: the send goes ahead, and the UI still shows the question closed.
@@ -120,11 +135,13 @@ export async function closeSupersededQuestions(snapshot: SupersedeSnapshot | nul
   try {
     const wasTracked = hasOpenPrompts(sessionId);
     for (const question of snapshot.questions) {
-      const closed = provider === 'openai-codex' && question.toolName === 'AskUserQuestion'
-        ? await supersedeCodexQuestion(sessionId, question.id)
-        : question.toolName === 'AskUserQuestion'
-          ? await supersedeAskUserQuestion(sessionId, question.id, provider)
-          : await supersedeRequestUserInput(sessionId, question.id, provider);
+      const closed = isCommitProposalTool(question.toolName)
+        ? await supersedeCommitProposal(sessionId, question.id)
+        : provider === 'openai-codex' && question.toolName === 'AskUserQuestion'
+          ? await supersedeCodexQuestion(sessionId, question.id)
+          : question.toolName === 'AskUserQuestion'
+            ? await supersedeAskUserQuestion(sessionId, question.id, provider)
+            : await supersedeRequestUserInput(sessionId, question.id, provider);
       (closed ? outcome.superseded : outcome.skipped).push(question.id);
       if (closed) resolvePrompt(sessionId, question.id);
     }
@@ -213,6 +230,30 @@ async function supersedeRequestUserInput(sessionId: string, promptId: string, pr
     return true;
   }
   await persistTerminalRow(sessionId, promptId, provider);
+  return true;
+}
+
+/**
+ * A waiting proposal's call settles with a result telling the agent the user
+ * moved on. Without a waiter (a stale card), the cancel is reserved and the
+ * response row closes the card. Either way a later Commit press is refused.
+ * A proposal whose commit already started is left to that commit.
+ */
+async function supersedeCommitProposal(sessionId: string, toolCallId: string): Promise<boolean> {
+  let proposalId: string;
+  try {
+    proposalId = await resolveGitCommitProposalPromptId(sessionId, toolCallId, false);
+  } catch {
+    return false;
+  }
+  const live = await settleLiveInteractivePrompts(
+    sessionId,
+    'superseded',
+    (prompt) => prompt.kind === 'git_commit_proposal' && prompt.promptId === proposalId,
+  );
+  if (live.length > 0) return true;
+  if (!(await cancelCommitProposalOnce(sessionId, proposalId))) return false;
+  await persistSupersededCommitProposalResponse(sessionId, proposalId);
   return true;
 }
 

@@ -53,6 +53,18 @@ export function isQuestionTool(toolName: string | null | undefined): boolean {
   return QUESTION_TOOLS.has(stripMcpPrefix(toolName));
 }
 
+const COMMIT_PROPOSAL_TOOLS = new Set([
+  'GitCommitProposal',
+  'git_commit_proposal',
+  'developer_git_commit_proposal',
+  'developer.git_commit_proposal',
+]);
+
+export function isCommitProposalTool(toolName: string | null | undefined): boolean {
+  if (!toolName) return false;
+  return COMMIT_PROPOSAL_TOOLS.has(stripMcpPrefix(toolName));
+}
+
 export interface UnansweredQuestion {
   /** The tool call's providerToolCallId (the id the answer IPC keys on). */
   id: string;
@@ -105,7 +117,11 @@ function isHumanTurnBoundary(message: QuestionScanMessage): boolean {
  * the transcript's own de-duplication. A backgrounded-ack result (#1341) has
  * already been blanked by the projector, so it counts as no result here.
  */
-export function partitionUnansweredQuestions(messages: readonly QuestionScanMessage[]): {
+export function partitionUnansweredQuestions(
+  messages: readonly QuestionScanMessage[],
+  /** Which tool calls count as prompts. Defaults to the question tools. */
+  isPromptTool: (toolName: string | null | undefined) => boolean = isQuestionTool,
+): {
   open: UnansweredQuestion[];
   superseded: UnansweredQuestion[];
 } {
@@ -123,7 +139,7 @@ export function partitionUnansweredQuestions(messages: readonly QuestionScanMess
     const id = tool?.providerToolCallId;
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    if (!isQuestionTool(tool.toolName) || tool.result) continue;
+    if (!isPromptTool(tool.toolName) || tool.result) continue;
     (afterLastUserMessage ? open : superseded).push({ id, toolName: stripMcpPrefix(tool.toolName ?? ''), index });
   }
   return { open: open.reverse(), superseded: superseded.reverse() };

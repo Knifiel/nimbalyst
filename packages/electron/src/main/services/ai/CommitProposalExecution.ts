@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import Store from "../../utils/privateSettingsStore";
 import type { GitCommitExecutionResult } from "../GitCommitService";
+import { beginCommitProposalExecution } from "@nimbalyst/runtime/ai/server/commitProposalInFlight";
 
 interface ProposalExecution {
   identity: string;
@@ -99,6 +100,11 @@ export async function runCommitProposalOnce(
   }
   storage().set(key, { identity });
   executions.set(key, { identity });
+  // #1682: an interrupt must not land while this proposal commits. A cancel
+  // runs nothing, so it holds nothing.
+  const endExecution = identity === "cancelled"
+    ? () => {}
+    : beginCommitProposalExecution(sessionId, promptId);
   const run = (async (): Promise<GitCommitExecutionResult> => {
     let result: GitCommitExecutionResult;
     try {
@@ -127,6 +133,7 @@ export async function runCommitProposalOnce(
     return await run;
   } finally {
     running.delete(key);
+    endExecution();
   }
 }
 

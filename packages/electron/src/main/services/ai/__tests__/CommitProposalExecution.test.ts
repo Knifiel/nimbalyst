@@ -22,6 +22,7 @@ import {
   resetCommitProposalExecutionMemoryForTests,
 } from "../CommitProposalExecution";
 import { reservePromptAnswer } from "../PromptAnswerReservation";
+import { isCommitProposalInFlight } from "@nimbalyst/runtime/ai/server/commitProposalInFlight";
 beforeEach(() => {
   records.clear();
   resetCommitProposalExecutionMemoryForTests();
@@ -89,6 +90,21 @@ describe("shared card and voice answer boundary", () => {
     expect(await outcome).toEqual({ kind: "committed", commitHash: "abc1234", commitDate: "2026-10-16" });
     await abandoned;
     expect(await commitProposalOutcome("s", "p")).toMatchObject({ kind: "committed", commitHash: "abc1234" });
+  });
+
+  // #1682: the card, voice and mobile all commit through here, so this is the
+  // window send-now and teammate interrupts must wait out. A cancel runs no git.
+  it("holds the session's interrupts while a proposal's commit executes, and not for a cancel", async () => {
+    let during = false;
+    await runCommitProposalOnce("held", "p", "selection", async () => {
+      during = isCommitProposalInFlight("held");
+      return { success: true, commitHash: "abc1234" };
+    });
+    expect(during).toBe(true);
+    expect(isCommitProposalInFlight("held")).toBe(false);
+
+    expect(await cancelCommitProposalOnce("held", "c")).toBe(true);
+    expect(isCommitProposalInFlight("held")).toBe(false);
   });
 
   // Re-review: git succeeded but recording the result threw, which left the tool call unsettled.

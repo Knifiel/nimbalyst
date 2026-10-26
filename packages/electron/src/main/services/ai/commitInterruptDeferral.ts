@@ -14,7 +14,7 @@ const scheduled = new Set<string>();
 
 /**
  * #1682: send-now and meta-agent interrupts must not land while a
- * `developer_git_commit_proposal` call is in flight. Returns true when the
+ * `developer_git_commit_proposal` commit is in flight. Returns true when the
  * interrupt was deferred; once the call settles, a still-queued prompt is sent
  * the way send-now would have sent it (interrupt, then drive).
  */

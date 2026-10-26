@@ -21,6 +21,8 @@
 // registering an MCP waiter, so the reconcile pairs this with a
 // session-is-tracked-in-memory check rather than trusting it alone.
 
+import type { InteractivePromptKind } from './interactivePromptAbandonment';
+
 /** Per-session count of interactive prompts currently blocking a turn. */
 const liveInteractivePrompts = new Map<string, number>();
 
@@ -49,4 +51,65 @@ export function countLiveInteractivePrompts(sessionKey: string): number {
 /** Whether any interactive prompt is currently blocking this session's turn. */
 export function hasLiveInteractivePrompt(sessionKey: string): boolean {
   return countLiveInteractivePrompts(sessionKey) > 0;
+}
+
+/**
+ * A live prompt that another part of the app can close for good. Registering
+ * one also counts it as live (above).
+ */
+export interface LiveInteractivePrompt {
+  kind: InteractivePromptKind;
+  promptId: string;
+  /**
+   * Settle the waiter terminally and write the result that closes its card.
+   * Returns false when the prompt is already settling, or an answer owns it
+   * (a commit already executing). Must start synchronously: a client abort
+   * that arrives later has to find the waiter already settled.
+   */
+  settleTerminally(reason: 'superseded'): boolean | Promise<boolean>;
+}
+
+const liveWaiters = new Map<string, Set<LiveInteractivePrompt>>();
+
+/** Count `prompt` as live and make it settleable; the returned function undoes both (idempotent). */
+export function registerLiveInteractivePrompt(sessionKey: string, prompt: LiveInteractivePrompt): () => void {
+  if (!sessionKey) return () => {};
+  noteLiveInteractivePrompt(sessionKey);
+  const set = liveWaiters.get(sessionKey) ?? new Set<LiveInteractivePrompt>();
+  set.add(prompt);
+  liveWaiters.set(sessionKey, set);
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    set.delete(prompt);
+    if (set.size === 0 && liveWaiters.get(sessionKey) === set) liveWaiters.delete(sessionKey);
+    clearLiveInteractivePrompt(sessionKey);
+  };
+}
+
+/**
+ * Close a session's live prompts for good, as `reason`. Every settle starts
+ * before this returns its promise. Resolves with the ids that closed.
+ */
+export async function settleLiveInteractivePrompts(
+  sessionKey: string,
+  reason: 'superseded',
+  match?: (prompt: LiveInteractivePrompt) => boolean,
+): Promise<string[]> {
+  const prompts = [...(liveWaiters.get(sessionKey) ?? [])].filter(prompt => !match || match(prompt));
+  const settles = prompts.map(prompt => {
+    try {
+      return Promise.resolve(prompt.settleTerminally(reason)).catch(error => settleFailed(prompt, error));
+    } catch (error) {
+      return Promise.resolve(settleFailed(prompt, error));
+    }
+  });
+  const closed = await Promise.all(settles);
+  return prompts.filter((_, index) => closed[index]).map(prompt => prompt.promptId);
+}
+
+function settleFailed(prompt: LiveInteractivePrompt, error: unknown): false {
+  console.warn(`[interactivePromptLiveness] Could not settle ${prompt.kind} ${prompt.promptId}:`, error);
+  return false;
 }

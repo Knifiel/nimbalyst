@@ -88,7 +88,8 @@ vi.mock('../../../mcp/tools/codexToolCallResolver', () => ({
 }));
 vi.mock('../gitCommitProposalPromptUtils', () => ({
   getGitCommitProposalResponseChannel: vi.fn(),
-  resolveGitCommitProposalPromptId: vi.fn(),
+  resolveGitCommitProposalPromptId: vi.fn(async (_sessionId: string, id: string) => id),
+  persistSupersededCommitProposalResponse: vi.fn(async () => undefined),
 }));
 vi.mock('../codexQuestionDelivery', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../codexQuestionDelivery')>()),
@@ -112,6 +113,9 @@ import { markToolResultPersisted } from '../claudeCliToolResultSeen';
 import { clearTerminalizedAskUserQuestions } from '../askUserQuestionFallbackResolution';
 import { configureRequestUserInputResume } from '../requestUserInputOrphanedAnswer';
 import { AISessionsRepository } from '@nimbalyst/runtime/storage/repositories/AISessionsRepository';
+import { cancelCommitProposalOnce } from '../CommitProposalExecution';
+import { persistSupersededCommitProposalResponse } from '../gitCommitProposalPromptUtils';
+import { registerLiveInteractivePrompt } from '../../../mcp/tools/interactivePromptLiveness';
 
 const HUMAN = { inputType: 'user' };
 const user = { type: 'user_message' };
@@ -308,6 +312,47 @@ describe('supersedeOpenQuestions', () => {
     await new Promise((resolve) => setImmediate(resolve));
     expect(resume).not.toHaveBeenCalled();
     vi.mocked(AISessionsRepository.get).mockResolvedValue({ provider: 'claude-code', workspacePath: '/ws' } as any);
+  });
+
+  // A commit proposal is a prompt like any other: a human turn closes it for good
+  // and a late Commit press on the stale card must not commit.
+  const proposal = (id: string) => question(id, 'mcp__nimbalyst__developer_git_commit_proposal');
+
+  it('closes an unanswered commit proposal on a human turn and reserves its cancel', async () => {
+    vi.mocked(cancelCommitProposalOnce).mockResolvedValue(true);
+    h.messages = [user, proposal('toolu_commit')];
+
+    const outcome = await supersedeOpenQuestions({ sessionId: sid, provider: 'claude-code', context: HUMAN });
+
+    expect(outcome.superseded).toEqual(['toolu_commit']);
+    expect(cancelCommitProposalOnce).toHaveBeenCalledWith(sid, 'toolu_commit');
+    expect(persistSupersededCommitProposalResponse).toHaveBeenCalledWith(sid, 'toolu_commit');
+    // Not a question: no question terminal row.
+    expect(h.rows).toHaveLength(0);
+  });
+
+  it('leaves a commit proposal whose commit is executing to that commit', async () => {
+    vi.mocked(cancelCommitProposalOnce).mockResolvedValue(false);
+    h.messages = [user, proposal('toolu_running')];
+
+    const outcome = await supersedeOpenQuestions({ sessionId: sid, provider: 'claude-code', context: HUMAN });
+
+    expect(outcome).toEqual({ superseded: [], skipped: ['toolu_running'] });
+    expect(persistSupersededCommitProposalResponse).not.toHaveBeenCalled();
+  });
+
+  it('hands a proposal with a live waiter to that waiter, which tells the agent', async () => {
+    h.messages = [user, proposal('toolu_live_commit')];
+    const settleTerminally = vi.fn(async () => true);
+    const unregister = registerLiveInteractivePrompt(sid, { kind: 'git_commit_proposal', promptId: 'toolu_live_commit', settleTerminally });
+
+    const outcome = await supersedeOpenQuestions({ sessionId: sid, provider: 'claude-code-cli', context: HUMAN });
+
+    expect(outcome.superseded).toEqual(['toolu_live_commit']);
+    expect(settleTerminally).toHaveBeenCalledWith('superseded');
+    expect(cancelCommitProposalOnce).not.toHaveBeenCalled();
+    expect(persistSupersededCommitProposalResponse).not.toHaveBeenCalled();
+    unregister();
   });
 
   it('skips a Codex question whose answer recovery is already queued', async () => {
