@@ -581,7 +581,7 @@ export const RichTranscriptView = React.forwardRef<
 
   const { pendingPermissionIndices, pendingPermissionsVisibleRef, showPermissionBanner, setShowPermissionBanner } =
     usePendingPermissionNavigation({ messages, sessionId, sessionStatus, isProcessing, currentTeammates, vlistRef });
-  const { pendingQuestions, jumpToQuestion } = usePendingQuestionNavigation({
+  const { pendingQuestions, jumpToNewestQuestion, hasQuestionToReveal } = usePendingQuestionNavigation({
     messages, sessionId, vlistRef, scrollContainerRef, ready: isScrollReady && isContainerVisible,
   });
   const hasPendingQuestionsRef = useRef(false);
@@ -912,7 +912,8 @@ export const RichTranscriptView = React.forwardRef<
     // Rows measured after this pin are followed by the resize observer below.
     let frame: number;
     frame = requestAnimationFrame(() => {
-      if (pendingQuestions.length === 0) {
+      // A question not yet shown positions the list itself once ready.
+      if (!hasQuestionToReveal()) {
         setAtBottomState(true);
         scrollToEnd();
       }
@@ -1307,7 +1308,7 @@ export const RichTranscriptView = React.forwardRef<
         {pendingQuestions.length > 0 && (
           <div className="rich-transcript-question-navigation shrink-0 flex justify-end border-t border-[var(--nim-border)] bg-[var(--nim-bg)] px-3 py-2">
             <button
-              onClick={() => jumpToQuestion(pendingQuestions[0])}
+              onClick={jumpToNewestQuestion}
               aria-label="Jump to question"
               className="rich-transcript-question-button flex items-center gap-1.5 px-3 py-1.5 bg-[var(--nim-primary)] text-[var(--nim-on-primary)] rounded-md text-xs font-medium cursor-pointer border-none hover:brightness-110"
             >
