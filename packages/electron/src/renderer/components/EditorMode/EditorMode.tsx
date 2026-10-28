@@ -1,3 +1,4 @@
+import { usePendingFileOpen } from '../../hooks/usePendingFileOpen';
 import React, { useCallback, useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
 import { useSetAtom, useAtomValue, useAtom } from 'jotai';
 import type { ConfigTheme } from '@nimbalyst/runtime';
@@ -891,6 +892,8 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
       console.error('Failed to save file as:', error);
     }
   }, [tabsActions]);
+
+  usePendingFileOpen(workspacePath, () => onModeChange?.('files'));
 
   // Handle workspace file selection
   // CRITICAL: Use tabsRef.current to avoid stale closure bug

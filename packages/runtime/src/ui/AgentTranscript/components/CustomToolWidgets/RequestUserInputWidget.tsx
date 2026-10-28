@@ -58,6 +58,7 @@ import {
   fieldDraftValid,
   seedDraft,
   decidePriming,
+  parseRequestUserInputResult,
 } from './requestUserInputFieldLogic';
 import type {
   RequestUserInputAnswer,
@@ -114,74 +115,6 @@ function parseArgs(args: any): RequestUserInputArgs | null {
     );
   }
   return { ...args, fields: validFields } as RequestUserInputArgs;
-}
-
-interface ParsedResult {
-  cancelled: boolean;
-  /** Why the prompt closed, e.g. `superseded` when the user sent a new message instead. */
-  reason?: string;
-  answers: Record<string, RequestUserInputAnswer>;
-}
-
-function parseResult(result: unknown): ParsedResult | null {
-  if (result === undefined || result === null || result === '') return null;
-  return parseFromUnknown(result);
-}
-
-function parseFromUnknown(value: unknown): ParsedResult | null {
-  if (value === undefined || value === null) return null;
-
-  if (typeof value === 'string') {
-    try {
-      return parseFromUnknown(JSON.parse(value));
-    } catch {
-      const lower = value.toLowerCase();
-      if (lower.includes('cancelled') || lower.includes('canceled')) {
-        return { cancelled: true, answers: {} };
-      }
-      return null;
-    }
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      if (item && typeof item === 'object' && (item as any).type === 'text' && typeof (item as any).text === 'string') {
-        const nested = parseFromUnknown((item as any).text);
-        if (nested) return nested;
-      }
-    }
-    return null;
-  }
-
-  if (typeof value !== 'object') return null;
-
-  const record = value as Record<string, unknown>;
-
-  if (record.cancelled === true || record.canceled === true) {
-    return {
-      cancelled: true,
-      reason: typeof record.reason === 'string' ? record.reason : undefined,
-      answers: typeof record.answers === 'object' && record.answers !== null
-        ? (record.answers as Record<string, RequestUserInputAnswer>)
-        : {},
-    };
-  }
-
-  if (record.answers && typeof record.answers === 'object' && !Array.isArray(record.answers)) {
-    return {
-      cancelled: false,
-      answers: record.answers as Record<string, RequestUserInputAnswer>,
-    };
-  }
-
-  for (const key of ['result', 'content', 'text']) {
-    if (record[key] !== undefined) {
-      const nested = parseFromUnknown(record[key]);
-      if (nested) return nested;
-    }
-  }
-
-  return null;
 }
 
 // ============================================================
@@ -827,7 +760,7 @@ export const RequestUserInputWidget: React.FC<CustomToolWidgetProps> = ({ messag
   const args = parseArgs(toolCall.arguments);
 
   const rawResult = toolCall.result;
-  const parsedResult = useMemo(() => parseResult(rawResult), [rawResult]);
+  const parsedResult = useMemo(() => parseRequestUserInputResult(rawResult), [rawResult]);
   // The user sent a new message instead of answering. Older transcripts have
   // no durable result for this, so the transcript also passes `superseded`.
   const isSkipped = parsedResult?.reason === 'superseded' || (parsedResult === null && superseded === true);

@@ -156,11 +156,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('open-workspace-file', handler);
     return () => ipcRenderer.removeListener('open-workspace-file', handler);
   },
-  onOpenDocument: (callback: (data: { path: string }) => void) => {
-    const handler = (_event: any, data: { path: string }) => callback(data);
-    ipcRenderer.on('open-document', handler);
-    return () => ipcRenderer.removeListener('open-document', handler);
-  },
   onOpenWorkspaceFromCLI: (callback: (workspacePath: string) => void) => {
     const handler = (_event: any, workspacePath: string) => callback(workspacePath);
     ipcRenderer.on('open-workspace-from-cli', handler);

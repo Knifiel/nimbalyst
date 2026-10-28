@@ -36,8 +36,8 @@ import { SessionCommitService } from "../../services/SessionCommitService";
 import { resolveGitCommitProposalTarget } from "../../services/gitCommitProposalTarget";
 import { isGitLockFailure, noCommitNote, readProposalOutcome } from "../../services/commitOutcomeCheck";
 import { COMMIT_TARGET_VERSION } from "../../services/ai/proposalCommitTarget";
-import { commitProposalIdentity, runCommitProposalOnce } from "../../services/ai/CommitProposalExecution";
-import { beginCommitProposalCall } from "@nimbalyst/runtime/ai/server/commitProposalInFlight";
+import { cancelCommitProposalOnce, commitProposalIdentity, runCommitProposalOnce } from "../../services/ai/CommitProposalExecution";
+import { beginCommitProposalCall, registerWaitingCommitProposal } from "@nimbalyst/runtime/ai/server/commitProposalInFlight";
 import { findGitCommitProposalResponse, findToolPermissionResponse } from "./promptResponsePoll";
 import { findFreshInteractiveResponse } from "./interactiveResponsePolling";
 import { isInteractivePromptClosed } from "../../services/ai/questionTerminalResultLookup";
@@ -583,7 +583,9 @@ async function runGitCommitProposal(
       .substring(7)}`;
 
   const targetSessionId = sessionId || "unknown";
-  // #1682: send-now, meta-agent and teammate interrupts wait while this is set.
+  // #1682: meta-agent and teammate interrupts wait while this is set. The
+  // user's own send-now first closes the proposal if it is still waiting on
+  // them (NIM-7642, below), so it waits only for a commit they confirmed.
   cleanups.push(beginCommitProposalCall(targetSessionId));
 
   // Decide before publishing: voice must never request approval for an automatic commit.
@@ -895,11 +897,46 @@ async function runGitCommitProposal(
       error?: string;
       filesCommitted?: string[];
       commitMessage?: string;
+      /** Closed because the user sent a new message instead of answering (NIM-7642). */
+      superseded?: boolean;
     };
+
+    // NIM-7642: the user sent a new message instead of answering. The cancel
+    // goes through the proposal's execution record, which a Commit press also
+    // claims: if the press won, its commit owns the proposal and the send-now
+    // keeps waiting (#1682); if the cancel won, a later press is refused.
+    const unregisterWaiting = registerWaitingCommitProposal(targetSessionId, async () => {
+      if (settled) return false;
+      if (!(await cancelCommitProposalOnce(targetSessionId, proposalId))) return false;
+      // The response row closes the card, now and after a restart.
+      try {
+        await AgentMessagesRepository.create({
+          sessionId: targetSessionId,
+          source: "nimbalyst",
+          direction: "output",
+          createdAt: new Date(),
+          content: JSON.stringify({
+            type: "git_commit_proposal_response",
+            proposalId,
+            action: "cancelled",
+            respondedAt: Date.now(),
+            respondedBy: "desktop",
+          }),
+        });
+      } catch (error) {
+        console.error(`[MCP Server] Failed to record the closed commit proposal ${proposalId}:`, error);
+      }
+      if (!commitWindow.isDestroyed()) {
+        commitWindow.webContents.send("ai:gitCommitProposalResolved", { sessionId: targetSessionId, proposalId });
+      }
+      settle({ action: "cancelled", superseded: true }, "superseded");
+      return true;
+    });
 
     const settle = (result: CommitResult, source: string) => {
       if (settled) return;
       settled = true;
+      unregisterWaiting();
       detachCall?.();
       if (targetSessionId) clearLiveInteractivePrompt(targetSessionId);
 
@@ -978,7 +1015,9 @@ async function runGitCommitProposal(
               type: "text",
               text: (result.error
                 ? `Commit failed: ${result.error}`
-                : "User cancelled the commit proposal.") + outcomeNote,
+                : result.superseded
+                  ? "The user sent a new message instead of answering this commit proposal, so it was closed. Read their message before proposing a commit again."
+                  : "User cancelled the commit proposal.") + outcomeNote,
             },
           ],
           isError: result.error ? true : false,

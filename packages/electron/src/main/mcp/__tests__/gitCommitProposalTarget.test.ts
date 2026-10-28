@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   auto: true,
   ipcOn: vi.fn(),
   outcome: vi.fn(async (_opts: any): Promise<any> => ({ kind: 'not-committed' })),
+  cancel: vi.fn(async (_s: string, _p: string) => true),
 }));
 vi.mock('electron', () => ({ BrowserWindow: { fromId: () => ({ isDestroyed: () => false, webContents: { send: mocks.send } }) }, ipcMain: { on: mocks.ipcOn, removeListener: vi.fn() } }));
 vi.mock('../../utils/privateSettingsStore', () => ({ default: class { get() { return mocks.auto; } } }));
@@ -21,6 +22,7 @@ vi.mock('../../services/ai/CommitProposalExecution', () => ({
   runCommitProposalOnce: async (_s: string, _p: string, _i: string, run: () => Promise<unknown>) => run(),
   commitProposalIdentity: () => 'identity',
   commitProposalOutcome: mocks.outcome,
+  cancelCommitProposalOnce: mocks.cancel,
 }));
 vi.mock('../tools/promptResponsePoll', () => ({ findGitCommitProposalResponse: async () => null, findToolPermissionResponse: async () => null }));
 vi.mock('../../services/CommitTrackerLinker', () => ({ commitTrackerLinker: { linkBySession: async () => ({ closedItemIds: [] }) } }));
@@ -45,7 +47,7 @@ vi.mock('../../services/PermissionService', () => ({}));
 vi.mock('../../services/SessionCommitService', () => ({ SessionCommitService: { getInstance: () => ({ recordCommit: async () => {} }) } }));
 
 import { handleGitCommitProposal } from '../tools/interactiveToolHandlers';
-import { isCommitProposalInFlight } from '@nimbalyst/runtime/ai/server/commitProposalInFlight';
+import { closeWaitingCommitProposals, isCommitProposalInFlight } from '@nimbalyst/runtime/ai/server/commitProposalInFlight';
 
 const LOCK_TIMEOUT = "Git operation 'git:commit' timed out waiting for lock on /worktree";
 const text = (result: any) => result.content.map((c: any) => c.text).join('\n');
@@ -61,6 +63,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.auto = true;
   mocks.outcome.mockResolvedValue({ kind: 'not-committed' });
+  mocks.cancel.mockResolvedValue(true);
   mocks.target.mockResolvedValue({ workspacePath: '/worktree', repoPath: '/worktree', files: ['/worktree/shared.txt'] });
 });
 
@@ -142,6 +145,32 @@ it('says no commit was made when the manual widget is cancelled and nothing land
   const pending = handleGitCommitProposal({ filesToStage: ['shared.txt'], commitMessage: 'fix: x' }, 'session', '/parent', {});
   await answerWidget({ action: 'cancelled' });
   expect(text(await pending)).toMatch(/cancelled[\s\S]*No commit was made by this call\./);
+});
+
+// NIM-7642: the user's send-now goes through a proposal still waiting on them.
+it('closes a waiting proposal for good when the user sends a new message instead', async () => {
+  mocks.auto = false;
+  const pending = handleGitCommitProposal({ filesToStage: ['shared.txt'], commitMessage: 'fix: x' }, 'session', '/parent', {});
+  await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
+  expect(await closeWaitingCommitProposals('session')).toBe(1);
+  const result = await pending;
+  expect(mocks.cancel).toHaveBeenCalledWith('session', 'tool-1');
+  expect(text(result)).toMatch(/sent a new message[\s\S]*No commit was made by this call\./);
+  const rows = mocks.create.mock.calls.map(([row]) => JSON.parse(row.content));
+  expect(rows).toContainEqual(expect.objectContaining({ type: 'git_commit_proposal_response', proposalId: 'tool-1', action: 'cancelled' }));
+  expect(isCommitProposalInFlight('session')).toBe(false);
+  expect(await closeWaitingCommitProposals('session')).toBe(0);
+});
+
+it('leaves a proposal to the commit the user already confirmed', async () => {
+  mocks.auto = false;
+  mocks.cancel.mockResolvedValue(false);
+  const pending = handleGitCommitProposal({ filesToStage: ['shared.txt'], commitMessage: 'fix: x' }, 'session', '/parent', {});
+  await vi.waitFor(() => expect(mocks.ipcOn).toHaveBeenCalled());
+  expect(await closeWaitingCommitProposals('session')).toBe(0);
+  expect(isCommitProposalInFlight('session')).toBe(true);
+  await answerWidget({ action: 'committed', commitHash: 'abc1234' });
+  expect(text(await pending)).toContain('abc1234');
 });
 
 // Re-review: a throwing outcome lookup (ENOSPC) left the call pending and interrupts held forever.

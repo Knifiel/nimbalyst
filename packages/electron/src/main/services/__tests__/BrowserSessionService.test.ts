@@ -1,16 +1,23 @@
 // @vitest-environment node
 /**
- * Pure-function tests for BrowserSessionService helpers.
- *
- * The service itself depends on `WebContentsView` which requires a live
- * Electron runtime, so these tests focus on the standalone helpers that drive
- * its bounds clamping and URL validation. Coverage of the IPC layer is
- * intentionally left to integration / E2E tests.
+ * Tests for BrowserSessionService helpers, plus agent input routing against
+ * fake webContents injected into the session map (creating a real session needs
+ * a live Electron runtime). Coverage of the IPC layer is intentionally left to
+ * integration / E2E tests.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('../../utils/logger', () => ({
+  logger: { main: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() } },
+}));
+
 import {
+  BrowserSessionService,
   clampBounds,
+  clearEventsFor,
+  clickEvents,
   isAllowedBrowserUrl,
+  keyEventsForText,
   resolveBrowserPartitionName,
   scaleBoundsForZoom,
   selectIdleHeadlessSessions,
@@ -204,5 +211,151 @@ describe('resolveBrowserPartitionName', () => {
 
   it('preserves explicit persist: partitions', () => {
     expect(resolveBrowserPartitionName('persist:customer-a')).toBe('persist:customer-a');
+  });
+});
+
+describe('keyEventsForText', () => {
+  it('sends keyDown with text and keyUp per character', () => {
+    expect(keyEventsForText('ab')).toEqual([
+      { type: 'keyDown', key: 'a', text: 'a', unmodifiedText: 'a' },
+      { type: 'keyUp', key: 'a' },
+      { type: 'keyDown', key: 'b', text: 'b', unmodifiedText: 'b' },
+      { type: 'keyUp', key: 'b' },
+    ]);
+  });
+
+  it('turns \n and \r\n into a single Enter', () => {
+    const enter = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
+    const expected = [
+      { type: 'keyDown', key: 'x', text: 'x', unmodifiedText: 'x' },
+      { type: 'keyUp', key: 'x' },
+      { type: 'keyDown', ...enter, text: '\r', unmodifiedText: '\r' },
+      { type: 'keyUp', ...enter },
+    ];
+    expect(keyEventsForText('x\n')).toEqual(expected);
+    expect(keyEventsForText('x\r\n')).toEqual(expected);
+  });
+
+  it('keeps characters outside the BMP whole', () => {
+    expect(keyEventsForText('😀')[0]).toEqual({ type: 'keyDown', key: '😀', text: '😀', unmodifiedText: '😀' });
+  });
+
+  it('returns nothing for empty text', () => {
+    expect(keyEventsForText('')).toEqual([]);
+  });
+});
+
+describe('clearEventsFor', () => {
+  it('uses Cmd+A with editing commands on macOS', () => {
+    const events = clearEventsFor('darwin');
+    expect(events[0]).toMatchObject({ type: 'rawKeyDown', key: 'a', modifiers: 4, commands: ['selectAll'] });
+    expect(events[2]).toMatchObject({ type: 'rawKeyDown', key: 'Delete', commands: ['deleteForward'] });
+  });
+
+  it('uses Ctrl+A without commands elsewhere', () => {
+    const events = clearEventsFor('win32');
+    expect(events[0]).toMatchObject({ type: 'rawKeyDown', key: 'a', modifiers: 2 });
+    expect(events.some((e) => 'commands' in e)).toBe(false);
+  });
+});
+
+describe('clickEvents', () => {
+  it('moves, presses and releases the left button at the point', () => {
+    expect(clickEvents(10, 20)).toEqual([
+      { type: 'mouseMoved', x: 10, y: 20 },
+      { type: 'mousePressed', x: 10, y: 20, button: 'left', buttons: 1, clickCount: 1 },
+      { type: 'mouseReleased', x: 10, y: 20, button: 'left', buttons: 0, clickCount: 1 },
+    ]);
+  });
+});
+
+describe('BrowserSessionService agent input routing', () => {
+  function fakeWebContents(opts: { attachThrows?: boolean; attached?: boolean } = {}) {
+    let attached = opts.attached ?? false;
+    const dbg = {
+      isAttached: vi.fn(() => attached),
+      attach: vi.fn(() => {
+        if (opts.attachThrows) throw new Error('Another debugger is already attached');
+        attached = true;
+      }),
+      detach: vi.fn(() => {
+        attached = false;
+      }),
+      sendCommand: vi.fn(async () => ({})),
+    };
+    return {
+      debugger: dbg,
+      sendInputEvent: vi.fn(),
+      executeJavaScript: vi.fn(async () => true),
+      close: vi.fn(),
+    };
+  }
+
+  function serviceWith(entries: Record<string, ReturnType<typeof fakeWebContents>>) {
+    const service = BrowserSessionService.getInstance();
+    const sessions = (service as unknown as { sessions: Map<string, unknown> }).sessions;
+    sessions.clear();
+    for (const [sessionId, wc] of Object.entries(entries)) {
+      sessions.set(sessionId, {
+        sessionId,
+        partitionName: 'browser-default',
+        view: { webContents: wc },
+        hostWindow: null,
+        bounds: null,
+        requestedBounds: null,
+        state: {},
+        headless: false,
+        lastUsedAt: Date.now(),
+      });
+    }
+    return service;
+  }
+
+  it('types through the target session debugger with focus emulation, never another session', async () => {
+    const target = fakeWebContents();
+    const other = fakeWebContents();
+    const service = serviceWith({ a: target, b: other });
+
+    await service.type('a', { text: 'hi' });
+
+    const calls = target.debugger.sendCommand.mock.calls as unknown as [string, unknown][];
+    expect(calls[0]).toEqual(['Emulation.setFocusEmulationEnabled', { enabled: true }]);
+    expect(calls.slice(1)).toEqual(keyEventsForText('hi').map((e) => ['Input.dispatchKeyEvent', e]));
+    expect(target.sendInputEvent).not.toHaveBeenCalled();
+    expect(other.debugger.attach).not.toHaveBeenCalled();
+    expect(other.debugger.sendCommand).not.toHaveBeenCalled();
+    expect(other.sendInputEvent).not.toHaveBeenCalled();
+  });
+
+  it('reuses an already-attached debugger without attaching again', async () => {
+    const wc = fakeWebContents({ attached: true });
+    const service = serviceWith({ a: wc });
+
+    await service.click('a', { x: 3, y: 4 });
+
+    expect(wc.debugger.attach).not.toHaveBeenCalled();
+    expect(wc.debugger.sendCommand).toHaveBeenCalledWith('Input.dispatchMouseEvent', clickEvents(3, 4)[1]);
+  });
+
+  it('falls back to sendInputEvent when the debugger cannot attach', async () => {
+    const wc = fakeWebContents({ attachThrows: true });
+    const service = serviceWith({ a: wc });
+
+    await service.type('a', { text: 'ok' });
+
+    expect(wc.debugger.sendCommand).not.toHaveBeenCalled();
+    expect(wc.sendInputEvent).toHaveBeenCalledWith({ type: 'char', keyCode: 'o' });
+    expect(wc.sendInputEvent).toHaveBeenCalledWith({ type: 'char', keyCode: 'k' });
+  });
+
+  it('detaches the debugger when the session is destroyed', async () => {
+    const wc = fakeWebContents();
+    const service = serviceWith({ a: wc });
+
+    await service.type('a', { text: 'x' });
+    service.destroySession('a');
+
+    expect(wc.debugger.detach).toHaveBeenCalledTimes(1);
+    expect(wc.close).toHaveBeenCalledTimes(1);
   });
 });

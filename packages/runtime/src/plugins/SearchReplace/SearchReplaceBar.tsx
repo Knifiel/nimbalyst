@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import type { LexicalEditor } from 'lexical';
 import { $getRoot, $getNodeByKey, $isTextNode, $createRangeSelection, $setSelection } from 'lexical';
 import { SearchReplaceStateManager, type SearchNavigateDirection } from './SearchReplaceStateManager';
-import { resolveMatchRange } from './resolveMatchRange';
+import { HighlightManager, type SearchMatch } from './HighlightManager';
 // Only contains global highlight styles for dynamically applied classes
 import './SearchReplaceBar.css';
 
@@ -10,13 +10,6 @@ interface SearchReplaceBarProps {
   filePath: string;
   fileName: string;
   editor?: LexicalEditor;
-}
-
-interface SearchMatch {
-  key: string;
-  offset: number;
-  length: number;
-  text: string;
 }
 
 const SEARCH_HISTORY_KEY = 'nimbalyst-search-history';
@@ -58,116 +51,6 @@ function $findTextNodes(root: ReturnType<typeof $getRoot>, callback: (node: any)
     }
   };
   traverse(root);
-}
-
-// HighlightManager class for creating visual highlights over search matches
-class HighlightManager {
-  private editor: LexicalEditor;
-  private highlightElements: HTMLElement[] = [];
-  private wrapperElement: HTMLElement;
-  private observer: MutationObserver | null = null;
-  private rootElement: HTMLElement | null = null;
-  private parentElement: HTMLElement | null = null;
-
-  constructor(editor: LexicalEditor) {
-    this.editor = editor;
-    this.wrapperElement = document.createElement('div');
-    this.wrapperElement.className = 'search-highlights-wrapper';
-    this.wrapperElement.style.position = 'relative';
-    this.wrapperElement.style.pointerEvents = 'none';
-  }
-
-  updateHighlights(matches: SearchMatch[], currentIndex: number) {
-    const rootElement = this.editor.getRootElement();
-    if (!rootElement) return;
-
-    const parentElement = rootElement.parentElement;
-    if (!parentElement) return;
-
-    if (this.rootElement !== rootElement || this.parentElement !== parentElement) {
-      this.setupObserver(rootElement, parentElement);
-    }
-
-    this.clearHighlights();
-
-    if (!this.wrapperElement.isConnected) {
-      parentElement.insertBefore(this.wrapperElement, parentElement.firstChild);
-    }
-
-    const { left: parentLeft, top: parentTop } = parentElement.getBoundingClientRect();
-
-    matches.forEach((match, index) => {
-      this.editor.getEditorState().read(() => {
-        const node = $getNodeByKey(match.key);
-        if (!$isTextNode(node)) return;
-
-        // Validate offset is still valid for this node
-        const textContent = node.getTextContent();
-        if (match.offset >= textContent.length) return;
-
-        const domElement = this.editor.getElementByKey(match.key);
-        if (!domElement) return;
-
-        // Not every TextNode renders as a single text child — inline code renders as
-        // <code><span class="nim-text-code">…</span></code> — so walk descendant text nodes.
-        const range = resolveMatchRange(domElement, match.offset, match.length);
-        if (!range) return;
-
-        const rects = Array.from(range.getClientRects());
-        rects.forEach((rect) => {
-          const highlightElement = document.createElement('div');
-          highlightElement.className = index === currentIndex ? 'search-highlight-current' : 'search-highlight';
-          highlightElement.style.position = 'absolute';
-          highlightElement.style.left = `${rect.left - parentLeft}px`;
-          highlightElement.style.top = `${rect.top - parentTop}px`;
-          highlightElement.style.width = `${rect.width}px`;
-          highlightElement.style.height = `${rect.height}px`;
-          highlightElement.style.pointerEvents = 'none';
-
-          this.wrapperElement.appendChild(highlightElement);
-          this.highlightElements.push(highlightElement);
-        });
-      });
-    });
-  }
-
-  clearHighlights() {
-    this.highlightElements.forEach((element) => element.remove());
-    this.highlightElements = [];
-  }
-
-  destroy() {
-    this.clearHighlights();
-    this.wrapperElement.remove();
-    if (this.observer) {
-      this.observer.disconnect();
-    }
-  }
-
-  private setupObserver(rootElement: HTMLElement, parentElement: HTMLElement) {
-    if (this.observer) {
-      this.observer.disconnect();
-    }
-
-    this.rootElement = rootElement;
-    this.parentElement = parentElement;
-
-    this.observer = new MutationObserver(() => {
-      const currentRoot = this.editor.getRootElement();
-      const currentParent = currentRoot?.parentElement;
-
-      if (currentRoot !== this.rootElement || currentParent !== this.parentElement) {
-        this.clearHighlights();
-      }
-    });
-
-    this.observer.observe(parentElement, {
-      attributes: true,
-      characterData: true,
-      childList: true,
-      subtree: true,
-    });
-  }
 }
 
 export function SearchReplaceBar({ filePath, editor }: SearchReplaceBarProps) {

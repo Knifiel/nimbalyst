@@ -1,9 +1,15 @@
 // @vitest-environment node
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { stat } from 'fs/promises';
 import { getFolderContents, listFolderFilesRecursive } from '../FileTree';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+
+vi.mock('fs/promises', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('fs/promises')>();
+    return { ...actual, stat: vi.fn(actual.stat) };
+});
 
 describe('FileTree All Files Mode', () => {
     let tempDir: string;
@@ -82,6 +88,36 @@ describe('FileTree All Files Mode', () => {
 
         expect(seen.find((entry) => entry.truncated)?.name).toBe('d9');
         expect(seen.filter((entry) => entry.truncated)).toHaveLength(1);
+    });
+
+    it('applies the per-directory cap to the sorted list, not to raw readdir order', async () => {
+        const names = Array.from({ length: 250 }, (_, i) => `a-${String(i + 1).padStart(3, '0')}.md`);
+        // Create in reverse so the first entries returned by readdir are the ones that sort last.
+        for (const name of [...names].reverse()) fs.writeFileSync(path.join(tempDir, name), '');
+        fs.writeFileSync(path.join(tempDir, 'zz-last.md'), '');
+        fs.mkdirSync(path.join(tempDir, 'zz-dir'));
+
+        const result = await getFolderContents(tempDir);
+
+        expect(result).toHaveLength(200);
+        // Directories sort first, so the late-named folder survives the cap.
+        expect(result[0].name).toBe('zz-dir');
+        expect(result.slice(1).map(item => item.name)).toEqual(names.slice(0, 199));
+    });
+
+    it('sorts symlinks by target type but never stats a link that cannot make the cap', async () => {
+        for (let i = 1; i <= 201; i++) fs.mkdirSync(path.join(tempDir, `d-${String(i).padStart(3, '0')}`));
+        fs.symlinkSync(path.join(tempDir, 'd-001'), path.join(tempDir, 'a-link'));
+        fs.symlinkSync(path.join(tempDir, 'd-001'), path.join(tempDir, 'zz-link'));
+        vi.mocked(stat).mockClear();
+
+        const result = await getFolderContents(tempDir);
+
+        expect(result).toHaveLength(200);
+        expect(result[0]).toMatchObject({ name: 'a-link', type: 'directory' });
+        expect(result.map(item => item.name)).not.toContain('zz-link');
+        // Only a-link could land inside the cap; zz-link sorts after d-199 even as a directory.
+        expect(vi.mocked(stat).mock.calls.map(([p]) => path.basename(String(p)))).toEqual(['a-link']);
     });
 
     it('should return empty folders', async () => {

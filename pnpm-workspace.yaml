@@ -13,6 +13,7 @@ packages:
   - packages/collab-bundle
   - packages/collab-adapters
   - packages/markdown-ydoc
+  - packages/tracker-builtins
   - packages/local-wiki
   - packages/wiki-web
   - packages/web-editors

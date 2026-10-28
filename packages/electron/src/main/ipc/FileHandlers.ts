@@ -3,7 +3,7 @@ import { safeHandle } from '../utils/ipcRegistry';
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { basename, join, dirname, extname } from 'path';
 import { windowStates, savingWindows, recentlyDeletedFiles, findWindowByFilePath, createWindow, getWindowId, windows, documentServices } from '../window/WindowManager';
-import { loadFileIntoWindow, saveFile } from '../file/FileOperations';
+import { loadFileIntoWindow, saveFile, getPendingFileOpens, acknowledgeFileOpen } from '../file/FileOperations';
 import { shouldBlockEmptyOverwrite, wouldDiscardUnseenContent, writeRecoverySnapshot } from '../file/safeFileWrite';
 import { registerOpenFileHandlers } from './OpenFileHandlers';
 import { verifyFileSave } from '../file/verifyFileSave';
@@ -51,6 +51,8 @@ function getFileType(filePath: string): string {
 
 export function registerFileHandlers() {
     registerOpenFileHandlers();
+    safeHandle('file:pending-opens', (event, workspacePath: string) => getPendingFileOpens(event.sender, workspacePath));
+    safeHandle('file:acknowledge-open', (event, workspacePath: string, requestId: number) => acknowledgeFileOpen(event.sender, workspacePath, requestId));
     const analytics = AnalyticsService.getInstance();
     const saveFailureTelemetry = new FileSaveFailureTelemetryDeduper();
 

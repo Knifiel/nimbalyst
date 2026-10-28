@@ -35,6 +35,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 <!-- Removed features go here -->
 
+## [0.82.4] - 2026-10-27
+
+
+### Added
+<!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+- In a folder with more than 200 entries, the file tree now shows the first 200 in sorted order (folders first), instead of whichever 200 the disk listed first
+- Opening a file from Finder or the terminal that starts a new project window now shows the file, instead of an empty window
+- Opening the same file again from outside the app (Finder, a terminal link, `open`) now shows it, instead of doing nothing until a different file was opened
+- Typing a short query in the find bar on a long markdown page no longer stalls the editor while match highlights are drawn; highlights are now drawn for up to 1000 matches around the current one.
+- A transcript image opened in the image viewer no longer sometimes gets stuck at full size with Fit and zoom doing nothing
+- Sending a message now while a commit proposal waits for approval closes the proposal and sends the message, instead of holding it until the proposal is answered
+- A Claude Code turn that was running when the computer went to sleep is no longer aborted as stalled the moment the computer wakes
+- Answering or cancelling an older Claude Code question card now closes that card instead of reaching the question the agent is waiting on, and no longer interrupts the running turn (the answer reaches the agent when that turn ends); a form whose tool call was denied no longer stays open.
+- Codex sessions now work when Codex is configured to use Amazon Bedrock (`model_provider = "amazon-bedrock"` in `~/.codex/config.toml`), instead of failing with "model does not exist" (#1371)
+- Markdown files inside a Claude plugin's `node_modules` folder are no longer listed as plugin commands, so exporting skills to Codex no longer writes a folder for each dependency README into the project (#1786)
+- Extension backend tools that could not start because the project was not yet trusted now start once you trust it, instead of staying unavailable until the project is reopened (#1767)
+- Agent browser tools can now type and click in headless browser sessions and in browser tabs that are not in the foreground, instead of the input being dropped (#1726)
+- In-app agents can now read and edit the body of a team-shared typed page; the `collab://tracker-content/<id>` address the tools suggested was rejected as invalid, and reads could return an older copy of the body (#1879)
+- Updating or creating plans, bugs and tasks on team-shared trackers through agent tools no longer fails with `unknown_type` (needs the updated sync server) (#1880)
+
+### Removed
+<!-- Removed features go here -->
+
 ## [0.82.3] - 2026-10-25
 
 

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import {
   BUILTIN_TRACKER_YAML,
@@ -154,5 +155,15 @@ describe('bundled builtin tracker YAML', () => {
       expect(globalRegistry.get(type), `${type} registered`).toBeDefined();
       expect(globalRegistry.isBuiltin(type), `${type} isBuiltin`).toBe(true);
     }
+  });
+
+  // The collab worker resolves a team's builtin overrides against this
+  // generated copy (#1880). A YAML edit that did not regenerate it would leave
+  // the server resolving deltas against different builtins than desktops do.
+  it('matches the catalog the collab worker bundles (run `pnpm --filter @nimbalyst/tracker-builtins build`)', () => {
+    const catalog = JSON.parse(readFileSync(
+      new URL('../../../../../../tracker-builtins/src/builtinCatalog.json', import.meta.url), 'utf8',
+    ));
+    expect(catalog).toEqual(JSON.parse(JSON.stringify(parseBuiltinTrackers())));
   });
 });
