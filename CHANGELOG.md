@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - After you start a new session to implement a plan, the planning session's plan card says "Deferred to new session" instead of "Denied"
 - Very long sessions open again instead of showing "Session not found" once their history grew too large to load in one read
 - A session that fails to load now says why and offers Try again, instead of showing "Session not found"
+- A commit proposal that needs your approval, such as one into another worktree, now shows Confirm and Cancel even with auto-approve on, instead of a card that never finishes.
 
 ### Removed
 <!-- Removed features go here -->
