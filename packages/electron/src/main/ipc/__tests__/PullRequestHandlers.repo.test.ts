@@ -57,6 +57,7 @@ vi.mock('../../services/GithubServices', () => ({
   stopGithubPollScheduler: vi.fn(),
 }));
 vi.mock('../../services/PrTrackerLifecycle', () => ({ applyPrMergeToTrackers: vi.fn() }));
+vi.mock('../../services/GithubPrOverlayService', () => ({ getGithubPrOverlayService: vi.fn() }));
 // The placement rule has its own real-git tests; here only its use is checked
 vi.mock('../../services/worktreeLocation', () => ({
   resolveWorktreesDir: (repo: string, roots: string[]) => (repo !== roots[0] ? `${roots[0]}_worktrees` : `${repo}_worktrees`),
