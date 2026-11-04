@@ -34,24 +34,6 @@ const SUBAGENT_TOOLS = new Set(['Task', 'Agent']);
 // model output, and must not render as an assistant bubble.
 const WHOLE_MESSAGE_ELISION_MARKER = /^\[Full .+ message elided from mobile sync:.*\]$/;
 
-/**
- * Fields of a host row's input that differ from the existing call's arguments.
- * Null when the host row only repeats what the call already holds.
- */
-function hostInputChanges(
-  input: unknown,
-  current: Record<string, unknown> | undefined,
-): Record<string, unknown> | null {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
-  const changes: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(input)) {
-    if (value !== undefined && JSON.stringify(value) !== JSON.stringify(current?.[key])) {
-      changes[key] = value;
-    }
-  }
-  return Object.keys(changes).length > 0 ? changes : null;
-}
-
 export class ClaudeCodeRawParser implements IRawMessageParser {
   private readonly toolInputsById = new Map<string, { toolName: string; input: Record<string, unknown> }>();
   /**
@@ -669,20 +651,16 @@ export class ClaudeCodeRawParser implements IRawMessageParser {
     context: ParseContext,
   ): Promise<CanonicalEventDescriptor[]> {
     // Deduplicate: the assistant message may already contain a tool_use block
-    // with the same ID that was processed before this nimbalyst_tool_use message,
-    // in this batch or a prior incremental one. This row's input is what the
-    // host resolved (#1756: a commit proposal's repo, worktree and approval
-    // mode), so whatever it adds goes onto the existing call's arguments.
-    if (parsed.id) {
+    // with the same ID that was processed before this nimbalyst_tool_use message.
+    // Check in-memory map first, then fall back to DB lookup (covers the case
+    // where the assistant tool_use was processed in a prior incremental batch).
+    // Exception (#1890): the commit proposal's host row carries arguments the
+    // SDK row lacks (targetWorktree, repoPath); processDescriptor merges them
+    // into the existing event instead of creating a second one.
+    if (parsed.id && parsed.name !== 'developer_git_commit_proposal') {
+      if (context.hasToolCall(parsed.id)) return [];
       const existing = await context.findByProviderToolCallId(parsed.id);
-      if (existing || context.hasToolCall(parsed.id)) {
-        const current = (existing?.payload as { arguments?: Record<string, unknown> } | undefined)?.arguments
-          ?? this.toolInputsById.get(parsed.id)?.input;
-        const changes = hostInputChanges(parsed.input, current);
-        return changes
-          ? [{ type: 'tool_call_arguments_updated', providerToolCallId: parsed.id, arguments: changes }]
-          : [];
-      }
+      if (existing) return [];
     }
 
     const toolName = parsed.name ?? 'unknown';

@@ -17,8 +17,8 @@ import { parseBashForFileOps } from './BashCommandAnalyzer';
 import { generateToolPattern, buildToolDescription } from './toolPermissionHelpers';
 import { getPatternDisplayName } from '../types';
 import type { TrustChecker } from '../providers/ProviderPermissionMixin';
-import { exitPlanModeDenialReason, type ExitPlanModeResponse } from '../../exitPlanModeDeferral';
 import { agentToolActivity } from '../agentToolActivity';
+import { exitPlanModeDenialReason, type ExitPlanModeResponse } from '../../exitPlanModeDeferral';
 
 /** Identifies one exact tool call so the model's retry can be matched to the approval. */
 function blockedCallKey(toolName: string, toolInput: unknown): string {

@@ -27,14 +27,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Archiving or deleting a worktree no longer deletes a folder or branch its repository does not own (another repository's worktree, or a moved, copied, locked or nested checkout), and no longer prunes the repository's other worktrees.
 - Edits inside a repository cloned in the project and ignored by its `.gitignore` now reach the file tree and open editors, following that clone's own ignore rules.
 - Git repositories cloned inside a project and ignored by its `.gitignore` now get status badges and appear in the Git panel's repo picker and the title-bar branch menu.
-- The pull request panel no longer reports the GitHub CLI as signed out when `gh auth status` is slow to answer.
-- After you start a new session to implement a plan, the planning session's plan card says "Deferred to new session" instead of "Denied"
-- Very long sessions open again instead of showing "Session not found" once their history grew too large to load in one read
-- A session that fails to load now says why and offers Try again, instead of showing "Session not found"
-- A commit proposal that needs your approval, such as one into another worktree, now shows Confirm and Cancel even with auto-approve on, instead of a card that never finishes.
 - Jump to question now goes to the newest open question instead of an older abandoned one, and returning to a session no longer scrolls back to a question you already saw.
 - Long sessions no longer freeze the chat while the agent is working: the transcript stops reloading its whole history on top of itself
 - Long sessions no longer stall the app after every tool call, and their file edits are linked to the tool calls that made them again
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.82.7] - 2026-11-04
+
+
+### Added
+<!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+- New tracker items get local numbers (like `NIM.75`) again; items created since early October without one are numbered on the next launch. A tracker type can opt out with `localNumbers: false`
+- The pull request panel no longer reports the GitHub CLI as signed out when `gh auth status` is slow to answer.
+- After you start a new session to implement a plan, the planning session's plan card says "Deferred to new session" instead of "Denied"
+- A session that fails to load now says why and offers Try again, instead of showing "Session not found"
+- Plan-approval and question dialogs no longer fail with "PreToolUse hook did not respond before its timeout" when you step away
+- Very long sessions open again instead of showing "Session not found" once their history grew too large to load in one read
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.82.6] - 2026-11-03
+
+
+### Added
+<!-- New features go here -->
+- Colored text and highlight colors in Markdown documents, from a seven-color picker in the selection toolbar, saved as HTML spans that Obsidian also displays
+- Claude in Chrome for Claude Code sessions: an Agent Features setting (off by default) that lets the agent control your Chrome browser through the Claude in Chrome extension
+- Weekly usage history in the Claude and Codex usage popovers: a chart of each week's usage against an even pace, and past weeks' final percentages, recorded while Nimbalyst is running
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+- Extension tabs on `virtual://` paths no longer show a "File updates delayed" warning or retry file registration every minute
+- Browser agent tools no longer fail with "File has no extension" when given a folder path alongside a browser session
+- Clicking a meta agent's child session in the session list or on the Sessions board opens that child instead of the meta agent
+- Windows: git commands Nimbalyst runs in the background, including Project Graph indexing, no longer flash console windows
+- Windows: commit proposals whose file paths use forward slashes (`C:/...`) now commit to the right repository instead of failing with "None of the selected files are in a git repository"
+- Windows: the Claude Code CLI provider starts in "Ask every time" mode instead of exiting with "Settings file not found"
+- Files an agent changes through shell commands show up in its session's edited files again after a Codex session has run in the same project, instead of going untracked until restart
+- With auto-approve commits on, a commit proposed into another worktree shows the Confirm/Cancel card instead of spinning on "Committing changes..."
+- Checking for updates in the first minute after a release is published no longer fails with "Cannot download ... status 404"; releases now go public only after every download is uploaded
+- Deleted Codex and Claude Code sessions stay deleted instead of being re-imported, and imported Codex sessions are no longer titled with their `<environment_context>` text
+- The session list shows only the current project's sessions, and "Session not found" names the project a session belongs to
 
 ### Removed
 <!-- Removed features go here -->

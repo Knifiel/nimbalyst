@@ -24,17 +24,20 @@ export interface ExitPlanModeResponse {
 const DEFERRED_PREFIX = 'The user deferred implementation to a new session';
 const WORKTREE_NAME_PATTERN = new RegExp(`${DEFERRED_PREFIX} in worktree "(.*)"\\.`);
 const NEW_WORKTREE_PATTERN = new RegExp(`${DEFERRED_PREFIX} in a new worktree\\.`);
+// Older desktop and mobile transcript bundles only recognise "denied",
+// "continue planning" or "cancelled"; any other text hides the plan card.
+const LEGACY_DENIAL_LEAD = 'Planning cancelled: ';
 
 /** The reason the SDK records when the user did not approve in place. */
 export function exitPlanModeDenialReason(response: ExitPlanModeResponse): string {
   const deferredTo = response.deferredTo;
   if (deferredTo?.kind === 'worktree') {
     return deferredTo.worktreeName
-      ? `${DEFERRED_PREFIX} in worktree "${deferredTo.worktreeName}".`
-      : `${DEFERRED_PREFIX} in a new worktree.`;
+      ? `${LEGACY_DENIAL_LEAD}${DEFERRED_PREFIX} in worktree "${deferredTo.worktreeName}".`
+      : `${LEGACY_DENIAL_LEAD}${DEFERRED_PREFIX} in a new worktree.`;
   }
   if (deferredTo?.kind === 'session') {
-    return `${DEFERRED_PREFIX}.`;
+    return `${LEGACY_DENIAL_LEAD}${DEFERRED_PREFIX}.`;
   }
   const feedbackText = response.feedback
     ? `\n\nUser feedback: "${response.feedback}"`

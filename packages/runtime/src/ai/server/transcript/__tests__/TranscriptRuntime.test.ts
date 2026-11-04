@@ -13,9 +13,7 @@
 import { describe, it, expect } from 'vitest';
 import { TranscriptRuntime } from '../TranscriptRuntime';
 import { InMemoryTranscriptEventStore } from '../InMemoryTranscriptEventStore';
-import { projectRawMessagesToViewMessages } from '../projectRawMessages';
 import { RAW_MESSAGE_PAGE_SIZE, type IRawMessageStore, type RawMessage } from '../TranscriptTransformer';
-import type { TranscriptEvent } from '../types';
 
 function makeRawStore(messages: RawMessage[]): IRawMessageStore {
   // Hold the live array so tests that push after construction see new rows.
@@ -82,47 +80,37 @@ describe('TranscriptRuntime', () => {
     }
   });
 
-  describe('Claude Code commit proposal host input', () => {
-    // The SDK's tool_use row holds the model's raw input. The handler's own row
-    // holds what the server resolved, including whether it auto-approved. The
-    // widget reads only the tool call's arguments (#1756).
+  // #1890: the host's row carries the resolved targetWorktree the widget needs
+  // to show the manual-approval card. It must reach the event whichever row
+  // the parser sees first, in one batch or across batches.
+  describe('Claude commit proposal host arguments', () => {
     const id = 'toolu_commit';
-    const raw = { workingDirectory: '../sibling', filesToStage: ['a.ts'], commitMessage: 'fix: a', reasoning: 'why' };
-    const resolved = { ...raw, filesToStage: ['/repo-sibling/a.ts'], repoPath: '/repo-sibling',
-      targetWorktree: { path: '/repo-sibling', branch: 'feature' }, autoApproved: false };
-    const sdkStart = { type: 'assistant', message: { id: 'msg_1', role: 'assistant', content: [
-      { type: 'tool_use', id, name: 'mcp__nimbalyst__developer_git_commit_proposal', input: raw }] } };
-    const hostStart = { type: 'nimbalyst_tool_use', id, name: 'developer_git_commit_proposal', input: resolved };
-    const proposal = { type: 'git_commit_proposal', autoApproved: false, proposalId: id, toolUseId: id, status: 'pending' };
-
-    for (const sdkFirst of [true, false]) {
-      it(`keeps one card carrying the resolved input live and on reload (sdkFirst=${sdkFirst})`, async () => {
+    const args = { commitMessage: 'commit', filesToStage: ['file.ts'] };
+    const enriched = { ...args, filesToStage: ['/wt/file.ts'], repoPath: '/wt',
+      targetWorktree: { path: '/wt', branch: 'feature' }, autoApproved: false };
+    const sdkStart = { type: 'assistant', message: { id: 'msg_1', model: 'claude-opus-4-6', content: [
+      { type: 'tool_use', id, name: 'mcp__nimbalyst-mcp__developer_git_commit_proposal', input: args },
+    ] } };
+    const hostStart = { type: 'nimbalyst_tool_use', id, name: 'developer_git_commit_proposal', input: enriched };
+    const cases: Array<[string, unknown[][]]> = [
+      ['SDK first, same batch', [[sdkStart, hostStart]]],
+      ['SDK first, earlier batch', [[sdkStart], [hostStart]]],
+      ['host first', [[hostStart], [sdkStart]]],
+    ];
+    for (const [name, batches] of cases) {
+      it(`exposes the host arguments on one card (${name})`, async () => {
         const rows: RawMessage[] = [];
         const runtime = new TranscriptRuntime(makeRawStore(rows));
-        const notified: TranscriptEvent[] = [];
-        runtime.setOnEventWritten((event) => notified.push(event));
-        // One row per batch, so the second start is matched through the store.
-        const append = async (source: string, content: unknown) => {
-          rows.push({ id: rows.length + 1, sessionId: 'cc-commit', source, direction: 'output',
-            content: JSON.stringify(content), createdAt: new Date(1792862293000 + rows.length) });
-          await runtime.processNewMessages('cc-commit', 'claude-code');
-        };
-        for (const start of sdkFirst ? [sdkStart, hostStart] : [hostStart, sdkStart]) await append('claude-code', start);
-        await append('mcp', proposal);
-
-        const live = (await runtime.getViewMessages('cc-commit', 'claude-code')).filter(m => m.type === 'tool_call');
-        expect(live).toHaveLength(1);
-        expect(live[0].toolCall?.arguments).toEqual(resolved);
-        // The renderer refetches on notification; the last one for this call must carry the input.
-        expect(notified.filter(e => e.providerToolCallId === id).at(-1)?.payload.arguments).toEqual(resolved);
-
-        // A reload projects every row in one batch.
-        await runtime.forceReparseSession('cc-commit', 'claude-code');
-        const reloaded = (await runtime.getViewMessages('cc-commit', 'claude-code')).filter(m => m.type === 'tool_call');
-        expect(reloaded).toHaveLength(1);
-        expect(reloaded[0].toolCall?.arguments).toEqual(resolved);
-        const mobile = (await projectRawMessagesToViewMessages(rows, 'claude-code')).filter(m => m.type === 'tool_call');
-        expect(mobile.map(m => m.toolCall?.arguments)).toEqual([resolved]);
+        for (const batch of batches) {
+          for (const content of batch) {
+            rows.push({ id: rows.length + 1, sessionId: 'c', source: 'claude-code', direction: 'output',
+              content: JSON.stringify(content), createdAt: new Date(1792862293000 + rows.length) });
+          }
+          await runtime.processNewMessages('c', 'claude-code');
+        }
+        const calls = (await runtime.getViewMessages('c', 'claude-code')).filter(m => m.type === 'tool_call');
+        expect(calls).toHaveLength(1);
+        expect(calls[0].toolCall?.arguments).toEqual(enriched);
       });
     }
   });
@@ -344,6 +332,40 @@ describe('TranscriptRuntime', () => {
       expect(rest.map((e) => e.searchableText)).toEqual(prompts(2 + RAW_MESSAGE_PAGE_SIZE, 5));
       const all = await runtime.getCanonicalEvents('s1', 'claude-code');
       expect(all.map((e) => e.searchableText)).toEqual(prompts(1, 1 + added));
+    });
+
+    // A tool call whose start is on one page and whose result is on the next
+    // must still end up as one completed card, on a rebuild and when the rows
+    // arrive as new messages.
+    it('completes tool calls whose result is on the next page', async () => {
+      const messages: RawMessage[] = [];
+      const push = (method: string, item: Record<string, unknown>) => messages.push({
+        id: messages.length + 1, sessionId: 's1', source: 'openai-codex', direction: 'output',
+        content: JSON.stringify({ method, params: { item, threadId: 't', turnId: 'u' } }),
+        createdAt: new Date('2026-01-01'), metadata: { transport: 'app-server' },
+      });
+      const calls = Math.ceil(RAW_MESSAGE_PAGE_SIZE * 0.6);
+      const item = (i: number) => ({ type: 'mcpToolCall', id: `exec-${i}`, server: 'nimbalyst', tool: 'x', arguments: {} });
+      // Every start first, then every result, so later results land on page 2.
+      for (let i = 0; i < calls; i++) push('item/started', { ...item(i), status: 'inProgress', result: null });
+      for (let i = 0; i < calls; i++) {
+        push('item/completed', { ...item(i), status: 'completed', result: { content: [{ type: 'text', text: `ok ${i}` }] } });
+      }
+
+      const { store, reads } = guardedStore(messages);
+      const rebuilt = await new TranscriptRuntime(store).getCanonicalEvents('s1', 'openai-codex');
+      expect(reads.length).toBeGreaterThan(1);
+      expect(rebuilt).toHaveLength(calls);
+      expect(rebuilt.every((e) => e.payload.status === 'completed')).toBe(true);
+
+      const live: RawMessage[] = [];
+      const runtime = new TranscriptRuntime(guardedStore(live).store);
+      await runtime.getCanonicalEvents('s1', 'openai-codex');
+      live.push(...messages);
+      await runtime.processNewMessages('s1', 'openai-codex');
+      const streamed = await runtime.getCanonicalEvents('s1', 'openai-codex');
+      expect(streamed).toHaveLength(calls);
+      expect(streamed.every((e) => e.payload.status === 'completed')).toBe(true);
     });
   });
 });

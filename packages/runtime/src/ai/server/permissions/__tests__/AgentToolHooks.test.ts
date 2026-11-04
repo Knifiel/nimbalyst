@@ -3,6 +3,7 @@ import { AgentToolHooks } from '../AgentToolHooks';
 import type { AgentToolHooksOptions } from '../AgentToolHooks';
 import { parseExitPlanModeDeferral, type ExitPlanModeResponse } from '../../../exitPlanModeDeferral';
 import { agentToolActivity } from '../../agentToolActivity';
+import { parseExitPlanModeDeferral, type ExitPlanModeResponse } from '../../../exitPlanModeDeferral';
 
 // Mock fs module
 vi.mock('fs', () => ({
@@ -530,7 +531,11 @@ describe('AgentToolHooks', () => {
       });
     });
 
-    it('records a plan handed to a new worktree so the plan card can show it', async () => {
+    it.each([
+      ['new session', { kind: 'session' as const }],
+      ['new worktree', { kind: 'worktree' as const, worktreeName: 'swift-falcon' }],
+      ['worktree still being named', { kind: 'worktree' as const, worktreeName: null }],
+    ])('records a plan handed to a %s so the plan card can show it', async (_label, deferredTo) => {
       const pending = new Map<string, { resolve: (value: ExitPlanModeResponse) => void; reject: (error: Error) => void }>();
       const options = createMockOptions({
         getCurrentMode: () => 'planning',
@@ -544,12 +549,14 @@ describe('AgentToolHooks', () => {
         { signal: new AbortController().signal }
       );
       await Promise.resolve();
-      const deferredTo = { kind: 'worktree' as const, worktreeName: 'swift-falcon' };
       pending.get('tool-use-exit-3')!.resolve({ approved: false, deferredTo });
 
       const result = await resultPromise;
       expect(result.hookSpecificOutput.permissionDecision).toBe('deny');
       expect(parseExitPlanModeDeferral(result.hookSpecificOutput.permissionDecisionReason)).toEqual(deferredTo);
+      // Older transcript bundles (shipped mobile apps) hide the plan card unless
+      // the result reads as a denial to their keyword match.
+      expect(result.hookSpecificOutput.permissionDecisionReason.toLowerCase()).toContain('cancelled');
     });
   });
 });

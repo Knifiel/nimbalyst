@@ -45,6 +45,7 @@ Maintain this when notable capabilities are added, significantly expanded, or re
 - Mentions -- `@` offers team members (written as `[@Name](mailto:...)`) and dates (written as `@2026-10-15`, shown relative) alongside page links
 - Link previews -- a link alone on its line can show as a bookmark card (metadata fetched by the app) or, for allowlisted video and design-file hosts, the site's own player; it stays a normal link in plain markdown. Players are desktop only for now
 - Code excerpts -- an `excerpt` fence quotes a line range of a committed file (read at HEAD; dotfiles refused), pinned to a commit with the snapshot stored in the page, and flags when the code has changed, moved or gone, with "Update to current" and open-at-line
+- Colored text -- seven named text and background colors from the selection toolbar, saved as `<span style="color: ...">` so Obsidian shows the color; Nimbalyst shows palette colors in theme-adjusted shades and keeps any other color as written. Shown in the editor, the AI transcript, the local wiki browser view and its static export; the team web console after its next deploy. Not yet on iOS or Android
 - Tabs -- a tabs block with named panels of ordinary markdown (each panel is a collapsible section on GitHub)
 - Action buttons -- a "Start session" button runs a stored prompt (optional model and effort) as a new agent session with the page as context, after showing the full prompt for confirmation; a "New item" button creates a typed page from an optional template and places it under the current page. Desktop only
 
@@ -138,6 +139,7 @@ Twelve built-in provider lanes, plus any agent an extension contributes. Every l
 - Click-to-copy code blocks
 - Agent file-placement preference -- open file tabs above the transcript or in the right pane
 - Optional MCP status chip showing the session's configured, connected, and missing servers (off by default in Agent Features settings)
+- Claude in Chrome for Claude Code sessions (off by default, toggle under Agent Features): starts the agent with the Claude in Chrome extension's browser tools so it can drive the user's own Chrome; tool calls go through the normal permission prompt; not enabled for headless explicit-only runs
 - File `@` mention in input
 - Image attachment support
 - A named file or page context indicator above the chat input, with a separate short preview of selected text, consistent across Files, Agent and Wiki modes (shared, Local and Personal pages). Selection chips show selected text, mockup annotations and extension-provided items from node-like editors such as Excalidraw; each selection chip has an × to drop it from the prompt while keeping the document context, and node-like editors can report multiple selections at once
@@ -387,7 +389,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - Quick Track (Cmd+Shift+I) creates an item of any type from anywhere, with similar-item suggestions before creating a duplicate
 - Ready view surfaces unblocked work, ordered by how much other work it unblocks; items record what they are waiting on
 - Open / All / Closed filter, hiding closed work by default; Owner and Due Date available across the All view
-- Personal and team trackers, with unpublished team items remaining private; local item numbers (`NIM.75`) are given only to items of types that set `localNumbers: true`
+- Personal and team trackers, with unpublished team items remaining private; local item numbers (`NIM.75`) are given to items of every type except types that set `localNumbers: false`
 - Table editing with multi-cell operations and undo/redo
 - Tracker-item context menus open linked AI sessions or launch a new session or worktree; draft plans with linked commits show a status-mismatch chip
 - Unread indicators — a dot on tracker rows/cards (list, kanban, tag board) when an item is new or was changed by someone else since you last viewed it; clears when you open it; your own edits and views sync across your devices (personal channel), and AI-agent edits count as unread
@@ -581,6 +583,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - PostHog integration (opt-in, anonymous)
 - AI usage report with historical graph and activity heatmap
 - Claude model-specific weekly usage percentages and reset times, including Fable
+- Weekly usage history in the Claude and Codex usage popovers: a chart of utilization across a selected week against an even-pace line, and each past week's final percentage (weekly and per-model limits, recorded locally while the app runs, kept indefinitely; weeks without a reading near their reset show as a lower bound)
 - Per-project usage breakdown
 - Per-tool usage tracking (local counters for built-in and MCP/extension tools) surfaced as a Tools section in the AI usage report (top tools, built-in vs MCP split, over-time, per-provider) and as a targeting signal for contextual tips; backfill from past claude-code and codex sessions
 - Developer Dashboard Renders tab for inspecting component re-render counts and causes

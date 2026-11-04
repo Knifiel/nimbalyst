@@ -277,6 +277,12 @@ export async function buildSdkOptions(
     ...(wantsPromptSuggestion(ClaudeCodeDeps.promptSuggestionsEnabledLoader?.() === true, documentContext)
       ? { promptSuggestions: true }
       : {}),
+    // Claude in Chrome: the CLI only registers its browser MCP server when started
+    // with --chrome; a project settings file cannot turn it on. Headless
+    // explicit-only runs never get the user's real browser.
+    ...(!explicitOnly && ClaudeCodeDeps.claudeInChromeEnabledLoader?.() === true
+      ? { extraArgs: { chrome: null } }
+      : {}),
     // Headless provisioned servers must not be merged with repository or user discovery.
     ...(explicitOnly && !mcpLockdown ? { strictMcpConfig: true } : {}),
     // NIM-1988: this is the provider-owned, first-build snapshot, not a live
@@ -330,7 +336,10 @@ export async function buildSdkOptions(
     },
     canUseTool: createCanUseToolHandler(sessionId, workspacePath, permissionsPath),
     hooks: {
-      'PreToolUse': [{ hooks: [toolHooksService.createPreToolUseHook()] }],
+      // The plan/question dialogs block inside this hook until the user
+      // answers. Without an explicit timeout the CLI kills it after 600s and
+      // the dialog vanishes while the user is away (seconds, not ms).
+      'PreToolUse': [{ hooks: [toolHooksService.createPreToolUseHook()], timeout: 86400 }],
       'PostToolUse': [{ hooks: [toolHooksService.createPostToolUseHook()] }],
       // PermissionDenied fires when the SDK denies a tool call without
       // escalating through canUseTool (auto-mode classifier confident deny,

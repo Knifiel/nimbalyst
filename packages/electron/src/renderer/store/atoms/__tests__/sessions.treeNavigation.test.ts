@@ -4,6 +4,7 @@ import { store } from '@nimbalyst/runtime/store';
 import { activeWorkspacePathAtom } from '../openProjects';
 import {
   createChildSessionAtom,
+  loadSessionChildrenAtom,
   reparentSessionAtom,
   activeSessionIdAtom,
   sessionRegistryAtom,
@@ -17,7 +18,7 @@ import {
   type SessionMeta,
 } from '../sessions';
 import { initWorkstreamState, workstreamStateAtom } from '../workstreamState';
-import { selectSessionActionAtom } from '../../actions/sessionHistoryActions';
+import { selectChildSessionActionAtom, selectSessionActionAtom } from '../../actions/sessionHistoryActions';
 const row = (
   id: string,
   parentSessionId: string | null = null,
@@ -60,6 +61,14 @@ beforeEach(() => {
   } as any;
 });
 describe('tree navigation atoms', () => {
+  it('lists only sessions of the current workspace, the same rule the send path enforces (GitHub #1887)', async () => {
+    store.set(sessionRegistryAtom, new Map([...store.get(sessionRegistryAtom), ['foreign', row('foreign', null, { workspaceId: '/other' })]]));
+    expect(store.get(sessionListRootAtom).map((r) => r.id)).not.toContain('foreign');
+    // A child fetch for a project the window has since left must not land in this list.
+    window.electronAPI.invoke = vi.fn(async () => ({ success: true, children: [row('late-child', 'other-root', { workspaceId: '/other' })] }));
+    await store.set(loadSessionChildrenAtom, { parentSessionId: 'other-root', workspacePath: '/other' });
+    expect(store.get(sessionRegistryAtom).has('late-child')).toBe(false);
+  });
   it.each(['target', null])('keeps an active grandchild selected at its new tree root after moving its parent to %s', async (newParentId) => {
     rows.push(row('target', null, {worktreeId: 'tree'}));
     store.set(sessionRegistryAtom, new Map(rows.map(r => [r.id, r])));
@@ -188,6 +197,46 @@ describe('tree navigation atoms', () => {
     await store.set(selectSessionActionAtom, 'blitz-child');
     expect(store.get(selectedWorkstreamAtom('/project'))).toEqual({type: 'worktree', id: 'blitz-child'});
     expect(store.get(workstreamStateAtom('blitz-child')).worktreeId).toBe('blitz-tree');
+  });
+  it('opens a nested meta agent child under the nearest meta agent without recursing (#1906)', async () => {
+    rows.push(
+      row('meta-a', null, { childCount: 1, agentRole: 'meta-agent' }),
+      row('meta-b', 'meta-a', { childCount: 1, agentRole: 'meta-agent' }),
+      row('worker-c', 'meta-b', { childCount: 1 }),
+      row('helper-d', 'worker-c'),
+    );
+    store.set(sessionRegistryAtom, new Map(rows.map((r) => [r.id, r])));
+    await store.set(selectSessionActionAtom, 'worker-c');
+    expect(store.get(selectedWorkstreamAtom('/project'))?.id).toBe('worker-c');
+    expect(store.get(activeSessionIdAtom)).toBe('worker-c');
+    await store.set(selectSessionActionAtom, 'helper-d');
+    expect(store.get(selectedWorkstreamAtom('/project'))).toEqual({ type: 'workstream', id: 'worker-c' });
+    expect(store.get(activeSessionIdAtom)).toBe('helper-d');
+    await store.set(selectSessionActionAtom, 'meta-b');
+    expect(store.get(selectedWorkstreamAtom('/project'))?.id).toBe('meta-b');
+    await store.set(selectChildSessionActionAtom, { childSessionId: 'helper-d', parentId: 'meta-a', parentType: 'workstream' });
+    expect(store.get(selectedWorkstreamAtom('/project'))).toEqual({ type: 'workstream', id: 'worker-c' });
+    expect(store.get(activeSessionIdAtom)).toBe('helper-d');
+  });
+  it('opens a meta agent child as its own session instead of the meta agent view (#1906)', async () => {
+    rows.push(
+      row('meta', null, { childCount: 1, agentRole: 'meta-agent' }),
+      row('worker', 'meta', { childCount: 1 }),
+      row('helper', 'worker'),
+    );
+    store.set(sessionRegistryAtom, new Map(rows.map((r) => [r.id, r])));
+    await store.set(selectSessionActionAtom, 'worker');
+    expect(store.get(selectedWorkstreamAtom('/project'))?.id).toBe('worker');
+    expect(store.get(activeSessionIdAtom)).toBe('worker');
+    await store.set(selectSessionActionAtom, 'helper');
+    expect(store.get(selectedWorkstreamAtom('/project'))).toEqual({ type: 'workstream', id: 'worker' });
+    expect(store.get(activeSessionIdAtom)).toBe('helper');
+    await store.set(selectSessionActionAtom, 'meta');
+    expect(store.get(selectedWorkstreamAtom('/project'))?.id).toBe('meta');
+    // Sidebar child rows pass the meta agent as the parent.
+    await store.set(selectChildSessionActionAtom, { childSessionId: 'helper', parentId: 'meta', parentType: 'workstream' });
+    expect(store.get(selectedWorkstreamAtom('/project'))).toEqual({ type: 'workstream', id: 'worker' });
+    expect(store.get(activeSessionIdAtom)).toBe('helper');
   });
 
 });
