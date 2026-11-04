@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import type { SessionData, TranscriptViewMessage } from '@nimbalyst/runtime/ai/server/types';
-import { loadSessionDataAtom, reloadSessionDataAtom, sessionStoreAtom, preserveReloadIdentity, sessionRegistryAtom, sessionListRootAtom, sessionListWorkspaceAtom, updateSessionStoreAtom } from '../atoms/sessions';
+import { loadSessionDataAtom, reloadSessionDataAtom, sessionStoreAtom, preserveReloadIdentity, sessionRegistryAtom, sessionListRootAtom, sessionListWorkspaceAtom, updateSessionStoreAtom, setSessionWorkspaceOpenAtom } from '../atoms/sessions';
 import {createStore} from 'jotai';
 import {selectedMachineAtom} from '../atoms/remoteMachines';
 import { TranscriptProjector } from '@nimbalyst/runtime/ai/server/transcript/TranscriptProjector';
@@ -568,4 +568,96 @@ describe('canonical generation load/reload reconciliation', () => {
       expect(store.get(sessionStoreAtom(id))?.messages).toEqual(newer);
     });
   }
+});
+
+// A streaming session asks for a reload about once a second. On a large
+// history each full load takes seconds and every IPC reply is cloned into the
+// renderer separately, so overlapping reloads froze the transcript.
+describe('reload coalescing for streaming sessions', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+  const deferredSession = () => {
+    let resolve!: (session: SessionData) => void;
+    const promise = new Promise<SessionData>((r) => { resolve = r; });
+    return { promise, resolve };
+  };
+  const loaded = (id: string, text: string) =>
+    makeSession({ id, model: 'claude:test', messages: [makeMessage(1, text)] });
+
+  it('runs one load at a time and folds requests made meanwhile into a single follow-up', async () => {
+    const store = createStore();
+    const id = 'coalesce-follow-up';
+    const first = deferredSession();
+    const second = deferredSession();
+    const aiLoadSession = vi.fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    vi.stubGlobal('window', { electronAPI: { aiLoadSession } });
+    store.set(sessionStoreAtom(id), loaded(id, 'resident'));
+
+    const request = { sessionId: id, workspacePath: '/repo' };
+    const leading = store.set(reloadSessionDataAtom, request);
+    const queued = [
+      store.set(reloadSessionDataAtom, request),
+      store.set(reloadSessionDataAtom, request),
+      store.set(reloadSessionDataAtom, request),
+    ];
+    expect(aiLoadSession).toHaveBeenCalledTimes(1);
+
+    first.resolve(loaded(id, 'first load'));
+    await leading;
+    expect(store.get(sessionStoreAtom(id))?.messages[0].text).toBe('first load');
+
+    await vi.waitFor(() => expect(aiLoadSession).toHaveBeenCalledTimes(2));
+    second.resolve(loaded(id, 'follow-up load'));
+    await Promise.all(queued);
+    expect(aiLoadSession).toHaveBeenCalledTimes(2);
+    expect(store.get(sessionStoreAtom(id))?.messages[0].text).toBe('follow-up load');
+  });
+
+  it('waits as long as the previous load took before starting the follow-up', async () => {
+    vi.useFakeTimers();
+    const store = createStore();
+    const id = 'coalesce-cooldown';
+    const slow = deferredSession();
+    const aiLoadSession = vi.fn()
+      .mockReturnValueOnce(slow.promise)
+      .mockResolvedValueOnce(loaded(id, 'follow-up load'));
+    vi.stubGlobal('window', { electronAPI: { aiLoadSession } });
+    store.set(sessionStoreAtom(id), loaded(id, 'resident'));
+
+    const request = { sessionId: id, workspacePath: '/repo' };
+    const leading = store.set(reloadSessionDataAtom, request);
+    await vi.advanceTimersByTimeAsync(3000);
+    const followUp = store.set(reloadSessionDataAtom, request);
+    slow.resolve(loaded(id, 'slow load'));
+    await leading;
+
+    await vi.advanceTimersByTimeAsync(2900);
+    expect(aiLoadSession).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(aiLoadSession).toHaveBeenCalledTimes(2);
+    await followUp;
+    expect(store.get(sessionStoreAtom(id))?.messages[0].text).toBe('follow-up load');
+  });
+
+  it('drops a queued follow-up when the project closes', async () => {
+    const store = createStore();
+    const id = 'coalesce-closed';
+    const first = deferredSession();
+    const aiLoadSession = vi.fn().mockReturnValueOnce(first.promise);
+    vi.stubGlobal('window', { electronAPI: { aiLoadSession } });
+    store.set(sessionStoreAtom(id), { ...loaded(id, 'resident'), workspacePath: '/closing' });
+
+    const request = { sessionId: id, workspacePath: '/closing' };
+    const leading = store.set(reloadSessionDataAtom, request);
+    const queued = store.set(reloadSessionDataAtom, request);
+    store.set(setSessionWorkspaceOpenAtom, { workspacePath: '/closing', isOpen: false });
+    first.resolve(loaded(id, 'late load'));
+    await Promise.all([leading, queued]);
+    expect(aiLoadSession).toHaveBeenCalledTimes(1);
+    expect(store.get(sessionStoreAtom(id))).toBeNull();
+  });
 });

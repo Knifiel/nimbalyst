@@ -1938,11 +1938,25 @@ export const updateSessionDataAtom = atom(
 );
 
 /**
- * Track pending reloads per session to prevent concurrent race conditions.
- * When multiple reload requests come in rapidly (e.g., multiple message-logged events),
- * only the latest fetch should update the state to avoid stale data overwrites.
+ * Per-session reload slot. At most one reload per session is in flight.
+ * Requests that arrive while one runs fold into a single follow-up, which
+ * starts once the running load settles plus a cooldown as long as that load
+ * took (capped at RELOAD_COOLDOWN_MAX_MS). A streaming session asks for a
+ * reload about once a second. On a large history each full load takes
+ * seconds, and every overlapping IPC reply was cloned into the renderer and
+ * diffed against the whole transcript, which froze the chat.
  */
-const pendingReloads = new Map<string, { version: number; aborted: boolean; workspacePath: string }>();
+interface PendingReload {
+  /** Set when the session's project closes; the result must not land. */
+  aborted: boolean;
+  workspacePath: string;
+  /** Settles after the running load and its cooldown. */
+  settled: Promise<void>;
+  /** The follow-up requested while this slot was busy, if any. */
+  followUp: Promise<void> | null;
+}
+const pendingReloads = new Map<string, PendingReload>();
+const RELOAD_COOLDOWN_MAX_MS = 5000;
 
 function preserveEquivalentValue<T>(current: T | undefined, next: T | undefined): T | undefined {
   if (current === undefined || next === undefined) return next;
@@ -1988,13 +2002,36 @@ export function preserveReloadIdentity(current: SessionData, next: SessionData):
   };
 }
 
+function canStartSessionReload(get: Getter, sessionId: string, workspacePath: string): boolean {
+  if (get(closedSessionWorkspacesAtom).has(workspacePath) && canReleaseSessionData(get, sessionId)) return false;
+  // Background triggers (message-logged, completion) refresh a session this
+  // window holds; they must not load the full history of one nobody is
+  // viewing. A viewer mounting calls loadSessionDataAtom instead.
+  return isSessionDataResident(get(sessionStoreAtom(sessionId))) || isSessionLoadInFlight(sessionId);
+}
+
+/** Runs one reload in `slot` and resolves when its result has landed. */
+function startSessionReload(get: Getter, set: Setter, sessionId: string, slot: PendingReload): Promise<void> {
+  const run = canStartSessionReload(get, sessionId, slot.workspacePath)
+    ? runSessionReload(get, set, sessionId, slot)
+    : Promise.resolve(0);
+  slot.settled = run
+    .then((durationMs) => {
+      const cooldownMs = Math.min(durationMs, RELOAD_COOLDOWN_MAX_MS);
+      return cooldownMs > 0 ? new Promise<void>((resolve) => setTimeout(resolve, cooldownMs)) : undefined;
+    })
+    .then(() => {
+      if (!slot.followUp && pendingReloads.get(sessionId) === slot) pendingReloads.delete(sessionId);
+    });
+  return run.then(() => undefined);
+}
+
 /**
  * Reload session data from database.
  * Called after message-logged events, etc.
  *
- * Uses version tracking to prevent race conditions when multiple reloads
- * are triggered in rapid succession (e.g., from multiple message-logged events).
- * Only the most recent reload will update the atom state.
+ * Single-flight per session: see PendingReload. The promise resolves once a
+ * load that started after this request has landed (or was skipped).
  */
 export const reloadSessionDataAtom = atom(
   null,
@@ -2003,73 +2040,69 @@ export const reloadSessionDataAtom = atom(
       return;
     }
 
-    if (get(closedSessionWorkspacesAtom).has(workspacePath) && canReleaseSessionData(get, sessionId)) return;
-    // Background triggers (message-logged, completion) refresh a session this
-    // window holds; they must not load the full history of one nobody is
-    // viewing. A viewer mounting calls loadSessionDataAtom instead.
-    if (!isSessionDataResident(get(sessionStoreAtom(sessionId))) && !isSessionLoadInFlight(sessionId)) return;
-
-    // Create a new version for this reload request
-    const existingPending = pendingReloads.get(sessionId);
-    if (existingPending) {
-      // Mark the existing reload as aborted - it should not update state
-      existingPending.aborted = true;
+    const busy = pendingReloads.get(sessionId);
+    if (busy) {
+      busy.workspacePath = workspacePath;
+      busy.followUp ??= busy.settled.then(() => {
+        busy.followUp = null;
+        if (busy.aborted || pendingReloads.get(sessionId) !== busy) return;
+        return startSessionReload(get, set, sessionId, busy);
+      });
+      return busy.followUp;
     }
 
-    const currentVersion = (existingPending?.version || 0) + 1;
-    const thisReload = { version: currentVersion, aborted: false, workspacePath };
-    pendingReloads.set(sessionId, thisReload);
-    const messagesAtStart = captureTranscriptMessages(get(sessionStoreAtom(sessionId))?.messages ?? []);
-
-    try {
-      const sessionData = await window.electronAPI.aiLoadSession(sessionId, workspacePath);
-
-      // Check if this reload was superseded by a newer one
-      if (thisReload.aborted ||
-          (get(closedSessionWorkspacesAtom).has(workspacePath) && canReleaseSessionData(get, sessionId))) {
-        return;
-      }
-
-      if (sessionData) {
-        const current = get(sessionStoreAtom(sessionId));
-
-        sessionData.messages = reconcileTranscriptMessages(
-          current?.messages ?? [], sessionData.messages ?? [], { startedWith: messagesAtStart },
-        );
-        if (current) {
-          // Preserve read state
-          const preservedTimestamp = current.lastReadMessageTimestamp || 0;
-          const dbTimestamp = sessionData.lastReadMessageTimestamp || 0;
-          sessionData.lastReadMessageTimestamp = Math.max(preservedTimestamp, dbTimestamp);
-
-          // Token usage comes from IPC more often than the DB, so preserve the
-          // existing reference whenever the DB payload hasn't materially changed.
-          if (current.tokenUsage && deepEqual(current.tokenUsage, sessionData.tokenUsage)) {
-            sessionData.tokenUsage = current.tokenUsage;
-          }
-        }
-
-          const normalizedSessionData = preserveReloadIdentity(current ?? sessionData, sessionData);
-
-          // Final check before updating state - ensure we weren't superseded
-          if (!thisReload.aborted) {
-            // console.log(`[TRANSCRIPT-DEBUG] reloadSessionDataAtom: setting ${sessionData.messages?.length ?? 0} messages from DB for session ${sessionId}`);
-            set(sessionStoreAtom(sessionId), normalizedSessionData);
-            // Note: sessionModeAtom, sessionModelAtom, and sessionArchivedAtom are derived from sessionStoreAtom,
-            // so they automatically stay in sync when sessionStoreAtom is updated
-          }
-      }
-    } catch (error) {
-      console.error(`[sessions] Failed to reload session ${sessionId}:`, error);
-    } finally {
-      // Clean up if this was the latest reload
-      const currentPending = pendingReloads.get(sessionId);
-      if (currentPending === thisReload) {
-        pendingReloads.delete(sessionId);
-      }
-    }
+    if (!canStartSessionReload(get, sessionId, workspacePath)) return;
+    const slot: PendingReload = { aborted: false, workspacePath, settled: Promise.resolve(), followUp: null };
+    pendingReloads.set(sessionId, slot);
+    return startSessionReload(get, set, sessionId, slot);
   }
 );
+
+/** One full reload. Resolves with how long it took, which sets the cooldown. */
+async function runSessionReload(get: Getter, set: Setter, sessionId: string, slot: PendingReload): Promise<number> {
+  const startedAt = Date.now();
+  const workspacePath = slot.workspacePath;
+  const messagesAtStart = captureTranscriptMessages(get(sessionStoreAtom(sessionId))?.messages ?? []);
+
+  try {
+    const sessionData = await window.electronAPI.aiLoadSession(sessionId, workspacePath);
+
+    // The project closed while this load ran.
+    if (slot.aborted ||
+        (get(closedSessionWorkspacesAtom).has(workspacePath) && canReleaseSessionData(get, sessionId))) {
+      return Date.now() - startedAt;
+    }
+
+    if (sessionData) {
+      const current = get(sessionStoreAtom(sessionId));
+
+      sessionData.messages = reconcileTranscriptMessages(
+        current?.messages ?? [], sessionData.messages ?? [], { startedWith: messagesAtStart },
+      );
+      if (current) {
+        // Preserve read state
+        const preservedTimestamp = current.lastReadMessageTimestamp || 0;
+        const dbTimestamp = sessionData.lastReadMessageTimestamp || 0;
+        sessionData.lastReadMessageTimestamp = Math.max(preservedTimestamp, dbTimestamp);
+
+        // Token usage comes from IPC more often than the DB, so preserve the
+        // existing reference whenever the DB payload hasn't materially changed.
+        if (current.tokenUsage && deepEqual(current.tokenUsage, sessionData.tokenUsage)) {
+          sessionData.tokenUsage = current.tokenUsage;
+        }
+      }
+
+      const normalizedSessionData = preserveReloadIdentity(current ?? sessionData, sessionData);
+
+      // sessionModeAtom, sessionModelAtom and sessionArchivedAtom derive
+      // from sessionStoreAtom, so they follow this update.
+      set(sessionStoreAtom(sessionId), normalizedSessionData);
+    }
+  } catch (error) {
+    console.error(`[sessions] Failed to reload session ${sessionId}:`, error);
+  }
+  return Date.now() - startedAt;
+}
 
 /**
  * Clean up session atoms when closing a session tab.

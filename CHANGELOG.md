@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A session that fails to load now says why and offers Try again, instead of showing "Session not found"
 - A commit proposal that needs your approval, such as one into another worktree, now shows Confirm and Cancel even with auto-approve on, instead of a card that never finishes.
 - Jump to question now goes to the newest open question instead of an older abandoned one, and returning to a session no longer scrolls back to a question you already saw.
+- Long sessions no longer freeze the chat while the agent is working: the transcript stops reloading its whole history on top of itself
 
 ### Removed
 <!-- Removed features go here -->
