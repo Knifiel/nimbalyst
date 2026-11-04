@@ -3,7 +3,6 @@ import { AgentToolHooks } from '../AgentToolHooks';
 import type { AgentToolHooksOptions } from '../AgentToolHooks';
 import { parseExitPlanModeDeferral, type ExitPlanModeResponse } from '../../../exitPlanModeDeferral';
 import { agentToolActivity } from '../../agentToolActivity';
-import { parseExitPlanModeDeferral, type ExitPlanModeResponse } from '../../../exitPlanModeDeferral';
 
 // Mock fs module
 vi.mock('fs', () => ({
