@@ -306,7 +306,7 @@ function applyHistoryDiffOutcome(
 /**
  * Ensure a value is a number, converting from string if needed.
  */
-function ensureNumber(value: number | string): number {
+function ensureNumber(value: number | string | bigint): number {
   return typeof value === 'number' ? value : Number(value);
 }
 
@@ -532,9 +532,83 @@ interface MatchCandidate {
   reasons: string[];
 }
 
-/** Exported for testing */
+/**
+ * Rows read per query by the raw tool-call scans below.
+ *
+ * A session whose file rows carry definitive toolUseIds is scanned with no time
+ * bound. One unpaged read of a large session (48k rows, 143 MB of tool output)
+ * crossed the SQLite worker's 256 MB response limit, and the worker reads and
+ * sizes the whole result before refusing it, so every tool call stalled the
+ * main process for seconds and still stored no match. A single row can carry
+ * ~550 KB of tool output, which the worker's size estimate counts at about
+ * twice its length (UTF-16), so 100 rows keeps a worst-case page near 110 MB.
+ */
+export const RAW_TOOL_CALL_PAGE_SIZE = 100;
+
+interface RawToolCallScanOptions {
+  afterDate?: Date;
+  beforeDate?: Date;
+  /** Rows per page. Defaults to RAW_TOOL_CALL_PAGE_SIZE; tests pass a small one. */
+  pageSize?: number;
+}
+
+/**
+ * Walk the non-hidden output rows of ai_agent_messages that match
+ * `sessionCondition` (which must reference `$1`, bound to `sessionParam`), in id
+ * order, one keyset page at a time: `id > $cursor ORDER BY id ASC LIMIT $n`.
+ * Each row goes to `onRow` before the next page is read, so the raw content of
+ * earlier pages can be collected. The scan ends on the first short page.
+ */
+async function scanRawOutputMessages<Row extends AgentMessageRow>(
+  columns: string,
+  sessionCondition: string,
+  sessionParam: unknown,
+  options: RawToolCallScanOptions | undefined,
+  onRow: (row: Row) => void,
+): Promise<void> {
+  const pageSize = options?.pageSize ?? RAW_TOOL_CALL_PAGE_SIZE;
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1) {
+    throw new Error(`[ToolCallMatcher] Invalid raw tool call page size: ${pageSize}`);
+  }
+
+  const conditions = [sessionCondition, "direction = 'output'", 'hidden = FALSE'];
+  const params: unknown[] = [sessionParam];
+  if (options?.afterDate) {
+    params.push(options.afterDate.getTime());
+    conditions.push(`(EXTRACT(EPOCH FROM created_at) * 1000) >= $${params.length}`);
+  }
+  if (options?.beforeDate) {
+    params.push(options.beforeDate.getTime());
+    conditions.push(`(EXTRACT(EPOCH FROM created_at) * 1000) <= $${params.length}`);
+  }
+  conditions.push(`id > $${params.length + 1}`);
+  const sql = `SELECT ${columns}
+       FROM ai_agent_messages
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY id ASC
+       LIMIT $${params.length + 2}`;
+
+  let cursor = 0;
+  for (;;) {
+    const { rows } = await database.query<Row>(sql, [...params, cursor, pageSize]);
+    for (const row of rows) onRow(row);
+    if (rows.length < pageSize) return;
+
+    // Ids arrive as number, string or bigint depending on the backend.
+    const lastId = ensureNumber(rows[rows.length - 1].id);
+    if (!(lastId > cursor)) {
+      // Re-reading from the same cursor would loop on one page forever.
+      throw new Error(
+        `[ToolCallMatcher] Raw tool call scan cursor did not advance (cursor ${cursor}, last id ${String(lastId)})`,
+      );
+    }
+    cursor = lastId;
+  }
+}
+
 /**
  * Load ToolCallWindow[] for a single session by parsing raw ai_agent_messages.
+ * Exported for testing.
  *
  * We query ai_agent_messages (the raw log) instead of ai_transcript_events (the
  * canonical view) because the linkage table ai_tool_call_file_edits has a FK to
@@ -544,48 +618,27 @@ interface MatchCandidate {
 export async function getRawToolCallWindows(
   sessionId: string,
   workspacePath?: string,
-  options?: { afterDate?: Date; beforeDate?: Date },
+  options?: RawToolCallScanOptions,
 ): Promise<ToolCallWindow[]> {
   try {
-    const conditions = [
-      'session_id = $1',
-      "direction = 'output'",
-      'hidden = FALSE',
-    ];
-    const params: any[] = [sessionId];
-    let paramIdx = 2;
-
-    if (options?.afterDate) {
-      conditions.push(`(EXTRACT(EPOCH FROM created_at) * 1000) >= $${paramIdx}`);
-      params.push(options.afterDate.getTime());
-      paramIdx++;
-    }
-    if (options?.beforeDate) {
-      conditions.push(`(EXTRACT(EPOCH FROM created_at) * 1000) <= $${paramIdx}`);
-      params.push(options.beforeDate.getTime());
-      paramIdx++;
-    }
-
-    const messagesResult = await database.query<AgentMessageRow>(
-      `SELECT id, content, metadata, EXTRACT(EPOCH FROM created_at) * 1000 AS created_at_ms
-       FROM ai_agent_messages
-       WHERE ${conditions.join(' AND ')}
-       ORDER BY id ASC`,
-      params,
-    );
-
     const windows: ToolCallWindow[] = [];
-    for (const msg of messagesResult.rows) {
-      const msgWindows = parseToolCallWindows(
-        ensureNumber(msg.id),
-        msg.content,
-        new Date(ensureNumber(msg.created_at_ms)),
-        sessionId,
-        workspacePath,
-        msg.metadata,
-      );
-      windows.push(...msgWindows);
-    }
+    await scanRawOutputMessages<AgentMessageRow>(
+      'id, content, metadata, EXTRACT(EPOCH FROM created_at) * 1000 AS created_at_ms',
+      'session_id = $1',
+      sessionId,
+      options,
+      (msg) => {
+        const msgWindows = parseToolCallWindows(
+          ensureNumber(msg.id),
+          msg.content,
+          new Date(ensureNumber(msg.created_at_ms)),
+          sessionId,
+          workspacePath,
+          msg.metadata,
+        );
+        windows.push(...msgWindows);
+      },
+    );
     return windows;
   } catch (error) {
     logger.main.warn('[ToolCallMatcher] Failed to read raw tool call windows:', error);
@@ -595,60 +648,40 @@ export async function getRawToolCallWindows(
 
 /**
  * Batch version: load ToolCallWindow[] for multiple sessions from raw ai_agent_messages.
+ * Exported for testing.
  */
-async function getRawToolCallWindowsMultiSession(
+export async function getRawToolCallWindowsMultiSession(
   sessionIds: string[],
-  options?: { afterDate?: Date; beforeDate?: Date },
+  options?: RawToolCallScanOptions,
 ): Promise<Map<string, ToolCallWindow[]>> {
   try {
     if (sessionIds.length === 0) return new Map();
 
-    const conditions = [
-      'session_id = ANY($1::text[])',
-      "direction = 'output'",
-      'hidden = FALSE',
-    ];
-    const params: any[] = [sessionIds];
-    let paramIdx = 2;
-
-    if (options?.afterDate) {
-      conditions.push(`(EXTRACT(EPOCH FROM created_at) * 1000) >= $${paramIdx}`);
-      params.push(options.afterDate.getTime());
-      paramIdx++;
-    }
-    if (options?.beforeDate) {
-      conditions.push(`(EXTRACT(EPOCH FROM created_at) * 1000) <= $${paramIdx}`);
-      params.push(options.beforeDate.getTime());
-      paramIdx++;
-    }
-
-    const messagesResult = await database.query<AgentMessageRow & { session_id: string }>(
-      `SELECT session_id, id, content, metadata, EXTRACT(EPOCH FROM created_at) * 1000 AS created_at_ms
-       FROM ai_agent_messages
-       WHERE ${conditions.join(' AND ')}
-       ORDER BY id ASC`,
-      params,
-    );
-
     const result = new Map<string, ToolCallWindow[]>();
-    for (const msg of messagesResult.rows) {
-      const msgWindows = parseToolCallWindows(
-        ensureNumber(msg.id),
-        msg.content,
-        new Date(ensureNumber(msg.created_at_ms)),
-        msg.session_id,
-        undefined,
-        msg.metadata,
-      );
-      for (const w of msgWindows) {
-        let arr = result.get(msg.session_id);
-        if (!arr) {
-          arr = [];
-          result.set(msg.session_id, arr);
+    await scanRawOutputMessages<AgentMessageRow & { session_id: string }>(
+      'session_id, id, content, metadata, EXTRACT(EPOCH FROM created_at) * 1000 AS created_at_ms',
+      'session_id = ANY($1::text[])',
+      sessionIds,
+      options,
+      (msg) => {
+        const msgWindows = parseToolCallWindows(
+          ensureNumber(msg.id),
+          msg.content,
+          new Date(ensureNumber(msg.created_at_ms)),
+          msg.session_id,
+          undefined,
+          msg.metadata,
+        );
+        for (const w of msgWindows) {
+          let arr = result.get(msg.session_id);
+          if (!arr) {
+            arr = [];
+            result.set(msg.session_id, arr);
+          }
+          arr.push(w);
         }
-        arr.push(w);
-      }
-    }
+      },
+    );
     return result;
   } catch (error) {
     logger.main.warn('[ToolCallMatcher] Failed to read raw tool call windows (multi-session):', error);

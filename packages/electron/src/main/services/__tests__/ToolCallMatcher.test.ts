@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('jotai-family', () => ({ atomFamily: vi.fn() }));
@@ -33,7 +34,17 @@ vi.mock('@nimbalyst/runtime/storage/repositories/TranscriptMigrationRepository',
 }));
 
 import { database } from '../../database/PGLiteDatabaseWorker';
-import { parseToolCallWindows, scoreMatch, scoreWorkspaceFileEdit, toolCallMatcher, type ToolCallWindow } from '../ToolCallMatcher';
+import { estimateSerializedBytes, DEFAULT_RESPONSE_BYTE_LIMIT } from '../../database/sqlite/worker/responseSizeGuard';
+import {
+  RAW_TOOL_CALL_PAGE_SIZE,
+  getRawToolCallWindows,
+  getRawToolCallWindowsMultiSession,
+  parseToolCallWindows,
+  scoreMatch,
+  scoreWorkspaceFileEdit,
+  toolCallMatcher,
+  type ToolCallWindow,
+} from '../ToolCallMatcher';
 
 describe('ToolCallMatcher', () => {
   beforeEach(() => {
@@ -936,6 +947,125 @@ describe('ToolCallMatcher', () => {
     });
   });
 
+  describe('raw tool call window paging', () => {
+    const queryMock = database.query as ReturnType<typeof vi.fn>;
+    const baseTime = 1_700_000_000_000;
+    const afterDate = new Date(baseTime - 10_000);
+    const beforeDate = new Date(baseTime + 10_000);
+
+    type IdKind = 'number' | 'string' | 'bigint';
+    interface RawRow {
+      id: number | string | bigint;
+      session_id: string;
+      content: string;
+      metadata: unknown;
+      created_at_ms: number;
+    }
+
+    function rawRow(sessionId: string, id: number, idKind: IdKind = 'number', toolUse = true): RawRow {
+      const content = toolUse
+        ? JSON.stringify({
+          type: 'assistant',
+          message: {
+            content: [{ type: 'tool_use', id: `toolu_${id}`, name: 'Edit', input: { file_path: `/workspace/src/f${id}.ts` } }],
+          },
+        })
+        : JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'thinking out loud' }] } });
+      const typedId = idKind === 'string' ? String(id) : idKind === 'bigint' ? BigInt(id) : id;
+      return { id: typedId, session_id: sessionId, content, metadata: {}, created_at_ms: baseTime + id };
+    }
+
+    /** What the unpaged scan produced: every row parsed in id order. */
+    function unpagedWindows(rows: RawRow[], workspacePath?: string): ToolCallWindow[] {
+      return [...rows]
+        .sort((a, b) => Number(a.id) - Number(b.id))
+        .flatMap(row => parseToolCallWindows(
+          Number(row.id), row.content, new Date(row.created_at_ms), row.session_id, workspacePath, row.metadata,
+        ));
+    }
+
+    /**
+     * Stand-in for ai_agent_messages that honors keyset paging the way both
+     * backends do: rows above the bound `id > $n` cursor, in id order, capped
+     * at the bound LIMIT. A query binding neither gets every row, which is
+     * what the unpaged scan received.
+     */
+    function stubMessagesTable(rows: RawRow[]) {
+      const calls: Array<{ params: unknown[]; cursor: number | null; limit: number | null; returned: number }> = [];
+      queryMock.mockImplementation(async (sql: string, params: unknown[] = []) => {
+        if (!sql.includes('FROM ai_agent_messages')) return { rows: [] };
+        const cursorRef = /\bid\s*>\s*\$(\d+)/.exec(sql);
+        const limitRef = /\bLIMIT\s+(?:\$(\d+)|(\d+))/i.exec(sql);
+        const cursor = cursorRef ? Number(params[Number(cursorRef[1]) - 1]) : null;
+        const limit = limitRef
+          ? Number(limitRef[1] ? params[Number(limitRef[1]) - 1] : limitRef[2])
+          : null;
+        const page = [...rows]
+          .sort((a, b) => Number(a.id) - Number(b.id))
+          .filter(row => cursor === null || Number(row.id) > cursor)
+          .slice(0, limit ?? undefined);
+        calls.push({ params, cursor, limit, returned: page.length });
+        return { rows: page };
+      });
+      return calls;
+    }
+
+    it.each<IdKind>(['number', 'string', 'bigint'])(
+      'pages one session by id cursor and returns the unpaged windows in id order (%s ids)',
+      async (idKind) => {
+        const sessionId = 'paged-session';
+        // Id gaps prove the cursor is the last row id, not an offset; row 7 has
+        // no tool call, so the cursor must come from rows, not from windows.
+        const rows = [3, 7, 8, 20, 21].map(id => rawRow(sessionId, id, idKind, id !== 7));
+        const calls = stubMessagesTable(rows);
+
+        const windows = await getRawToolCallWindows(sessionId, '/workspace', { afterDate, beforeDate, pageSize: 2 });
+
+        expect(windows).toEqual(unpagedWindows(rows, '/workspace'));
+        expect(windows.map(w => w.messageId)).toEqual([3, 8, 20, 21]);
+        // Two full pages, then a short one ends the scan.
+        expect(calls.map(c => [c.cursor, c.limit, c.returned])).toEqual([[0, 2, 2], [7, 2, 2], [20, 2, 1]]);
+        // Every page keeps the session filter and both time bounds.
+        for (const call of calls) {
+          expect(call.params.slice(0, 3)).toEqual([sessionId, afterDate.getTime(), beforeDate.getTime()]);
+        }
+      },
+    );
+
+    it('pages the multi-session scan and stops on an empty page after an exactly full one', async () => {
+      const sessionIds = ['session-a', 'session-b'];
+      const rows = [
+        rawRow('session-a', 1),
+        rawRow('session-b', 2),
+        rawRow('session-a', 5),
+        rawRow('session-b', 6),
+      ];
+      const calls = stubMessagesTable(rows);
+
+      const bySession = await getRawToolCallWindowsMultiSession(sessionIds, { afterDate, beforeDate, pageSize: 2 });
+
+      const expected = unpagedWindows(rows);
+      expect(bySession.get('session-a')).toEqual(expected.filter(w => w.sessionId === 'session-a'));
+      expect(bySession.get('session-b')).toEqual(expected.filter(w => w.sessionId === 'session-b'));
+      expect(calls.map(c => [c.cursor, c.limit, c.returned])).toEqual([[0, 2, 2], [2, 2, 2], [6, 2, 0]]);
+      for (const call of calls) {
+        expect(call.params.slice(0, 3)).toEqual([sessionIds, afterDate.getTime(), beforeDate.getTime()]);
+      }
+    });
+
+    it('keeps a worst-case default page under half the SQLite worker response limit', () => {
+      // ~550 KB of tool output in one row has been seen in production. The
+      // worker sizes a response with this estimator before posting it.
+      expect(RAW_TOOL_CALL_PAGE_SIZE).toBeGreaterThan(1);
+      const content = 'x'.repeat(550 * 1024);
+      const page = Array.from({ length: RAW_TOOL_CALL_PAGE_SIZE }, (_, i) => ({
+        id: i + 1, content, metadata: {}, created_at_ms: baseTime,
+      }));
+
+      expect(estimateSerializedBytes({ rows: page })).toBeLessThan(DEFAULT_RESPONSE_BYTE_LIMIT / 2);
+    });
+  });
+
   describe('matchSession raw-message bounds', () => {
     const queryMock = database.query as ReturnType<typeof vi.fn>;
 
@@ -997,10 +1127,13 @@ describe('ToolCallMatcher', () => {
       expect(captured.sawMessagesQuery).toBe(true);
       expect(captured.messagesSql).toContain(BOUND_LOWER);
       expect(captured.messagesSql).toContain(BOUND_UPPER);
+      // Trailing pair is the first page's keyset cursor and LIMIT.
       expect(captured.messagesParams).toEqual([
         sessionId,
         earliestTimestamp - 10_000,
         latestTimestamp + 10_000,
+        0,
+        RAW_TOOL_CALL_PAGE_SIZE,
       ]);
     });
 
@@ -1040,7 +1173,7 @@ describe('ToolCallMatcher', () => {
       // it is only reachable because the lookup stayed unbounded.
       expect(captured.messagesSql).not.toContain(BOUND_LOWER);
       expect(captured.messagesSql).not.toContain(BOUND_UPPER);
-      expect(captured.messagesParams).toEqual([sessionId]);
+      expect(captured.messagesParams).toEqual([sessionId, 0, RAW_TOOL_CALL_PAGE_SIZE]);
       expect(captured.insertParams).toEqual(expect.arrayContaining([
         sessionId,
         'file-1',
@@ -1066,7 +1199,7 @@ describe('ToolCallMatcher', () => {
       expect(captured.sawMessagesQuery).toBe(true);
       expect(captured.messagesSql).not.toContain(BOUND_LOWER);
       expect(captured.messagesSql).not.toContain(BOUND_UPPER);
-      expect(captured.messagesParams).toEqual([sessionId]);
+      expect(captured.messagesParams).toEqual([sessionId, 0, RAW_TOOL_CALL_PAGE_SIZE]);
     });
   });
 
