@@ -255,6 +255,16 @@ Twelve built-in provider lanes, plus any agent an extension contributes. Every l
 - Voice agent tool calls (memory lookups, coding-agent questions, and more) are recorded in the voice session transcript and render as tool widgets, including a dedicated memory-recall widget showing the query and the returned source documents (title + snippet)
 - Available on desktop and iOS; native iOS defaults to Realtime and offers GPT Live as an opt-in preview
 
+## Dictation
+
+- Speech-to-text into the agent input, markdown editor, and Monaco code editor at the cursor; never speaks back and never submits
+- On a Mac the default starts macOS system dictation in the focused field (any editable field); starts listening in about 40 ms
+- Mic button in the agent input; Ctrl+Option+Space starts dictation (on key press for macOS dictation; hold to talk or tap to toggle for our engines), Esc discards pending text on our engines
+- Alternative engines in Settings: on-device macOS speech recognition (Swift helper, audio stays local) or OpenAI transcription on the user's key; an explicit engine choice never falls back
+- Our engines open the mic in parallel with engine start and buffer, so the first words are not lost; live partial text shown muted and replaced by the final text
+- Settings > Dictation toggle turns the feature off and hides every mic button, shortcut, and hint
+- Extension editors can accept dictation through `EditorHost.registerDictationTarget`
+
 ## Mobile (iOS)
 
 - Native SwiftUI app with encrypted sync
@@ -481,6 +491,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 
 ## CLI and Remote Execution
 
+- `nimbalyst` shell command (macOS, opt-in) -- **Nimbalyst > Install 'nimbalyst' Command in PATH** or **Settings > Advanced > Shell Command** links `/usr/local/bin/nimbalyst` to a script inside the app bundle (asking for an administrator password when the directory is not writable), so it updates with the app. `nimbalyst .` or `nimbalyst <folder>` opens a folder as a project, focusing its window if one is already open; `nimbalyst <file>` opens a file in the project that contains it. It never replaces a `nimbalyst` command it did not install without asking, and Uninstall removes only its own link. Folders passed to the app by `open -a Nimbalyst <folder>` open the same way
 - `nim` CLI for workspace, session, document, and tracker queries, with filters and JSON/CSV output; tracker mutations, readiness queries, release helpers, and live importer commands
 - CLI live mode uses the running app's tools; offline mode supports native tracker reads and writes with schema checks and refuses writes while the live app owns the database. Session/document commands are read-only
 - Nimbalyst Wiki for Claude Code and Codex without the desktop app -- the `nimbalyst-wiki` plugin (skills `start` (a first-run tour), `setup`, `update`, `connect`, `capture`; MIT licensed; installs in Claude Code and the Codex CLI, where it has no end-of-session reminder and no session citations) reads and writes a team project's wiki pages through a remote MCP server with the same wiki tools as the desktop agent (list the tree, search page text, read and edit page bodies, create, move, rename, delete, set a page's type and fields, typed pages and types), cites the terminal user's own typed prompts and answers through a local transcript helper, and cites comments on shared pages; `nim wiki` offers the same tools from a shell (one noun for the team and local wikis; `--team`/`--local` force either). Sign-in is a Nimbalyst account approved in the web console (`nim login` uses a device code); access follows Nimbalyst Teams membership, a team admin binds a repo to a team project, and an agent only reaches projects its user already has. Edits land directly with a history revision; team pages only. Requires the updated sync server
@@ -547,6 +558,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - Multi-window support with per-project state persistence
 - Multi-project rail with an optional "Allow unlimited projects" setting. The default is eight projects per window; enabling unlimited projects can use more memory and CPU. Turning it off keeps current and restored projects open.
 - Reorder project rail icons by dragging, Move up/down, or Sort by name; order persists without changing the active project.
+- Drag a project from one window's rail to another window's rail to move it there, or drop it outside every window to open it in a new window at that spot. A window whose last project is dragged away closes.
 - Project Manager (Cmd+P)
 - System tray with session status and click-to-navigate
 - macOS menu bar fleet monitoring -- follow active sessions, see which need attention, and open them from the menu bar
