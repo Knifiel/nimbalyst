@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, onTestFinished, vi } from 'vitest';
 import { TRANSCRIPT_REBUILD_HOLD_LIMIT_MS, TranscriptStreamAccumulator } from '../transcriptStreamAccumulator';
 import { reconcileTranscriptMessages } from '../transcriptReconciliation';
 import { TranscriptProjector } from '@nimbalyst/runtime/ai/server/transcript/TranscriptProjector';
@@ -54,6 +54,12 @@ function makeDbMessage(id: number, type: 'user_message' | 'assistant_message', t
     subagentId: null,
   };
 }
+
+/** Payloads of the #919 duplicate-prompt diagnostic caught by a console.warn spy. */
+const duplicateWarnings = (warn: { mock: { calls: unknown[][] } }) => warn.mock.calls
+  .map(([line]) => String(line))
+  .filter((line) => line.includes('Duplicate user prompt'))
+  .map((line) => JSON.parse(line.slice(line.indexOf('{'))));
 
 interface Harness {
   acc: TranscriptStreamAccumulator;
@@ -342,7 +348,9 @@ describe('TranscriptStreamAccumulator', () => {
     expect(atom.get('A')!.some((m) => m.text === 'Audit finished: 3 issues'), 'newest reply is on screen').toBe(true);
     expect(reloads).toHaveLength(1);
   });
-  it('publishes a held rebuild once the time limit passes when no reload lands', () => {
+  it('publishes a held rebuild once the time limit passes when no reload lands, and checks it for a duplicated prompt', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    onTestFinished(() => warn.mockRestore());
     let atom: TranscriptViewMessage[] = [];
     let clock = 0;
     const requested: string[] = [];
@@ -370,7 +378,8 @@ describe('TranscriptStreamAccumulator', () => {
     frame();
     expect(atom.filter((m) => m.id >= 0)).toHaveLength(7);
     const complete = atom;
-    for (const event of [user(101, 0, 2), subagent(102, 1, 2), ...[0, 1, 2, 3, 4].map((i) => child(110 + i, 2 + i, 2)), reply(120, 7, 2)])
+    // The rebuild repeats the first prompt at the bottom (#919 diagnostic).
+    for (const event of [user(101, 0, 2), subagent(102, 1, 2), ...[0, 1, 2, 3, 4].map((i) => child(110 + i, 2 + i, 2)), reply(120, 7, 2), user(130, 8, 2)])
       accumulator.apply(event as never);
     frame();
     expect(atom).toBe(complete);
@@ -379,6 +388,8 @@ describe('TranscriptStreamAccumulator', () => {
     frame();
     expect(atom.some((m) => m.text === 'Audit finished: 3 issues'), 'the reply after the rebuild is on screen').toBe(true);
     expect(requested).toEqual(['S']);
+    // The publish comes frames after the rebuild and is still checked.
+    expect(duplicateWarnings(warn).map((w) => [w.mergePath, w.ids])).toEqual([['stream', [101, 130]]]);
   });
   it('ignores late old-generation events and stale atom snapshots after a replacement', () => {
     const h = createHarness();
@@ -411,6 +422,30 @@ describe('TranscriptStreamAccumulator', () => {
     h.acc.apply({ ...makeAssistantEvent(21, 'tail', 1), transcriptGeneration: 2 });
     h.tickFrame();
     expect(h.lastEmit!.messages.map((m) => m.id)).toEqual([20, 21]);
+  });
+  // #919 diagnostic: the saved first prompt showed a second time under load.
+  it('warns once per duplicated user prompt it publishes, and not for a normal list', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const sessionId = 'duplicate-prompt-stream';
+      const live = (event: TranscriptEvent) => ({ ...event, sessionId, transcriptGeneration: 4 });
+      const h = createHarness([{ ...makeDbMessage(1, 'user_message', 'Audit the repo'), transcriptGeneration: 4 }]);
+      h.acc.apply(live(makeAssistantEvent(2, 'Working')));
+      h.tickFrame();
+      expect(duplicateWarnings(warn)).toEqual([]);
+
+      h.acc.apply(live(makeUserEvent(9, 'Audit the repo')));
+      h.tickFrame();
+      h.acc.apply(live(makeAssistantEvent(10, 'Still working')));
+      h.tickFrame();
+      expect(h.lastEmit!.messages.map((m) => m.id)).toEqual([1, 2, 9, 10]);
+      expect(duplicateWarnings(warn)).toEqual([{
+        sessionId, mergePath: 'stream', length: 3, ids: [1, 9], indices: [0, 2],
+        transcriptGenerations: [4, 4], sequences: [1, 9], createdAt: [0, 0],
+      }]);
+    } finally {
+      warn.mockRestore();
+    }
   });
   it('orders canonical messages by sequence while retaining unmatched optimistic input at the end', () => {
     const h = createHarness([

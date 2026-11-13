@@ -25,7 +25,7 @@
  */
 
 import { TranscriptProjector } from '@nimbalyst/runtime/ai/server/transcript/TranscriptProjector';
-import { latestTranscriptGeneration, preserveTranscriptMessageIdentity, reconcileTranscriptMessages } from './transcriptReconciliation';
+import { latestTranscriptGeneration, preserveTranscriptMessageIdentity, reconcileTranscriptMessages, warnOnDuplicateUserPrompt } from './transcriptReconciliation';
 import type {
   TranscriptViewMessage,
 } from '@nimbalyst/runtime/ai/server/transcript/TranscriptProjector';
@@ -78,6 +78,8 @@ interface SessionState {
   dirty: boolean;
   /** `currentMessages` was already copied for this frame's text patches. */
   patchedSinceFlush: boolean;
+  /** `currentMessages` was rebuilt and not yet published. A held rebuild publishes frames later. */
+  rebuiltSincePublish: boolean;
 }
 
 export interface AccumulatorOptions {
@@ -205,6 +207,7 @@ export class TranscriptStreamAccumulator {
         flushScheduled: false,
         dirty: false,
         patchedSinceFlush: false,
+        rebuiltSincePublish: false,
       };
       this.sessions.set(sessionId, state);
     }
@@ -229,6 +232,7 @@ export class TranscriptStreamAccumulator {
     if (state.needsRebuild || state.currentMessages.length === 0) {
       this.rebuild(sessionId, state);
       state.needsRebuild = false;
+      state.rebuiltSincePublish = true;
     }
 
     if (this.isRebuildingBehindSnapshot(state)) {
@@ -250,6 +254,9 @@ export class TranscriptStreamAccumulator {
     // An unchanged rebuild returns the atom's own array; publishing it would
     // still replace the session object and re-render every subscriber.
     if (this.opts.readDbMessages(sessionId) === state.currentMessages) return;
+    // Text patches only touch assistant messages, so only a rebuild can add a prompt.
+    if (state.rebuiltSincePublish) warnOnDuplicateUserPrompt(sessionId, 'stream', state.currentMessages);
+    state.rebuiltSincePublish = false;
     this.opts.emit({ sessionId, messages: state.currentMessages });
     // The atom normally holds this exact array after our synchronous emit.
     // Do not treat our own publication as a new external snapshot next frame.
