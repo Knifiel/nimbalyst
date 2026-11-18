@@ -280,9 +280,18 @@ export function classifyDatabaseError(
   const code = errorField(error, 'code').toUpperCase();
   const message = errorMessage(error);
 
-  // Checked first: an aborted transaction fails every subsequent statement on
-  // the connection with this same message, so it is the single most likely
-  // source of a runaway error loop and must not be absorbed by a broader rule.
+  // The SQLite proxy's own word that no worker is running. When the worker
+  // stays down, the message goes on to quote what took it down (a restart
+  // whose `init` answered "database is locked", timed out or ran out of
+  // memory); that quote is history, not the reason this call failed.
+  if (message.startsWith('sqlite worker not running')) {
+    return fixed('availability', 'worker_unavailable', error);
+  }
+
+  // Checked before every engine rule: an aborted transaction fails every
+  // subsequent statement on the connection with this same message, so it is
+  // the single most likely source of a runaway error loop and must not be
+  // absorbed by a broader rule.
   if (code === '25P02' || isAbortedTransaction(message)) {
     return fixed('concurrency', 'transaction_aborted', error);
   }

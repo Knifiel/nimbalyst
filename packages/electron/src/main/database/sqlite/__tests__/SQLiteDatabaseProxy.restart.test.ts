@@ -7,10 +7,15 @@
  * database, and no restart where some other owner manages the worker.
  *
  * The fake Worker copies what a real `worker_threads` Worker was observed to
- * do on Node 22 (2026-11-18 probe): an out-of-memory death emits `error`
- * (code ERR_WORKER_OUT_OF_MEMORY) and then, on a later turn, `exit` with
- * code 1; `postMessage` to a dead worker is silently dropped; `terminate()`
- * resolves once `exit` has been emitted.
+ * do on Node 24 (2026-11-19 probe): an out-of-memory death first delivers any
+ * reply the worker posted before it died, then emits `error` (code
+ * ERR_WORKER_OUT_OF_MEMORY) and `exit` with code 1 in the same callback, with
+ * no microtask checkpoint between them (`crashSync`, `replyThenDie`). An
+ * uncaught exception leaves a turn between `error` and `exit`;
+ * `crashOutOfMemory` emits its `exit` a turn later, or after `exitAfterMs`,
+ * to cover that order and a slow teardown, since the proxy acts on whichever
+ * event comes first. `postMessage` to a dead worker is silently dropped;
+ * `terminate()` after `exit` resolves `undefined`.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -24,6 +29,11 @@ interface Envelope {
 
 const { FakeWorker, settings, warn } = await vi.hoisted(async () => {
   const { EventEmitter } = await import('node:events');
+
+  const outOfMemory = () =>
+    Object.assign(new Error('Worker terminated due to reaching memory limit: JS heap out of memory'), {
+      code: 'ERR_WORKER_OUT_OF_MEMORY',
+    });
 
   class FakeWorker extends EventEmitter {
     static instances: FakeWorker[] = [];
@@ -98,15 +108,26 @@ const { FakeWorker, settings, warn } = await vi.hoisted(async () => {
     /** `exitAfterMs` delays the `exit` (a slow thread teardown) on the fake clock. */
     crashOutOfMemory(exitAfterMs?: number): void {
       this.dead = true;
-      this.emit(
-        'error',
-        Object.assign(
-          new Error('Worker terminated due to reaching memory limit: JS heap out of memory'),
-          { code: 'ERR_WORKER_OUT_OF_MEMORY' },
-        ),
-      );
+      this.emit('error', outOfMemory());
       if (exitAfterMs === undefined) setImmediate(() => this.emit('exit', 1));
       else setTimeout(() => this.emit('exit', 1), exitAfterMs);
+    }
+
+    /** The real out-of-memory order: `error`, then `exit`, in one callback. */
+    crashSync(): void {
+      this.dead = true;
+      this.emit('error', outOfMemory());
+      this.emit('exit', 1);
+    }
+
+    /**
+     * The worker answered a held request and then ran out of memory before
+     * main had handled the answer: the answer, `error` and `exit` arrive in
+     * one callback.
+     */
+    replyThenDie(type: string): void {
+      this.release(type);
+      this.crashSync();
     }
 
     /** A death that emits only `exit` (no `error` first). */
@@ -147,6 +168,7 @@ vi.mock('../../../utils/store', () => ({
 }));
 
 import { SQLiteDatabaseProxy } from '../SQLiteDatabaseProxy';
+import { classifyDatabaseError } from '../../DatabaseErrorTelemetry';
 
 const DIRS = { dbDir: '/fake/userData/sqlite-db', schemaDir: '/fake/schemas' };
 /** Longer than any restart backoff. */
@@ -184,7 +206,8 @@ afterEach(() => {
 describe('SQLiteDatabaseProxy worker restart', () => {
   it.each([
     ['an out-of-memory error then exit', (w: InstanceType<typeof FakeWorker>) => w.crashOutOfMemory(), 'ERR_WORKER_OUT_OF_MEMORY'],
-    ['an exit with no error', (w: InstanceType<typeof FakeWorker>) => w.exitUnexpectedly(1), 'exit code 1'],
+    ['an out-of-memory error and exit in one callback', (w: InstanceType<typeof FakeWorker>) => w.crashSync(), 'ERR_WORKER_OUT_OF_MEMORY'],
+    ['an exit with no error',(w: InstanceType<typeof FakeWorker>) => w.exitUnexpectedly(1), 'exit code 1'],
   ])('after %s, the next query succeeds on one new worker that received init', async (_label, kill, reason) => {
     const proxy = await liveProxy();
     // The user changed backup retention since boot; the restart must not
@@ -255,6 +278,50 @@ describe('SQLiteDatabaseProxy worker restart', () => {
     expect(FakeWorker.instances).toHaveLength(2);
   });
 
+  it('a restarted worker that answers init and dies before main handled the answer counts as a death and is restarted again', async () => {
+    const proxy = await liveProxy();
+    FakeWorker.nextSpawn = { holdInit: true };
+    worker(1).crashSync();
+    const waiting = proxy.query('SELECT 1');
+    await vi.advanceTimersByTimeAsync(PAST_BACKOFF_MS);
+    expect(worker(2).posted.map((m) => m.type)).toEqual(['init']);
+
+    // Main is busy (the out-of-memory case), so the answer, `error` and
+    // `exit` all land before the restart sees its `init` succeed.
+    worker(2).replyThenDie('init');
+    await vi.advanceTimersByTimeAsync(PAST_BACKOFF_MS);
+    await expect(waiting).resolves.toEqual({ rows: [{ worker: 3 }] });
+    expect(warn).toHaveBeenCalledWith('[SQLiteProxy] restarting worker after ERR_WORKER_OUT_OF_MEMORY (restart 2 of 3)');
+    expect(worker(3).posted.map((m) => m.type)).toEqual(['init', 'query']);
+    expect(proxy.isInitialized()).toBe(true);
+    expect(FakeWorker.instances).toHaveLength(3);
+  });
+
+  it('a last-budget restarted worker that answers init and dies leaves the proxy down with the reason, not initialized with no worker', async () => {
+    const proxy = await liveProxy();
+    for (let k = 1; k <= 2; k++) {
+      worker(k).crashSync();
+      const q = proxy.query('SELECT 1');
+      await vi.advanceTimersByTimeAsync(PAST_BACKOFF_MS);
+      await expect(q).resolves.toEqual({ rows: [{ worker: k + 1 }] });
+    }
+    FakeWorker.nextSpawn = { holdInit: true };
+    worker(3).crashSync();
+    const waiting = proxy.query('SELECT 1').catch((e: Error) => e);
+    await vi.advanceTimersByTimeAsync(PAST_BACKOFF_MS);
+    expect(worker(4).posted.map((m) => m.type)).toEqual(['init']);
+
+    worker(4).replyThenDie('init');
+    const cause = /^SQLite worker not running: .*3 restarts in 10 minutes/;
+    expect(((await waiting) as Error).message).toMatch(cause);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await settle();
+    expect(proxy.isInitialized()).toBe(false);
+    expect(FakeWorker.instances).toHaveLength(4);
+    await expect(proxy.query('SELECT 1')).rejects.toThrow(cause);
+    await expect(proxy.initialize()).rejects.toThrow(cause);
+  });
+
   it('initialize() after a crash really re-initializes (the isInitialized/initialize guard callers use)', async () => {
     const proxy = await liveProxy();
     worker(1).crashOutOfMemory();
@@ -267,6 +334,34 @@ describe('SQLiteDatabaseProxy worker restart', () => {
     expect(proxy.isInitialized()).toBe(true);
     expect(worker(2).posted[0].type).toBe('init');
     await expect(proxy.query('SELECT 1')).resolves.toEqual({ rows: [{ worker: 2 }] });
+  });
+
+  it('a worker that dies during the first init is not restarted, and a later initialize() tries again on a new worker', async () => {
+    FakeWorker.nextSpawn = { holdInit: true };
+    const proxy = new SQLiteDatabaseProxy(DIRS);
+    const first = proxy.initialize().catch((e: Error) => e);
+    await settle();
+    worker(1).crashSync();
+    expect(((await first) as Error).message).toMatch(/memory limit/);
+    // Boot owns the first init: nothing restarts on its own.
+    await vi.advanceTimersByTimeAsync(60_000);
+    await settle();
+    expect(FakeWorker.instances).toHaveLength(1);
+    expect(proxy.isInitialized()).toBe(false);
+
+    await proxy.initialize();
+    expect(proxy.isInitialized()).toBe(true);
+    expect(worker(2).posted.map((m) => m.type)).toEqual(['init']);
+    await expect(proxy.query('SELECT 1')).resolves.toEqual({ rows: [{ worker: 2 }] });
+  });
+
+  it('a first init the live worker answers with an error stays the answer; only a death clears it', async () => {
+    FakeWorker.nextSpawn = { initError: 'SQLITE_CANTOPEN: unable to open database file' };
+    const proxy = new SQLiteDatabaseProxy(DIRS);
+    await expect(proxy.initialize()).rejects.toThrow(/unable to open/);
+    await expect(proxy.initialize()).rejects.toThrow(/unable to open/);
+    expect(FakeWorker.instances).toHaveLength(1);
+    expect(worker(1).posted.map((m) => m.type)).toEqual(['init']);
   });
 
   describe('close()', () => {
@@ -476,7 +571,7 @@ describe('SQLiteDatabaseProxy worker restart', () => {
     ['answers init with an error', { initError: 'SQLITE_BUSY: database is locked' }, /restart 1 of 3 failed.*database is locked/],
     ['dies during init', { crashOnInit: true }, /restart 1 of 3 failed.*memory limit/],
     ['never answers init', { holdInit: true }, /restart 1 of 3 failed.*timed out/],
-  ])('a restart whose worker %s counts as the attempt and stays down without looping', async (_label, spawn, cause) => {
+  ])('a restart whose worker %s counts as the attempt, stays down without looping and is reported as worker_unavailable', async (_label, spawn, cause) => {
     const proxy = await liveProxy();
     FakeWorker.nextSpawn = spawn;
     worker(1).crashOutOfMemory();
@@ -489,6 +584,9 @@ describe('SQLiteDatabaseProxy worker restart', () => {
     await settle();
     expect(((await q) as Error).message).toMatch(cause);
     expect(((await q) as Error).message).toMatch(/^SQLite worker not running/);
+    // The quoted cause ("database is locked", "timed out", "out of memory")
+    // must not turn this into a locked, timed-out or out-of-memory database.
+    expect(classifyDatabaseError(await q).errorCode).toBe('worker_unavailable');
 
     await vi.advanceTimersByTimeAsync(10 * 60_000);
     await settle();
