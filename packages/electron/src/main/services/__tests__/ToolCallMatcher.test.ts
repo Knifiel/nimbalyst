@@ -37,6 +37,7 @@ import { database } from '../../database/PGLiteDatabaseWorker';
 import { estimateSerializedBytes, DEFAULT_RESPONSE_BYTE_LIMIT } from '../../database/sqlite/worker/responseSizeGuard';
 import {
   RAW_TOOL_CALL_PAGE_SIZE,
+  getMatchableToolCallWindows,
   getRawToolCallWindows,
   getRawToolCallWindowsMultiSession,
   parseToolCallWindows,
@@ -1273,6 +1274,510 @@ describe('ToolCallMatcher', () => {
       await toolCallMatcher.matchSession('improvable-session');
 
       expect(probe.scannedMessages()).toBe(true);
+    });
+  });
+
+  describe('matchSession under load (#1649)', () => {
+    const queryMock = database.query as ReturnType<typeof vi.fn>;
+    const T0 = 1_700_000_000_000;
+    const HOUR = 3_600_000;
+    const at = (hour: number, offsetMs = 0) => T0 + hour * HOUR + offsetMs;
+
+    interface FileRow { id: string; file_path: string; timestamp_ms: number | string; metadata: Record<string, unknown> }
+    interface ExistingMatch { session_file_id: string; match_score: number; tool_use_id: string | null }
+    interface MessageRow { id: number; session_id: string; content: string; metadata: unknown; created_at_ms: number }
+    interface SessionTables { files: FileRow[]; existing: ExistingMatch[]; rows: MessageRow[] }
+
+    /**
+     * In-memory stand-in for the tables matchSession reads and writes, per
+     * session. It honors the scan's keyset paging and time bounds and the
+     * re-read by id; inserted matches become existing ones and replaced ones
+     * go, as in the real table. A session's scan waits on its gate, if set; a
+     * session in `failScan` has its next scan refused; an id in `vanished` is
+     * missing when re-read.
+     */
+    function stubMatchTables(tables: Record<string, SessionTables>) {
+      const log = {
+        scans: [] as string[],
+        rereads: [] as number[],
+        inserts: [] as unknown[][],
+        deletedMatches: [] as unknown[][],
+        deletedFiles: [] as unknown[][],
+      };
+      const gates = new Map<string, Promise<void>>();
+      const failScan = new Set<string>();
+      const vanished = new Set<number>();
+
+      queryMock.mockImplementation(async (sql: string, params: unknown[] = []) => {
+        if (/^\s*DELETE FROM session_files/.test(sql)) {
+          log.deletedFiles.push(params);
+          return { rows: [] };
+        }
+        const sessionId = params[0] as string;
+        const table = tables[sessionId];
+        if (sql.includes('FROM ai_sessions')) return { rows: [{ workspace_id: '/workspace' }] };
+        if (sql.includes('FROM session_files')) return { rows: table.files };
+        if (/^\s*DELETE FROM ai_tool_call_file_edits/.test(sql)) {
+          log.deletedMatches.push(params);
+          const replaced = params[1] as string[];
+          table.existing = table.existing.filter(m => !replaced.includes(m.session_file_id));
+          return { rows: [] };
+        }
+        if (/^\s*INSERT INTO ai_tool_call_file_edits/.test(sql)) {
+          log.inserts.push(params);
+          for (let i = 0; i < params.length; i += 8) {
+            table.existing.push({
+              session_file_id: params[i + 1] as string,
+              match_score: params[i + 5] as number,
+              tool_use_id: params[i + 4] as string | null,
+            });
+          }
+          return { rows: [] };
+        }
+        if (sql.includes('FROM ai_tool_call_file_edits')) return { rows: [...table.existing] };
+        if (sql.includes('FROM ai_agent_messages')) {
+          const param = (pattern: RegExp) => {
+            const ref = pattern.exec(sql);
+            return ref ? params[Number(ref[1]) - 1] : undefined;
+          };
+          const byId = param(/\bid\s*=\s*\$(\d+)/);
+          if (byId !== undefined) {
+            log.rereads.push(Number(byId));
+            if (vanished.has(Number(byId))) return { rows: [] };
+            return { rows: table.rows.filter(row => row.id === Number(byId)) };
+          }
+          const cursor = Number(param(/\bid\s*>\s*\$(\d+)/));
+          const limit = Number(param(/\bLIMIT\s+\$(\d+)/i));
+          const after = param(/>=\s*\$(\d+)/) as number | undefined;
+          const before = param(/<=\s*\$(\d+)/) as number | undefined;
+          if (cursor === 0) {
+            log.scans.push(sessionId);
+            await gates.get(sessionId);
+            if (failScan.delete(sessionId)) throw new Error('database worker exited');
+          }
+          const page = [...table.rows]
+            .sort((a, b) => a.id - b.id)
+            .filter(row => row.id > cursor
+              && (after === undefined || row.created_at_ms >= after)
+              && (before === undefined || row.created_at_ms <= before))
+            .slice(0, limit);
+          return { rows: page };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+
+      return { log, gates, failScan, vanished };
+    }
+
+    function deferred() {
+      let resolve!: () => void;
+      const promise = new Promise<void>(r => { resolve = r; });
+      return { promise, resolve };
+    }
+
+    /** Let every pending mock query and continuation run. */
+    const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+
+    /**
+     * One file whose recorded toolUseId no window carries, matched at 40 by a
+     * nearby Read: it never reaches the definitive score, so every pass scans,
+     * which is the shape that repeated after every tool call in #1649.
+     */
+    function busySession(sessionId: string): SessionTables {
+      return {
+        files: [{ id: `${sessionId}-file`, file_path: '/workspace/src/app.ts', timestamp_ms: T0, metadata: { toolUseId: 'toolu_unrecorded' } }],
+        existing: [],
+        rows: [{
+          id: 1,
+          session_id: sessionId,
+          content: JSON.stringify({
+            type: 'assistant',
+            message: { content: [{ type: 'tool_use', id: 'toolu_read', name: 'Read', input: { file_path: '/workspace/src/app.ts' } }] },
+          }),
+          metadata: {},
+          created_at_ms: T0 - 1_000,
+        }],
+      };
+    }
+
+    describe('one pass per session', () => {
+      it('runs one scan for a burst of calls on one session, plus one trailing pass they all share', async () => {
+        const { log, gates } = stubMatchTables({ busy: busySession('busy') });
+        const gate = deferred();
+        gates.set('busy', gate.promise);
+
+        const calls = Array.from({ length: 5 }, () => toolCallMatcher.matchSession('busy'));
+        await settle();
+        gate.resolve();
+        const counts = await Promise.all(calls);
+
+        expect(log.scans).toEqual(['busy', 'busy']);
+        // The first caller gets the pass it started. The other four share the
+        // trailing pass, which started after their calls and found the match
+        // already stored.
+        expect(counts).toEqual([1, 0, 0, 0, 0]);
+        expect(log.inserts).toHaveLength(1);
+      });
+
+      it('gives a call made during a failed pass a fresh pass, and takes calls normally after it', async () => {
+        const { log, failScan } = stubMatchTables({ flaky: busySession('flaky') });
+        failScan.add('flaky');
+
+        const failed = toolCallMatcher.matchSession('flaky');
+        const during = toolCallMatcher.matchSession('flaky');
+
+        await expect(failed).resolves.toBe(0);
+        await expect(during).resolves.toBe(1);
+        await expect(toolCallMatcher.matchSession('flaky')).resolves.toBe(0);
+        expect(log.scans).toEqual(['flaky', 'flaky', 'flaky']);
+        expect(log.inserts).toHaveLength(1);
+      });
+
+      it('runs the trailing pass and later calls when a pass rejects', async () => {
+        const { log } = stubMatchTables({ shaky: busySession('shaky') });
+        const internals = toolCallMatcher as unknown as { runMatchSessionPass(sessionId: string): Promise<number> };
+        const spy = vi.spyOn(internals, 'runMatchSessionPass').mockRejectedValueOnce(new Error('pass crashed'));
+        try {
+          const crashed = toolCallMatcher.matchSession('shaky');
+          const queued = toolCallMatcher.matchSession('shaky');
+
+          await expect(crashed).rejects.toThrow('pass crashed');
+          await expect(queued).resolves.toBe(1);
+          await expect(toolCallMatcher.matchSession('shaky')).resolves.toBe(0);
+          // The rejected pass never reached the database; the other two scanned.
+          expect(log.scans).toEqual(['shaky', 'shaky']);
+        } finally {
+          spy.mockRestore();
+        }
+      });
+
+      it('does not hold one session behind another session\'s pass', async () => {
+        const { log, gates } = stubMatchTables({ slow: busySession('slow'), quick: busySession('quick') });
+        const gate = deferred();
+        gates.set('slow', gate.promise);
+
+        let slowSettled = false;
+        const slow = toolCallMatcher.matchSession('slow').finally(() => { slowSettled = true; });
+        await settle();
+
+        await expect(toolCallMatcher.matchSession('quick')).resolves.toBe(1);
+        expect(slowSettled).toBe(false);
+        expect(log.scans).toEqual(['slow', 'quick']);
+
+        gate.resolve();
+        await expect(slow).resolves.toBe(1);
+      });
+    });
+
+    describe('bounded retention', () => {
+      const SESSION = 'long-session';
+
+      /**
+       * Hours of earlier tool calls, then one case per kind of file needing
+       * work, an hour apart so their windows never overlap. Rows are in time
+       * order, as the transcript writes them.
+       */
+      function longSessionTables(sessionId: string) {
+        const rows: MessageRow[] = [];
+        const add = (createdAt: number, content: unknown) => {
+          const id = rows.length + 1;
+          rows.push({ id, session_id: sessionId, content: JSON.stringify(content), metadata: {}, created_at_ms: createdAt });
+          return id;
+        };
+        const toolUse = (createdAt: number, toolUseId: string, name: string, input: Record<string, unknown>) =>
+          add(createdAt, { type: 'assistant', message: { content: [{ type: 'tool_use', id: toolUseId, name, input }] } });
+        const sdkEvent = (createdAt: number, type: 'item.started' | 'item.completed', item: Record<string, unknown>) =>
+          add(createdAt, { type, item });
+
+        // Earlier work: Claude tool calls, started/completed pairs with
+        // output, commands with no item id, and plain text.
+        for (let i = 0; i < 300; i++) {
+          const t = T0 + i * 30_000;
+          toolUse(t, `toolu_fill_${i}`, 'Edit', { file_path: `/workspace/src/fill-${i}.ts`, old_string: 'a', new_string: 'b' });
+          if (i % 3 === 0) {
+            const command = `/bin/zsh -lc 'cat src/fill-${i}.ts'`;
+            sdkEvent(t + 1_000, 'item.started', { type: 'command_execution', id: `cmd_fill_${i}`, command });
+            sdkEvent(t + 2_000, 'item.completed', { type: 'command_execution', id: `cmd_fill_${i}`, command, aggregated_output: 'x'.repeat(2_000) });
+          }
+          if (i % 10 === 0) {
+            sdkEvent(t + 3_000, 'item.completed', { type: 'command_execution', command: `ls src/fill-${i}`, aggregated_output: 'fill' });
+          }
+          if (i % 7 === 0) add(t + 4_000, { type: 'assistant', message: { content: [{ type: 'text', text: 'working on it' }] } });
+          // Codex reuses item ids across turns; this one comes back at hour 14.
+          if (i === 50) sdkEvent(t + 5_000, 'item.completed', { type: 'file_change', id: 'item_reused', changes: [{ path: '/workspace/src/reused.ts', kind: 'update' }] });
+        }
+
+        const ids: Record<string, number> = {};
+        // never.ts: its file row names a toolUseId no window has, so it stays
+        // "needing work" forever; another call named it just before.
+        ids.never = toolUse(at(4, -2_000), 'toolu_wrongid', 'Edit', { file_path: '/workspace/src/never.ts' });
+        // timed.ts: matched by time and name only. A Claude call and a later
+        // command with no item id both score 40; dedup puts item-less windows
+        // first, so the command wins although it was read second.
+        ids.timedClaude = toolUse(at(5, -3_000), 'toolu_timed', 'Edit', { file_path: '/workspace/src/timed.ts' });
+        ids.timedNoItem = sdkEvent(at(5, -1_000), 'item.completed', { type: 'command_execution', command: 'sed -i s/a/b/ src/timed.ts', aggregated_output: 'done' });
+        // edge.ts: a five-minute tool whose completed event has no args. Its
+        // started row is outside the bounded scan, so there it stays unfilled.
+        ids.edgeStarted = sdkEvent(at(5, -300_000), 'item.started', { type: 'tool_call', id: 'call_edge', name: 'Write', arguments: { file_path: '/workspace/src/edge.ts' } });
+        ids.edgeCompleted = sdkEvent(at(5, 4_000), 'item.completed', { type: 'tool_call', id: 'call_edge', name: 'Write', result: 'ok' });
+        // better.ts: stored at 40 from a nearby Read; its own call ran a minute
+        // before the edit was recorded, so only its toolUseId reaches it, at 100.
+        ids.better = toolUse(at(6, -60_000), 'toolu_better', 'Write', { file_path: '/workspace/src/better.ts', content: 'x' });
+        ids.betterNear = toolUse(at(6, -1_000), 'toolu_better_near', 'Read', { file_path: '/workspace/src/better.ts' });
+        // long.ts: a five-minute tool whose completed event has no args; they
+        // come from its started row, far outside the edit's window.
+        ids.longStarted = sdkEvent(at(7, -300_000), 'item.started', { type: 'tool_call', id: 'call_long', name: 'Write', arguments: { file_path: '/workspace/src/long.ts' } });
+        ids.longCompleted = sdkEvent(at(7, -1_000), 'item.completed', { type: 'tool_call', id: 'call_long', name: 'Write', result: 'ok' });
+        // short.ts: the same shape with both rows inside the edit's window;
+        // the completed row lands after the edit was recorded.
+        ids.shortStarted = sdkEvent(at(8, -2_000), 'item.started', { type: 'tool_call', id: 'call_short', name: 'Write', arguments: { file_path: '/workspace/src/short.ts' } });
+        ids.shortCompleted = sdkEvent(at(8, 3_000), 'item.completed', { type: 'tool_call', id: 'call_short', name: 'Write', result: 'wrote short.ts' });
+        // stale.ts: edited just after a tool started that completed two minutes
+        // later. Dedup keeps the completed window, which is out of range.
+        ids.staleStarted = sdkEvent(at(9, -500), 'item.started', { type: 'tool_call', id: 'call_stale', name: 'Write', arguments: { file_path: '/workspace/src/stale.ts' } });
+        sdkEvent(at(9, 120_000), 'item.completed', { type: 'tool_call', id: 'call_stale', name: 'Write', arguments: { file_path: '/workspace/src/stale.ts' }, result: 'ok' });
+        // tie.ts: A and B score the same. A appeared first but B completed
+        // first; dedup keeps first-appearance order, so A wins.
+        sdkEvent(at(10, -4_000), 'item.started', { type: 'tool_call', id: 'call_tie_a', name: 'Edit', arguments: { file_path: '/workspace/src/tie.ts' } });
+        sdkEvent(at(10, -3_000), 'item.started', { type: 'tool_call', id: 'call_tie_b', name: 'Edit', arguments: { file_path: '/workspace/src/tie.ts' } });
+        ids.tieBCompleted = sdkEvent(at(10, -2_500), 'item.completed', { type: 'tool_call', id: 'call_tie_b', name: 'Edit', arguments: { file_path: '/workspace/src/tie.ts' }, result: 'ok' });
+        ids.tieACompleted = sdkEvent(at(10, -2_000), 'item.completed', { type: 'tool_call', id: 'call_tie_a', name: 'Edit', arguments: { file_path: '/workspace/src/tie.ts' }, result: 'ok' });
+        // settled.ts: already matched at 100, so not needing work.
+        toolUse(at(11, -1_000), 'toolu_settled', 'Write', { file_path: '/workspace/src/settled.ts', content: 'x' });
+        // nan.ts: matched only when a file timestamp cannot be read (scenario).
+        ids.nanNamed = toolUse(at(13), 'toolu_nan_named', 'Edit', { file_path: '/workspace/src/nan.ts' });
+        // reused.ts: written under a reused item id. Dedup keeps the id's first
+        // completed window, hours earlier, so an unbounded scan finds no match;
+        // a bounded scan never sees the early one and matches this one.
+        ids.reusedLate = sdkEvent(at(14, -1_000), 'item.completed', { type: 'file_change', id: 'item_reused', changes: [{ path: '/workspace/src/reused.ts', kind: 'update' }] });
+
+        const file = (id: string, name: string, timestamp: number | string, metadata: Record<string, unknown> = {}): FileRow =>
+          ({ id, file_path: `/workspace/src/${name}`, timestamp_ms: timestamp, metadata });
+        const tables: SessionTables = {
+          files: [
+            file('f-never', 'never.ts', at(4), { toolUseId: 'toolu_never' }),
+            file('f-timed', 'timed.ts', at(5)),
+            file('f-edge', 'edge.ts', at(5, 5_000)),
+            file('f-better', 'better.ts', at(6), { toolUseId: 'toolu_better' }),
+            file('f-long', 'long.ts', at(7)),
+            file('f-short', 'short.ts', at(8)),
+            file('f-stale', 'stale.ts', at(9)),
+            file('f-tie', 'tie.ts', at(10)),
+            file('f-settled', 'settled.ts', at(11), { toolUseId: 'toolu_settled' }),
+            file('f-orphan', 'generated.ts', at(12), { bashSideEffect: true }),
+            file('f-reused', 'reused.ts', at(14)),
+          ],
+          existing: [
+            { session_file_id: 'f-better', match_score: 40, tool_use_id: 'toolu_better_near' },
+            { session_file_id: 'f-settled', match_score: 100, tool_use_id: 'toolu_settled' },
+          ],
+          rows,
+        };
+        return { tables, ids };
+      }
+
+      /** Copy of deduplicateWindows as of 2ada5922e (its allMessages branch never changed the result). */
+      function dedupLikeBefore(windows: ToolCallWindow[]): ToolCallWindow[] {
+        const byItemId = new Map<string, ToolCallWindow[]>();
+        const noItemId: ToolCallWindow[] = [];
+        for (const w of windows) {
+          if (w.toolCallItemId) {
+            const group = byItemId.get(w.toolCallItemId);
+            if (group) group.push(w);
+            else byItemId.set(w.toolCallItemId, [w]);
+          } else {
+            noItemId.push(w);
+          }
+        }
+        const result = [...noItemId];
+        for (const group of byItemId.values()) {
+          const completed = group.find(w => w.isCompleted);
+          if (completed) {
+            const started = group.find(w => !w.isCompleted);
+            if (started && !completed.argsText && started.argsText) {
+              completed.argsText = started.argsText;
+              completed.args = started.args;
+            }
+            result.push(completed);
+          } else {
+            result.push(group[0]);
+          }
+        }
+        return result;
+      }
+
+      /**
+       * The decision path of matchSession as of 2ada5922e: parse every row the
+       * scan returns, deduplicate the whole list, score every window against
+       * every file needing work. Returns the writes it makes.
+       */
+      function writesOfScanEverything(sessionId: string, tables: SessionTables) {
+        const byKey = new Map<string, FileRow>();
+        for (const f of tables.files) {
+          const toolUseId = f.metadata.toolUseId;
+          const key = toolUseId ? `${f.file_path}::${toolUseId}` : `no-tool::${f.file_path}`;
+          const kept = byKey.get(key);
+          if (!kept || Number(f.timestamp_ms) > Number(kept.timestamp_ms)) byKey.set(key, f);
+        }
+        const sessionFiles = [...byKey.values()];
+        const previousBest = new Map<string, number>();
+        for (const m of tables.existing) {
+          previousBest.set(m.session_file_id, Math.max(previousBest.get(m.session_file_id) ?? 0, m.match_score));
+        }
+        const needing = sessionFiles.filter(f => (previousBest.get(f.id) ?? -1) < 100);
+        const nothing = { inserts: [] as unknown[][], deletedMatches: [] as unknown[][], deletedFiles: [] as unknown[][] };
+
+        let rows = [...tables.rows].sort((a, b) => a.id - b.id);
+        const definitive = needing.some(f => typeof f.metadata.toolUseId === 'string' && f.metadata.toolUseId.length > 0);
+        const stamps = needing.map(f => Number(f.timestamp_ms));
+        if (!definitive && stamps.every(Number.isFinite)) {
+          const after = new Date(Math.min(...stamps) - 10_000).getTime();
+          const before = new Date(Math.max(...stamps) + 10_000).getTime();
+          rows = rows.filter(row => row.created_at_ms >= after && row.created_at_ms <= before);
+        }
+        const windows = rows.flatMap(row =>
+          parseToolCallWindows(row.id, row.content, new Date(row.created_at_ms), sessionId, '/workspace', row.metadata));
+        const deduped = dedupLikeBefore(windows);
+        if (needing.length === 0 || windows.length === 0) return { ...nothing, windows, deduped, needing };
+
+        const inserts: unknown[] = [];
+        const replaced: string[] = [];
+        const matched: string[] = [];
+        for (const f of needing) {
+          const ts = Number(f.timestamp_ms);
+          const best = deduped
+            .map(w => scoreMatch(f.file_path, ts, w, f.metadata.toolUseId as string | undefined))
+            .filter((c): c is NonNullable<typeof c> => c !== null && c.score >= 30)
+            .sort((a, b) => b.score - a.score)[0];
+          if (!best) continue;
+          const previous = previousBest.get(f.id);
+          if (previous != null) {
+            if (best.score <= previous) continue;
+            replaced.push(f.id);
+          }
+          matched.push(f.id);
+          inserts.push(
+            sessionId, f.id, best.window.messageId, best.window.toolCallItemId, best.window.toolUseId, best.score,
+            `${best.reasons.join(',')}|score=${best.score}|tool=${best.window.toolName}`, ts ? new Date(ts) : null,
+          );
+        }
+        const settled = new Set([...matched, ...previousBest.keys()]);
+        const orphans = sessionFiles.filter(f => f.metadata.bashSideEffect === true && !settled.has(f.id)).map(f => f.id);
+        return {
+          inserts: inserts.length > 0 ? [inserts] : [],
+          deletedMatches: replaced.length > 0 ? [[sessionId, replaced]] : [],
+          deletedFiles: orphans.length > 0 ? [[orphans]] : [],
+          windows,
+          deduped,
+          needing,
+        };
+      }
+
+      /** Matched (file id, message id) pairs from one INSERT's params. */
+      const insertedPairs = (params: unknown[]) =>
+        Array.from({ length: params.length / 8 }, (_, i) => [params[i * 8 + 1], params[i * 8 + 2], params[i * 8 + 5]]);
+
+      const scenarios: Array<[string, (tables: SessionTables) => SessionTables]> = [
+        ['files with toolUseIds, so the scan is unbounded', tables => tables],
+        ['a file whose timestamp cannot be read, so every window is in range', tables => ({
+          ...tables,
+          files: [...tables.files, { id: 'f-nan', file_path: '/workspace/src/nan.ts', timestamp_ms: 'not-a-number', metadata: { toolUseId: 'toolu_nan_missing' } }],
+        })],
+        ['no toolUseIds needing work, so the scan is time-bounded', tables => ({
+          ...tables,
+          files: tables.files.filter(f => f.id !== 'f-never' && f.id !== 'f-better'),
+          existing: tables.existing.filter(m => m.session_file_id !== 'f-better'),
+        })],
+      ];
+
+      it.each(scenarios)('writes the same matches as the scan-everything path: %s', async (_name, shape) => {
+        const tables = shape(longSessionTables(SESSION).tables);
+        const expected = writesOfScanEverything(SESSION, tables);
+        const { log } = stubMatchTables({ [SESSION]: tables });
+
+        const count = await toolCallMatcher.matchSession(SESSION);
+
+        expect(log.inserts).toEqual(expected.inserts);
+        expect(log.deletedMatches).toEqual(expected.deletedMatches);
+        expect(log.deletedFiles).toEqual(expected.deletedFiles);
+        expect(count).toBe(expected.inserts.length > 0 ? expected.inserts[0].length / 8 : 0);
+      });
+
+      it('the fixture exercises each case: replacement, backfill, dedup order, out-of-range and reused calls', () => {
+        const { tables, ids } = longSessionTables(SESSION);
+        const unbounded = writesOfScanEverything(SESSION, tables);
+        expect(insertedPairs(unbounded.inserts[0])).toEqual([
+          ['f-never', ids.never, 40],
+          ['f-timed', ids.timedNoItem, 40],
+          ['f-edge', ids.edgeCompleted, 40],
+          ['f-better', ids.better, 100],
+          ['f-long', ids.longCompleted, 40],
+          ['f-short', ids.shortCompleted, 70],
+          ['f-tie', ids.tieACompleted, 40],
+        ]);
+        expect(unbounded.deletedMatches).toEqual([[SESSION, ['f-better']]]);
+        expect(unbounded.deletedFiles).toEqual([[['f-orphan']]]);
+        // Bounded, edge.ts's started row is out of range, so its completed
+        // window keeps no args and no longer matches, and reused.ts's early
+        // window is out of range, so the late one matches.
+        const bounded = writesOfScanEverything(SESSION, scenarios[2][1](tables));
+        expect(insertedPairs(bounded.inserts[0])).toEqual([
+          ['f-timed', ids.timedNoItem, 40],
+          ['f-long', ids.longCompleted, 40],
+          ['f-short', ids.shortCompleted, 70],
+          ['f-tie', ids.tieACompleted, 40],
+          ['f-reused', ids.reusedLate, 40],
+        ]);
+      });
+
+      it('keeps payload only for windows that can score for a file needing work', async () => {
+        const { tables, ids } = longSessionTables(SESSION);
+        const expected = writesOfScanEverything(SESSION, tables);
+        const { log } = stubMatchTables({ [SESSION]: tables });
+
+        const scan = await getMatchableToolCallWindows(SESSION, '/workspace', expected.needing);
+
+        expect(scan.scannedWindowCount).toBe(expected.windows.length);
+        expect(scan.scannedWindowCount).toBeGreaterThan(500);
+        expect(scan.dedupedWindowCount).toBe(expected.deduped.length);
+        // never 1, timed 2, edge 1 (completed), better 2, long 1 (completed),
+        // short 2, stale 1 (started), tie 4. Nothing from the earlier hours.
+        expect(scan.retainedWindowCount).toBe(14);
+        // Each kept window is the one dedup chose, with the same payload (args
+        // filled where dedup filled them), in dedup order.
+        const key = (w: ToolCallWindow) => `${w.messageId}:${w.toolCallItemId}`;
+        const kept = new Set(scan.windows.map(key));
+        expect(scan.windows).toEqual(expected.deduped.filter(w => kept.has(key(w))));
+        const scoring = expected.deduped.filter(w => expected.needing.some(f =>
+          (scoreMatch(f.file_path, Number(f.timestamp_ms), w, f.metadata.toolUseId as string | undefined)?.score ?? 0) >= 30));
+        expect(scoring.map(key).filter(k => !kept.has(k))).toEqual([]);
+        // Only the two long tools' started rows were re-read, for their args.
+        expect(log.rereads).toEqual([ids.edgeStarted, ids.longStarted]);
+
+        // matchSession takes this path: it re-reads the same two rows.
+        log.rereads.length = 0;
+        await toolCallMatcher.matchSession(SESSION);
+        expect(log.rereads).toEqual([ids.edgeStarted, ids.longStarted]);
+        expect(log.inserts).toEqual(expected.inserts);
+      });
+
+      it('writes nothing when a started row it re-reads has gone, and the next pass matches', async () => {
+        const { tables, ids } = longSessionTables(SESSION);
+        const expected = writesOfScanEverything(SESSION, tables);
+        const { log, vanished } = stubMatchTables({ [SESSION]: tables });
+        vanished.add(ids.longStarted);
+
+        await expect(toolCallMatcher.matchSession(SESSION)).resolves.toBe(0);
+        expect(log.inserts).toEqual([]);
+        expect(log.deletedMatches).toEqual([]);
+        expect(log.deletedFiles).toEqual([]);
+
+        vanished.clear();
+        await expect(toolCallMatcher.matchSession(SESSION)).resolves.toBe(7);
+        expect(log.inserts).toEqual(expected.inserts);
+        expect(log.deletedMatches).toEqual(expected.deletedMatches);
+        expect(log.deletedFiles).toEqual(expected.deletedFiles);
+      });
     });
   });
 });

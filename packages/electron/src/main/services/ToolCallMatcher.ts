@@ -545,6 +545,9 @@ interface MatchCandidate {
  */
 export const RAW_TOOL_CALL_PAGE_SIZE = 100;
 
+/** Columns a single-session raw tool-call read selects. */
+const RAW_MESSAGE_COLUMNS = 'id, content, metadata, EXTRACT(EPOCH FROM created_at) * 1000 AS created_at_ms';
+
 interface RawToolCallScanOptions {
   afterDate?: Date;
   beforeDate?: Date;
@@ -623,7 +626,7 @@ export async function getRawToolCallWindows(
   try {
     const windows: ToolCallWindow[] = [];
     await scanRawOutputMessages<AgentMessageRow>(
-      'id, content, metadata, EXTRACT(EPOCH FROM created_at) * 1000 AS created_at_ms',
+      RAW_MESSAGE_COLUMNS,
       'session_id = $1',
       sessionId,
       options,
@@ -686,6 +689,225 @@ export async function getRawToolCallWindowsMultiSession(
   } catch (error) {
     logger.main.warn('[ToolCallMatcher] Failed to read raw tool call windows (multi-session):', error);
     return new Map();
+  }
+}
+
+/** The file fields that decide which windows scoreMatch can score for a file. */
+type MatchableFile = { timestamp_ms: number | string; metadata: any };
+
+/**
+ * Build a test for whether scoreMatch can score a window for at least one of
+ * `files`. It can only on an exact metadata toolUseId match, or when the
+ * window passes its time cutoff; for every other window it returns null. The
+ * cutoff test is scoreMatch's own, so a NaN timestamp on either side passes,
+ * as it does there.
+ */
+function createScoreReach(files: ReadonlyArray<MatchableFile>): (window: ToolCallWindow) => boolean {
+  const toolUseIds = new Set<unknown>();
+  const sortedTimestamps: number[] = [];
+  const otherTimestamps: number[] = [];
+  for (const file of files) {
+    const toolUseId = file.metadata?.toolUseId;
+    if (toolUseId) toolUseIds.add(toolUseId);
+    const timestamp = ensureNumber(file.timestamp_ms);
+    if (Number.isFinite(timestamp)) sortedTimestamps.push(timestamp);
+    else otherTimestamps.push(timestamp);
+  }
+  sortedTimestamps.sort((a, b) => a - b);
+
+  const passesCutoff = (fileTimestamp: number, toolTime: number) =>
+    !(Math.abs(fileTimestamp - toolTime) > TIME_CUTOFF_MS);
+
+  return (window) => {
+    if (window.toolUseId && toolUseIds.has(window.toolUseId)) return true;
+    const toolTime = window.messageCreatedAt;
+    if (otherTimestamps.some(timestamp => passesCutoff(timestamp, toolTime))) return true;
+    // The distance to toolTime never shrinks moving away from it through the
+    // sorted timestamps, so the nearest one on each side decides.
+    let low = 0;
+    let high = sortedTimestamps.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (sortedTimestamps[mid] < toolTime) low = mid + 1;
+      else high = mid;
+    }
+    return (low < sortedTimestamps.length && passesCutoff(sortedTimestamps[low], toolTime))
+      || (low > 0 && passesCutoff(sortedTimestamps[low - 1], toolTime));
+  };
+}
+
+/**
+ * One tool call (toolCallItemId) while getMatchableToolCallWindows scans.
+ * Mirrors the choice deduplicateWindows makes: the first completed window,
+ * else the first window, with args taken from the first started window when
+ * the completed one has none.
+ */
+interface ToolCallScanState {
+  /** Whether a completed window has been seen; the first one is the call's window. */
+  completed: boolean;
+  /** The call's window so far, or null when it cannot score for any file. */
+  chosen: ToolCallWindow | null;
+  /** Message of the first started (not completed) window, the args source. */
+  startedMessageId: number | null;
+  /** That window, kept only when it can score itself; otherwise re-read if needed. */
+  started: ToolCallWindow | null;
+}
+
+export interface MatchableToolCallWindows {
+  /**
+   * The windows deduplicateWindows would return for the whole scan, narrowed
+   * to those that can score for at least one of the files: same order, same
+   * payload, args filled the same way.
+   */
+  windows: ToolCallWindow[];
+  /** Windows the scan parsed, before deduplication; 0 when the read failed. */
+  scannedWindowCount: number;
+  /** Windows deduplicateWindows would return for the whole scan. */
+  dedupedWindowCount: number;
+  /** Windows whose args and output the scan held on to. */
+  retainedWindowCount: number;
+}
+
+/**
+ * Re-read the started row of a tool call whose completed window has no args.
+ * The scan kept no payload for it because it could not score itself.
+ */
+async function readStartedToolCallWindow(
+  sessionId: string,
+  workspacePath: string | undefined,
+  messageId: number,
+  toolCallItemId: string,
+): Promise<ToolCallWindow> {
+  const { rows } = await database.query<AgentMessageRow>(
+    `SELECT ${RAW_MESSAGE_COLUMNS}
+       FROM ai_agent_messages
+       WHERE session_id = $1 AND id = $2`,
+    [sessionId, messageId],
+  );
+  const row = rows.find(candidate => ensureNumber(candidate.id) === messageId);
+  const started = row && parseToolCallWindows(
+    messageId,
+    row.content,
+    new Date(ensureNumber(row.created_at_ms)),
+    sessionId,
+    workspacePath,
+    row.metadata,
+  ).find(window => window.toolCallItemId === toolCallItemId && !window.isCompleted);
+  if (!started) {
+    // The scan read this row moments ago. Scoring without its args could
+    // store a worse match, so this pass gives up and the next one rescans.
+    throw new Error(
+      `[ToolCallMatcher] Started row ${messageId} of tool call ${toolCallItemId} changed during the scan`,
+    );
+  }
+  return started;
+}
+
+/**
+ * Scan one session's raw tool calls for matchSession, keeping only what can
+ * change its result (#1649). Exported for testing.
+ *
+ * scoreMatch scores a window for a file only on an exact toolUseId match or
+ * within TIME_CUTOFF_MS of the file's timestamp; every other window returns
+ * null and cannot affect a match. Collecting every window first and
+ * deduplicating afterwards held a long session's whole tool history (args and
+ * output) in memory for each pass, and a session with toolUseIds is scanned
+ * unbounded after every tool call. Here each window is folded into its tool
+ * call's dedup state as its page arrives, and only windows that can score for
+ * one of `files` keep their payload. A completed window that can score but
+ * has no args gets them from its call's started window, as deduplicateWindows
+ * does; when that started window was not kept, its row is re-read by id.
+ *
+ * Fails the way getRawToolCallWindows does: a failed read is logged and
+ * returns no windows, with scannedWindowCount 0.
+ */
+export async function getMatchableToolCallWindows(
+  sessionId: string,
+  workspacePath: string | undefined,
+  files: ReadonlyArray<MatchableFile>,
+  options?: RawToolCallScanOptions,
+): Promise<MatchableToolCallWindows> {
+  const canScore = createScoreReach(files);
+  let scannedWindowCount = 0;
+  let retainedWindowCount = 0;
+  const retain = (window: ToolCallWindow): ToolCallWindow | null => {
+    if (!canScore(window)) return null;
+    retainedWindowCount += 1;
+    return window;
+  };
+
+  // deduplicateWindows returns windows without an item id first, in scan
+  // order, then one window per item id in order of first appearance; a Map
+  // iterates in insertion order, which is the same.
+  const withoutItemId: ToolCallWindow[] = [];
+  let withoutItemIdCount = 0;
+  const calls = new Map<string, ToolCallScanState>();
+
+  try {
+    await scanRawOutputMessages<AgentMessageRow>(
+      RAW_MESSAGE_COLUMNS,
+      'session_id = $1',
+      sessionId,
+      options,
+      (msg) => {
+        const msgWindows = parseToolCallWindows(
+          ensureNumber(msg.id),
+          msg.content,
+          new Date(ensureNumber(msg.created_at_ms)),
+          sessionId,
+          workspacePath,
+          msg.metadata,
+        );
+        for (const window of msgWindows) {
+          scannedWindowCount += 1;
+          const itemId = window.toolCallItemId;
+          if (!itemId) {
+            withoutItemIdCount += 1;
+            const kept = retain(window);
+            if (kept) withoutItemId.push(kept);
+            continue;
+          }
+          const call = calls.get(itemId);
+          if (!call) {
+            const kept = retain(window);
+            calls.set(itemId, window.isCompleted
+              ? { completed: true, chosen: kept, startedMessageId: null, started: null }
+              : { completed: false, chosen: kept, startedMessageId: window.messageId, started: kept });
+          } else if (window.isCompleted && !call.completed) {
+            call.completed = true;
+            call.chosen = retain(window);
+          } else if (!window.isCompleted && call.startedMessageId === null) {
+            call.startedMessageId = window.messageId;
+            call.started = retain(window);
+          }
+        }
+      },
+    );
+
+    const windows = [...withoutItemId];
+    for (const [itemId, call] of calls) {
+      const chosen = call.chosen;
+      if (!chosen) continue;
+      if (call.completed && !chosen.argsText && call.startedMessageId !== null) {
+        const started = call.started
+          ?? await readStartedToolCallWindow(sessionId, workspacePath, call.startedMessageId, itemId);
+        if (started.argsText) {
+          chosen.argsText = started.argsText;
+          chosen.args = started.args;
+        }
+      }
+      windows.push(chosen);
+    }
+
+    return {
+      windows,
+      scannedWindowCount,
+      dedupedWindowCount: withoutItemIdCount + calls.size,
+      retainedWindowCount,
+    };
+  } catch (error) {
+    logger.main.warn('[ToolCallMatcher] Failed to read raw tool call windows:', error);
+    return { windows: [], scannedWindowCount: 0, dedupedWindowCount: 0, retainedWindowCount: 0 };
   }
 }
 
@@ -853,7 +1075,17 @@ export function scoreWorkspaceFileEdit(
 // ToolCallMatcher class
 // ---------------------------------------------------------------------------
 
+/** A session with a matchSession pass running. */
+interface SessionMatchPasses {
+  /** The trailing pass shared by every call made while the current pass runs. */
+  queued: Promise<number> | null;
+  /** Starts `queued`; called once the running pass settles. */
+  startQueued: (() => void) | null;
+}
+
 class ToolCallMatcherImpl {
+  private readonly sessionMatchPasses = new Map<string, SessionMatchPasses>();
+
   async matchWorkspaceFileEdit(input: WorkspaceFileEditMatchInput): Promise<WorkspaceFileEditMatchResult> {
     try {
       if (!database.isInitialized()) {
@@ -997,9 +1229,46 @@ class ToolCallMatcherImpl {
 
   /**
    * Match all unmatched session_files entries for a session.
-   * Returns the number of new matches created.
+   * Resolves to the number of new matches created by the pass the call gets.
+   *
+   * One pass per session runs at a time (#1649). Tool use schedules a pass
+   * after each call and the match-tool-calls IPC runs one too, and on a long
+   * session each pass reads the whole transcript, so overlapping passes of one
+   * session multiplied that work and memory. A call made while a pass runs
+   * starts no scan: it gets the single trailing pass that starts when the
+   * running one settles, and resolves to that pass's count. Every call made
+   * during the same running pass shares it, so a burst costs at most two
+   * scans, and every caller's count comes from a pass that started after its
+   * call and so sees the rows that prompted it. A pass that fails still starts
+   * the trailing pass or frees the session. Sessions do not wait on each other.
    */
-  async matchSession(sessionId: string): Promise<number> {
+  matchSession(sessionId: string): Promise<number> {
+    const running = this.sessionMatchPasses.get(sessionId);
+    if (running) {
+      if (!running.queued) {
+        running.queued = new Promise<number>(resolve => {
+          running.startQueued = () => resolve(this.startMatchSessionPass(sessionId, running));
+        });
+      }
+      return running.queued;
+    }
+    const passes: SessionMatchPasses = { queued: null, startQueued: null };
+    this.sessionMatchPasses.set(sessionId, passes);
+    return this.startMatchSessionPass(sessionId, passes);
+  }
+
+  private startMatchSessionPass(sessionId: string, passes: SessionMatchPasses): Promise<number> {
+    // Calls from here on queue behind this pass, not the one that just ended.
+    passes.queued = null;
+    passes.startQueued = null;
+    return this.runMatchSessionPass(sessionId).finally(() => {
+      const startQueued = passes.startQueued;
+      if (startQueued) startQueued();
+      else this.sessionMatchPasses.delete(sessionId);
+    });
+  }
+
+  private async runMatchSessionPass(sessionId: string): Promise<number> {
     try {
       if (!database.isInitialized()) {
         await database.initialize();
@@ -1111,24 +1380,23 @@ class ToolCallMatcherImpl {
         }
       }
 
-      // 3. Load tool call windows from raw ai_agent_messages.
-      const windows = await getRawToolCallWindows(sessionId, workspacePath, rawWindowOptions);
+      // 3. Load tool call windows from raw ai_agent_messages, deduplicated by
+      // toolCallItemId as deduplicateWindows does: when both item.started and
+      // item.completed exist for one tool call, the completed window (which
+      // has the output) is kept, with the started window's args if it has
+      // none. Only windows that can score for a file needing work are
+      // returned, and only they keep their payload during the scan (#1649).
+      const scan = await getMatchableToolCallWindows(sessionId, workspacePath, filesNeedingWork, rawWindowOptions);
 
-      if (windows.length === 0) return 0;
+      if (scan.scannedWindowCount === 0) return 0;
 
-      // 4. Deduplicate windows by toolCallItemId.
-      // When both item.started and item.completed exist for the same tool call,
-      // merge into one window preferring item.completed data (has output/result).
-      // When only item.started exists but the session continued (later messages exist),
-      // treat it as implicitly closed — a valid match candidate.
-      // Canonical events produce one window per tool call (already deduplicated by providerToolCallId).
-      // deduplicateWindows is safe to call with empty messages - it groups by toolCallItemId and
-      // prefers completed windows, which is correct for canonical events.
-      const deduped = this.deduplicateWindows(windows, []);
+      const deduped = scan.windows;
       logger.main.debug('[ToolCallMatcher] Loaded match inputs:', {
         sessionId,
         sessionFileCount: sessionFiles.length,
-        toolWindowCount: deduped.length,
+        toolWindowCount: scan.dedupedWindowCount,
+        matchableToolWindowCount: deduped.length,
+        retainedToolWindowCount: scan.retainedWindowCount,
       });
 
       // 6. Match each file, replacing old matches when a better one is found.
