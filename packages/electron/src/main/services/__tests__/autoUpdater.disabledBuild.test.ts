@@ -33,6 +33,7 @@ vi.mock('electron', () => {
   };
 });
 vi.mock('electron-log/main', () => ({ default: { transports: { file: {} }, info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
+vi.mock('../../extensions/backendTerminals', () => ({ stopAllBackendTerminals: vi.fn() }));
 vi.mock('../../utils/store', () => ({ getReleaseChannel: () => 'stable', store: {} }));
 vi.mock('../../utils/ipcRegistry', () => ({
   safeHandle: (name: string, fn: (...args: unknown[]) => unknown) => mocks.handlers.set(name, fn),
