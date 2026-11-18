@@ -24,6 +24,8 @@ interface FileTreeItem {
   type: 'file' | 'directory';
   children?: FileTreeItem[];
   childrenTruncated?: boolean;
+  omittedChildCount?: number;
+  omittedChildCountIsMinimum?: boolean;
 }
 
 interface ClaudeForWindowsInstallation {
@@ -239,7 +241,7 @@ interface ElectronAPI {
       /** Projects beyond the org's primary one; keyed by `teamProjectId`. */
       projectGrants?: Array<{
         teamProjectId: string;
-        projectRole: 'project-admin' | 'project-editor' | 'project-viewer';
+        projectRole: 'project-admin' | 'project-editor' | 'project-commenter' | 'project-viewer';
       }>,
     ) => Promise<any>;
     removeMember: (orgId: string, memberId: string) => Promise<any>;

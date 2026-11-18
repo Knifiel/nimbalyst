@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   archiveSessions: vi.fn(),
   getWorktreeStatus: vi.fn(),
   fetch: vi.fn(),
+  raw: vi.fn(),
   store: {
     create: vi.fn().mockResolvedValue(undefined),
     get: vi.fn(),
@@ -43,7 +44,8 @@ vi.mock('../../services/WorktreeStore', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../services/WorktreeStore')>()),
   createWorktreeStore: () => mocks.store,
 }));
-vi.mock('simple-git', () => ({ simpleGit: () => ({ fetch: mocks.fetch }) }));
+vi.mock('simple-git', () => ({ simpleGit: () => ({ fetch: mocks.fetch, raw: mocks.raw }) }));
+vi.mock('../../utils/ipcRegistry', () => ({ safeHandle: (name: string, fn: (...args: any[]) => Promise<any>) => mocks.handlers.set(name, fn) }));
 vi.mock('../../services/SuperLoopStore', () => ({ createSuperLoopStore: vi.fn() }));
 vi.mock('../../database/initialize', () => ({ getDatabase: () => ({}) }));
 vi.mock('../../services/ArchiveProgressManager', () => ({ archiveProgressManager: {} }));
@@ -56,13 +58,16 @@ vi.mock('../../utils/terminalStore', () => ({ getTerminalsByWorktreeId: vi.fn(),
 vi.mock('../../file/GitRefWatcher', () => ({ gitRefWatcher: { start: mocks.start, stop: mocks.stop } }));
 vi.mock('../../file/GitWatcherLifecycle', () => ({ isGitRepositoryInUse: () => mocks.inUse }));
 vi.mock('../../services/workspaceRepos', () => ({
-  listReposForRoot: () => [],
+  // A nested clone is its own root
+  listReposForRoot: async (root: string) => (root === '/project/api' ? ['/project/api'] : []),
   listWorkspaceRepos: () => ['/project', '/collab'],
   resolveDefaultRepo: () => null,
 }));
 vi.mock('../../utils/store', () => ({
   getWorkspaceRoots: (workspacePath: string) => [workspacePath],
   getWorkspaceState: () => mocks.workspaceState,
+  getWorktreeDefaultBase: vi.fn(),
+  setWorktreeDefaultBase: vi.fn(),
 }));
 vi.mock('../TerminalHandlers', () => ({ createWorkspaceTerminal: mocks.createWorkspaceTerminal }));
 vi.mock('../../services/GitOperationLock', () => ({ gitOperationLock: {} }));
@@ -126,7 +131,19 @@ it.each([
   expect(result.success).toBe(true);
   expect(mocks.createWorktree).toHaveBeenCalledWith('/project', {
     ...nameOption, baseBranch: 'main', takenPaths: recorded, worktreesDir: '/project_worktrees',
+    settingsWorkspacePath: '/project',
   });
+});
+
+// #1958: the default-base setting belongs to the workspace, so branching a
+// nested clone still reads the workspace's setting, not one keyed by the clone.
+it('branches a nested clone but keys the default-base setting by the workspace', async () => {
+  mocks.createWorktree.mockResolvedValue({ id: 'b', path: '/project/api_worktrees/b', branch: 'worktree/b', projectPath: '/project/api' });
+
+  const result = await mocks.handlers.get('worktree:create')!({}, '/project', { name: 'b', sourceFolderPath: '/project/api' });
+
+  expect(result).toMatchObject({ success: true, worktree: { projectPath: '/project', sourceFolderPath: '/project/api' } });
+  expect(mocks.createWorktree).toHaveBeenCalledWith('/project/api', expect.objectContaining({ settingsWorkspacePath: '/project' }));
 });
 
 it.each([
@@ -278,3 +295,19 @@ it('runs the setup command in a terminal of the new worktree, with its variables
   })));
 });
 
+// #1958: a worktree based on `origin/main` stores that ref; the pre-status
+// fetch ran `git fetch origin origin/main`, which fails.
+it('fetches the remote branch, not the remote ref, for a remote-ref base', async () => {
+  mocks.store.getByPath.mockResolvedValue({ baseBranch: 'origin/main' });
+  mocks.raw.mockImplementation(async (args: string[]) => {
+    if (args[0] === 'remote') return 'origin\n';
+    if (args.includes('refs/remotes/origin/main^{commit}')) return 'abc123\n';
+    return '';
+  });
+  mocks.fetch.mockResolvedValue(undefined);
+  mocks.getWorktreeStatus.mockResolvedValue({ hasUncommittedChanges: false });
+
+  await mocks.handlers.get('worktree:get-status')!({}, '/project_worktrees/branch', { fetchFirst: true });
+
+  expect(mocks.fetch).toHaveBeenCalledWith(['--', 'origin', 'main']);
+});

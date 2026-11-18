@@ -18,8 +18,9 @@ vi.mock('../../ipc/ExtensionHandlers', () => ({
   listExtensionBackendModules: vi.fn(),
   resolveExtensionBackendModules: vi.fn(),
 }));
-vi.mock('../../utils/store', () => ({ getExtensionEnabled: vi.fn() }));
+vi.mock('../../utils/store', () => ({ getExtensionEnabled: vi.fn(), isDeveloperMode: vi.fn() }));
 vi.mock('../../mcp/mcpWorkspaceResolver', () => ({ getRegisteredWorkspacePaths: vi.fn() }));
+vi.mock('../../window/windowState', () => ({ listOpenWorkspacePaths: vi.fn(() => []) }));
 vi.mock('../../mcp/backendToolRegistry', () => ({ clearBackendToolsForModule: vi.fn(), clearBackendTools: vi.fn() }));
 vi.mock('../../file/GitWatcherLifecycle', () => ({ isGitRepositoryInUse: vi.fn() }));
 vi.mock('../../utils/logger', () => ({
@@ -32,11 +33,15 @@ import {
   stopExtensionBackendModules,
   startWorkspaceBackendModules,
   syncEnabledBackendModulesOnStartup,
+  syncDeveloperModeBackendModules,
   retryBackendModulesAwaitingTrust,
+  getDefaultBackendModuleLifecycleDeps,
   type BackendModuleLifecycleDeps,
   type ResolvedBackendModules,
 } from '../backendModuleLifecycle';
 import type { ModuleHandle } from '../PrivilegedExtensionHost';
+import { getRegisteredWorkspacePaths } from '../../mcp/mcpWorkspaceResolver';
+import { listOpenWorkspacePaths } from '../../window/windowState';
 
 const EXT = 'com.nimbalyst.memory';
 const MOD = 'memory-engine';
@@ -56,6 +61,7 @@ function makeDeps(overrides: Partial<BackendModuleLifecycleDeps> = {}): BackendM
     listBackendModuleExtensions: vi.fn(async () => [resolved()]),
     resolveBackendModules: vi.fn(async () => resolved()),
     isExtensionEnabled: vi.fn(() => true),
+    isDeveloperMode: vi.fn(() => true),
     collectWorkspaces: vi.fn(() => ['/ws/a', '/ws/b']),
     startModule: vi.fn(async (args) => ({
       extensionId: args.extensionId,
@@ -346,4 +352,102 @@ it('releases running siblings without waiting for unanswered consent, including 
     answer();
     await Promise.all([opening, closing, reopening]);
   }
+});
+
+describe('requiresDeveloperMode extensions', () => {
+  const DEV_EXT = 'com.nimbalyst.run';
+  const gated = () => resolved({ extensionId: DEV_EXT, requiresDeveloperMode: true });
+
+  it('does not start a gated extension on startup, workspace open, or enable while Developer Mode is off', async () => {
+    const deps = makeDeps({
+      isDeveloperMode: vi.fn(() => false),
+      listBackendModuleExtensions: vi.fn(async () => [gated(), resolved()]),
+      resolveBackendModules: vi.fn(async () => gated()),
+    });
+    await syncEnabledBackendModulesOnStartup(deps);
+    await startWorkspaceBackendModules('/ws/c', deps);
+    await startExtensionBackendModules(DEV_EXT, deps);
+
+    const started = vi.mocked(deps.startModule).mock.calls.map(([args]) => args.extensionId);
+    expect(started).not.toContain(DEV_EXT);
+    // The ungated extension is unaffected.
+    expect(started.filter((id) => id === EXT)).toHaveLength(3);
+  });
+
+  it('starts gated extensions in every open workspace when Developer Mode is turned on', async () => {
+    const deps = makeDeps({
+      listBackendModuleExtensions: vi.fn(async () => [gated(), resolved()]),
+    });
+    await syncDeveloperModeBackendModules(deps);
+    expect(vi.mocked(deps.startModule).mock.calls.map(([a]) => [a.extensionId, a.workspacePath])).toEqual([
+      [DEV_EXT, '/ws/a'],
+      [DEV_EXT, '/ws/b'],
+    ]);
+    expect(deps.stopModule).not.toHaveBeenCalled();
+  });
+
+  it('stops gated extensions and clears their tools when Developer Mode is turned off', async () => {
+    const handles = [
+      { extensionId: DEV_EXT, moduleId: MOD, workspacePath: '/ws/a', state: { status: 'running' } },
+      { extensionId: EXT, moduleId: MOD, workspacePath: '/ws/a', state: { status: 'running' } },
+    ] as ModuleHandle[];
+    const deps = makeDeps({
+      isDeveloperMode: vi.fn(() => false),
+      listBackendModuleExtensions: vi.fn(async () => [gated(), resolved()]),
+      listModuleHandles: vi.fn(() => handles),
+    });
+    await syncDeveloperModeBackendModules(deps);
+    expect(vi.mocked(deps.stopModule).mock.calls).toEqual([[DEV_EXT, MOD, '/ws/a']]);
+    expect(deps.clearBackendToolsForModule).toHaveBeenCalledWith(DEV_EXT, MOD);
+    expect(deps.startModule).not.toHaveBeenCalled();
+  });
+
+  // The stop for "Developer Mode off" runs while the start is in flight and
+  // finds no module to stop; the start must not leave one running after it.
+  it.each([
+    ['Developer Mode is turned off', 'isDeveloperMode'],
+    ['the extension is disabled', 'isExtensionEnabled'],
+  ] as const)('stops a gated module that finishes starting after %s', async (_label, flag) => {
+    let on = true;
+    const deps = makeDeps({
+      collectWorkspaces: vi.fn(() => ['/ws/a']),
+      resolveBackendModules: vi.fn(async () => gated()),
+      [flag]: vi.fn(() => on),
+      startModule: vi.fn(async (args) => {
+        on = false;
+        return {
+          extensionId: args.extensionId,
+          moduleId: args.module.id,
+          workspacePath: args.workspacePath,
+          state: { status: 'running', startedAt: 0, methods: [] },
+        } as ModuleHandle;
+      }),
+    });
+    await startExtensionBackendModules(DEV_EXT, deps);
+    expect(vi.mocked(deps.stopModule).mock.calls).toEqual([[DEV_EXT, MOD, '/ws/a']]);
+    expect(deps.clearBackendTools).toHaveBeenCalledWith('/ws/a', DEV_EXT, MOD);
+  });
+
+  it('leaves a disabled gated extension stopped when Developer Mode is turned on', async () => {
+    const deps = makeDeps({
+      isExtensionEnabled: vi.fn(() => false),
+      listBackendModuleExtensions: vi.fn(async () => [gated()]),
+    });
+    await syncDeveloperModeBackendModules(deps);
+    expect(deps.startModule).not.toHaveBeenCalled();
+  });
+});
+
+describe('default workspace lookup', () => {
+  // A project window that has never opened a file or run an agent turn is not
+  // registered for MCP routing, but turning an extension on must reach it.
+  it('covers open project windows as well as workspaces registered for MCP routing', () => {
+    vi.mocked(getRegisteredWorkspacePaths).mockReturnValue(['/ws/registered', '/ws/both']);
+    vi.mocked(listOpenWorkspacePaths).mockReturnValue(['/ws/both', '/ws/window-only']);
+    expect(getDefaultBackendModuleLifecycleDeps().collectWorkspaces()).toEqual([
+      '/ws/registered',
+      '/ws/both',
+      '/ws/window-only',
+    ]);
+  });
 });

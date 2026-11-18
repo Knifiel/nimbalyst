@@ -29,7 +29,7 @@ import {
   WidgetOptionRow,
   WidgetStatusPill,
 } from './shared/InteractiveWidgetChrome';
-import { parseAnswers, parseCancelledResult } from './askUserQuestionResult';
+import { erroredQuestionOutcome, parseAnswers, parseCancelledResult } from './askUserQuestionResult';
 
 // Shared with the feedback surfaces via InteractiveWidgetChrome; the glyph
 // itself stays local because it is this widget's identity.
@@ -128,17 +128,34 @@ export const AskUserQuestionWidget: React.FC<CustomToolWidgetProps> = ({
 
   // Parse result to determine completion state
   const rawResult = toolCall.result;
-  const parsedAnswers = useMemo(() => parseAnswers(toolCall.arguments, rawResult), [toolCall.arguments, rawResult]);
+  // An errored result is never read for answers (#1577); see erroredQuestionOutcome.
+  const errored = useMemo(
+    () => erroredQuestionOutcome(toolCall),
+    [toolCall.isError, toolCall.status, rawResult],
+  );
+  const parsedAnswers = useMemo(
+    () => (errored ? {} : parseAnswers(toolCall.arguments, rawResult)),
+    [errored, toolCall.arguments, rawResult],
+  );
   const hasResult = rawResult !== undefined && rawResult !== null && rawResult !== '';
 
   // Check if cancelled
-  const cancelledState = useMemo(() => parseCancelledResult(rawResult), [rawResult]);
+  const cancelledState = useMemo(
+    () => (errored
+      ? { cancelled: errored.kind === 'cancelled', reason: errored.kind === 'cancelled' ? errored.reason : undefined }
+      : parseCancelledResult(rawResult)),
+    [errored, rawResult],
+  );
   const isCancelled = cancelledState.cancelled;
   // The user sent a new message instead of answering. Older transcripts have
   // no durable result for this, so the transcript also passes `superseded`.
   const isSkipped = cancelledState.reason === 'superseded' || (!hasResult && superseded === true);
 
-  const isCompleted = hasResult || isSkipped;
+  // The call failed before reaching the user (e.g. a PreToolUse hook denied
+  // it, #1577). Its error text is not an answer, and no prompt is pending.
+  const isBlocked = errored?.kind === 'blocked';
+
+  const isCompleted = hasResult || isSkipped || isBlocked;
   const isPending = !isCompleted;
 
   // Draft state lives in a jotai atomFamily keyed by questionId so it survives
@@ -307,6 +324,42 @@ export const AskUserQuestionWidget: React.FC<CustomToolWidgetProps> = ({
   // If no questions, show nothing
   if (questions.length === 0) {
     return null;
+  }
+
+  if (isBlocked) {
+    const reason = errored?.kind === 'blocked' ? errored.reason : '';
+    return (
+      <InteractiveWidgetCard
+        rootClassName="ask-user-question-widget"
+        testId="ask-user-question-widget"
+        state="blocked"
+        tone="resolved"
+      >
+        <InteractiveWidgetHeader
+          icon={<QuestionMarkIcon />}
+          title="Question Blocked"
+          trailing={
+            <WidgetStatusPill tone="muted" testId="ask-user-question-blocked">
+              Blocked
+            </WidgetStatusPill>
+          }
+        />
+        <InteractiveWidgetBody>
+          {reason && (
+            <WidgetNoteRow rootClassName="ask-user-question-blocked-reason" testId="ask-user-question-blocked-reason">
+              {reason}
+            </WidgetNoteRow>
+          )}
+          {questions.map((question, qIndex) => (
+            <WidgetBlock
+              key={qIndex}
+              tag={question.header}
+              question={question.question}
+            />
+          ))}
+        </InteractiveWidgetBody>
+      </InteractiveWidgetCard>
+    );
   }
 
   // Determine display result (local takes precedence while waiting)

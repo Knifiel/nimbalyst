@@ -353,6 +353,7 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
           {panel.isAlpha && (
             <AlphaBadge size="dot" className="absolute top-0 right-0.5 pointer-events-none" />
           )}
+          <PanelGutterBadgeBubble panelId={panel.id} />
         </button>
       </HelpTooltip>
     );
@@ -494,7 +495,7 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
       render: () => <GeminiUsageIndicator />,
     },
     {
-      id: 'extension-dev', section: 'indicators', icon: 'extension', label: 'Extension Dev', hideable: true,
+      id: 'extension-dev', section: 'indicators', icon: 'extension', label: 'Extension Dev', hideable: true, scope: 'app',
       render: () => <ExtensionDevIndicator onOpenSettings={onOpenSettings} />,
     },
     {

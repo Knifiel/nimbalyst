@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Databases too large to migrate to SQLite automatically now get a one-time prompt at launch to migrate, with the size, the disk space needed, and progress
+- Run Manager (alpha), in developer mode: a Runs panel that starts, stops and restarts a project's dev servers from named commands in `.nimbalyst/run.json`, shows each one's status, link and uptime, and keeps its log in a pinned terminal tab; agents can list, start, stop and restart the same targets and read their logs
 - New worktrees can be set up automatically: chosen project files such as `.env` are copied in and a setup command runs in a terminal of the worktree (Settings > Project > Worktree Setup)
 - The new-worktree dialog can branch a project's nested clones together with it: one task folder holds a worktree of each chosen clone at its own path, on one branch, with a repository picker in the Git panel, and is archived or deleted as a unit
 - Approving a plan can start its implementation in a new worktree, and sessions an agent spawns into a new worktree get the repositories last picked in the new-worktree dialog and the project's worktree setup, starting once the setup command finishes
@@ -18,11 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Existing databases up to 3 GiB (previously 1 GiB) now migrate to SQLite automatically at startup
+- Settings > Database is now shown to every install still on PGLite, not only in developer mode, so larger databases can be migrated from there
 - A worktree of a repository cloned inside the project uses the project's agent trust instead of asking again; the clone opened on its own still asks
 
 ### Fixed
 <!-- Bug fixes go here -->
-- The weekly history in the Claude and Codex usage popovers now charts the main weekly limit by default instead of a per-model limit such as Fable
+- Claude Agent skills that run as a forked command, such as `/review`, are no longer denied the Nimbalyst session-summary and session-result tools
+- With auto-commit on, commit proposals into another worktree of the session's repository, and folder proposals containing files another session also edited, are now committed automatically instead of waiting for manual approval
 - A worktree of a repository cloned inside the project is created next to the project instead of inside it, and the new-worktree dialog names the repository it branches from.
 - Archiving or deleting a worktree no longer deletes another repository's checkout of the same project that sits inside the worktree's folder
 - Archiving or deleting a worktree no longer deletes a folder or branch its repository does not own (another repository's worktree, or a moved, copied, locked or nested checkout), and no longer prunes the repository's other worktrees.
@@ -35,8 +40,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A message sent while background tasks are still running goes in right away, instead of waiting for all of them once one has finished
 - Answering a question card while the agent's turn is still running now reaches the agent at its next tool call, instead of after the turn ends
 - A background task that finishes while the agent is still working no longer gets its result answered twice, and the agent's reply to a task that finishes near the end of its turn is no longer cut off
-- With many sessions busy at once, an agent transcript could go blank, jump back to old messages and slowly walk back to the end without any input; it now stays on screen while the app reloads the session in the background
-- With many sessions busy at once, an agent transcript could lose its opening prompt and earlier messages until the session was reopened; the whole transcript is now kept
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.84.1] - 2026-11-15
+
+
+### Added
+<!-- New features go here -->
+- Collapse all and Expand all buttons in the agent session list close or open every parent session and workstream at once
+- The Codex model picker also lists models reported by the bundled Codex CLI, so newly released Codex models can be selected before Nimbalyst's built-in list includes them
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- Queued messages delivered in one turn each open with the time they were queued and who sent them; same-named senders are distinguishable.
+- The Extension Dev indicator moved to the outer project rail, and the navigation button menus use the shared floating menu positioning.
+
+### Fixed
+<!-- Bug fixes go here -->
+- Sessions started in a subfolder that names its own checkout root keep commit auto-approval.
+- Projects without a team no longer show tracker publish notices that cannot be resolved.
+- With many sessions busy at once, an agent transcript no longer loses its opening prompt and earlier messages until the session is reopened.
+- Delayed session-status refreshes no longer hide Cancel during a newer turn or show it after completion, including when opening a running session.
+- With many sessions busy at once, an agent transcript now stays on screen while the app reloads the session, instead of going blank and replaying from older messages.
+- The new tracker item popup no longer pushes its title field off screen in fullscreen when many items are waiting to publish; the list of saved items now scrolls.
+- When an agent works with a local HTML file that is not open in a tab, its page no longer appears as a box over the top-left of the window that cannot be closed.
+- In a project with no team, new bug, decision, milestone and release items no longer show a "team sync is not connected" publication notice with a Retry that cannot succeed. This includes items created before this fix.
+- Deleting tracker items now shows an error when a delete fails, including how many items failed in a multi-select delete, instead of failing silently.
+- With auto-approve on, a commit proposal from a session opened on a subfolder of a git checkout that names that checkout's root is now auto-approved instead of waiting for approval as if it targeted another worktree.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.84.0] - 2026-11-14
+
+
+### Added
+<!-- New features go here -->
+- Switch branches from the Git panel, including remote-only branches and new branches.
+- Workstreams: a named folder in the session list that groups peer sessions.
+- `nim wiki publish` copies a local wiki into a team project for review, with a Commenter role (requires the updated sync server).
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- Commit proposals can name a folder, which expands to its changed files for review.
+- New worktrees start from the remote's default branch instead of the main checkout's branch.
+- The open menu bar island can be resized by dragging its edges.
+- Daily tool-output cleanup now also replaces aged images and drops the duplicate result copy.
+- Team guests see only the projects they are granted (requires the updated sync server).
+
+### Fixed
+<!-- Bug fixes go here -->
+- "Create Branch..." in the Git panel's commit menu now opens a name form.
+- Files-mode chat "Context:" label clears when the file's tab is closed.
+- Moving a session under another no longer changes its manager unless it leaves the manager's tree.
+- SQLite backups keep rotating after the database shrinks to under half its size.
+- Tool-output cleanup no longer skips recent rows that age into the window later.
+- Agent edits next to a comment on part of bold or inline code no longer write broken markdown.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.83.0] - 2026-11-09
+
+
+### Added
+<!-- New features go here -->
+- A file tree subfolder cut off at the 200-entry limit now ends with a row saying how many items are hidden ("51 more items", or "N or more" when skipped symlinks were not checked). The workspace root folder and folders loaded on expand do not show it yet
+- Claude Fable 5.2 is now available in the model picker, with Fable 5.1 and Fable 5 kept as selectable previous-generation options
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- Messages queued while an agent is working, typed by you or sent by other sessions, are now delivered together in one turn, each opening with the time it was queued and who sent it (you, or the sending session by name); slash commands and messages with a different document context still go as their own turn, and Send Now delivers everything that can share a turn in one press
+- On macOS and Linux, processes Nimbalyst starts (agent sessions, MCP servers, CLIs, git) now put the login shell's PATH ahead of the system defaults, so tools from version managers such as mise are found before `/usr/bin` versions, and PATH is deduplicated per folder
+
+### Fixed
+<!-- Bug fixes go here -->
+- The weekly history in the Claude and Codex usage popovers now charts the main weekly limit by default instead of a per-model limit such as Fable
+- Nested lists under numbered items are saved indented past the parent's number (3 spaces under `2. `, 4 under `10. `), so other Markdown tools keep them nested, and a nested numbered list under an item numbered 10 starts at 1 instead of 10
+- Creating a local wiki page whose content starts with its own frontmatter now writes one frontmatter block with those fields and type, instead of adding a second block above it
+- A question card (AskUserQuestion or PromptForUserInput) that a PreToolUse hook denies now shows as blocked with the hook's reason, instead of as answered or as a form that can still be submitted
+- The `consume_session_inbox` tool is now listed on the `nimbalyst-host` MCP server, so orchestrating agents can call it as their instructions describe
+- The Agent Sessions search is cleared when you switch workspace in the same window, and a search still running for the previous workspace no longer replaces the new workspace's list or shows its error there
+- A prompt queued after you clear the document no longer merges into a turn with the older document content
+- The session machine picker labels the local machine with its device name, followed by "(this device)", instead of "This Mac" on every platform
+- When a workspace has more than 5,000 uncommitted files, the session list skips matching sessions to those files instead of sending every path to the database in one query. Git status still lists every untracked file, so this does not remove all memory growth in very large workspaces
 
 ### Removed
 <!-- Removed features go here -->

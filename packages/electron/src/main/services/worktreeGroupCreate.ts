@@ -12,7 +12,12 @@
 
 import * as path from 'path';
 import log from 'electron-log/main';
-import type { CreateWorktreeOptions, DeleteWorktreeOptions, Worktree as GitWorktree } from './GitWorktreeService';
+import {
+  WorkspaceHasNoCommitsError,
+  type CreateWorktreeOptions,
+  type DeleteWorktreeOptions,
+  type Worktree as GitWorktree,
+} from './GitWorktreeService';
 import type { Worktree, WorktreeStore } from './WorktreeStore';
 import {
   buildWorktreeBranchName,
@@ -26,14 +31,14 @@ const logger = log.scope('worktreeGroupCreate');
 export interface WorktreeGroupMemberRequest {
   /** A nested clone of the project, as `listWorkspaceRepos` reports it */
   repoPath: string;
-  /** Defaults to the clone's current branch */
+  /** Defaults to the clone's own default base under the project's setting */
   baseBranch?: string;
 }
 
 export interface CreateWorktreeGroupRequest {
   name?: string;
   nameSource?: WorktreeNameSource;
-  /** Base of the anchor; defaults to the project repository's current branch */
+  /** Base of the anchor; defaults to the project repository's default base */
   anchorBaseBranch?: string;
   members: WorktreeGroupMemberRequest[];
 }
@@ -44,7 +49,7 @@ export interface WorktreeGroupCreateDeps {
     deleteWorktree(worktreePath: string, repoPath: string, options: DeleteWorktreeOptions): Promise<void>;
     assertBranchAvailable(repoPath: string, branchName: string): Promise<void>;
     assertCommitRef(repoPath: string, ref: string): Promise<void>;
-    readCurrentBranch(repoPath: string): Promise<string>;
+    resolveDefaultBase(repoPath: string, settingsWorkspacePath: string): Promise<{ ref: string }>;
     findTrackedPath(repoPath: string, refs: readonly string[], paths: readonly string[]): Promise<{ ref: string; path: string } | null>;
     isIgnoredDirectory(checkoutPath: string, relativeDir: string): Promise<boolean>;
     getAllBranchNames(repoPath: string): Promise<Set<string>>;
@@ -99,14 +104,18 @@ export async function createWorktreeGroup(
     if (problem) throw new Error(`Invalid worktree name '${typedSuffix}': ${problem.message}`);
   }
 
-  // 2. Read-only preflight, in every repository
-  const anchorBase = request.anchorBaseBranch ?? await service.readCurrentBranch(projectPath);
-  await service.assertCommitRef(projectPath, anchorBase);
-  const memberBases = await Promise.all(members.map(async member => {
-    const base = member.baseBranch ?? await service.readCurrentBranch(member.repoPath);
-    await service.assertCommitRef(member.repoPath, base);
+  // 2. Read-only preflight, in every repository. One with no named base
+  // takes its own default under the project's setting, which is keyed by the
+  // project, not the member (#1958). Creation resolves it again after a
+  // bounded fetch of a remote default, so it may start from a newer commit.
+  const baseOf = async (repoPath: string, named: string | undefined) => {
+    const base = named ?? (await service.resolveDefaultBase(repoPath, projectPath)).ref;
+    if (!base) throw new WorkspaceHasNoCommitsError(repoPath);
+    await service.assertCommitRef(repoPath, base);
     return base;
-  }));
+  };
+  const anchorBase = await baseOf(projectPath, request.anchorBaseBranch);
+  await Promise.all(members.map(member => baseOf(member.repoPath, member.baseBranch)));
   const tracked = await service.findTrackedPath(projectPath, [anchorBase], members.map(member => member.relativePath));
   if (tracked) {
     throw new Error(
@@ -136,7 +145,8 @@ export async function createWorktreeGroup(
     const takenPaths = await store.getAllPaths();
     const anchor = await service.createWorktree(projectPath, {
       ...(typedSuffix !== undefined ? { branchSuffix: typedSuffix } : { name }),
-      baseBranch: anchorBase,
+      baseBranch: request.anchorBaseBranch,
+      settingsWorkspacePath: projectPath,
       takenPaths,
       worktreesDir: deps.worktreesDir,
     });
@@ -154,10 +164,11 @@ export async function createWorktreeGroup(
     // Every member takes the anchor's branch name, exactly
     const branchSuffix = stripWorktreeBranchPrefix(anchor.branch);
     const memberWorktrees: GitWorktree[] = [];
-    for (const [index, member] of members.entries()) {
+    for (const member of members) {
       const worktree = await service.createWorktree(member.repoPath, {
         branchSuffix,
-        baseBranch: memberBases[index],
+        baseBranch: member.baseBranch,
+        settingsWorkspacePath: projectPath,
         exactPath: path.join(anchor.path, member.relativePath),
       });
       created.push({ worktree, repoPath: member.repoPath });

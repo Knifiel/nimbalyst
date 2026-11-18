@@ -13,6 +13,7 @@ import { GitWorktreeService } from '../GitWorktreeService';
 import type { Worktree } from '../WorktreeStore';
 import { createWorktreeGroup, type WorktreeGroupCreateDeps } from '../worktreeGroupCreate';
 import { createGit } from '../gitClient';
+import { setWorktreeDefaultBaseProvider } from '../worktreeBaseBranch';
 import { assertGitSandbox, gitSandboxEnv } from '../testSupport/gitTestSandbox';
 
 vi.mock('../GitOperationLogService', async (importOriginal) => ({
@@ -81,6 +82,7 @@ describe('createWorktreeGroup', () => {
   });
 
   afterEach(() => {
+    setWorktreeDefaultBaseProvider(null);
     fs.rmSync(root, { recursive: true, force: true });
   });
 
@@ -148,6 +150,42 @@ describe('createWorktreeGroup', () => {
 
     expect(fs.existsSync(path.join(root, 'work_worktrees', 'task'))).toBe(false);
     for (const repo of [work, api, web]) expect(await branches(repo)).toBe('');
+  });
+
+  // #1958 with groups: a repository with no named base starts from its own
+  // default under the project's setting, which is keyed by the project, not
+  // by the member, and not from whatever branch its checkout is on.
+  it('bases each member on its own default under the project setting, not its current branch', async () => {
+    const mainOf = async (repo: string) => (await fixtureGit(repo).raw(['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
+    const tip = async (repo: string, ref: string) => (await fixtureGit(repo).raw(['rev-parse', ref])).trim();
+    const apiMain = await mainOf(api);
+    await fixtureGit(web).raw(['branch', 'develop']);
+    fs.writeFileSync(path.join(web, 'dev.txt'), 'develop only');
+    await fixtureGit(web).raw(['checkout', '-q', 'develop']);
+    await fixtureGit(web).add('dev.txt');
+    await fixtureGit(web).commit('develop work');
+    await fixtureGit(web).raw(['checkout', '-q', '-']);
+    await fixtureGit(api).raw(['checkout', '-q', '-b', 'feature/x']);
+    fs.writeFileSync(path.join(api, 'feature.txt'), 'feature only');
+    await fixtureGit(api).add('feature.txt');
+    await fixtureGit(api).commit('feature work');
+    const askedFor: string[] = [];
+    setWorktreeDefaultBaseProvider((workspacePath) => {
+      askedFor.push(workspacePath);
+      return workspacePath === work ? { mode: 'custom', ref: 'develop' } : undefined;
+    });
+
+    const { members } = await createWorktreeGroup(work, {
+      name: 'task', nameSource: 'user', members: [{ repoPath: api }, { repoPath: web }],
+    }, deps());
+
+    const [apiMember, webMember] = members;
+    // web has develop; api does not and falls back to its main branch
+    expect(webMember.baseBranch).toBe('develop');
+    expect(await tip(webMember.path, 'HEAD')).toBe(await tip(web, 'develop'));
+    expect(apiMember.baseBranch).toBe(apiMain);
+    expect(await tip(apiMember.path, 'HEAD')).toBe(await tip(api, apiMain));
+    expect(new Set(askedFor)).toEqual(new Set([work]));
   });
 
   it('refuses a repository outside the project or not among its repositories', async () => {

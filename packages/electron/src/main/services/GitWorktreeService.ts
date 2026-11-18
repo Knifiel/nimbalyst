@@ -50,6 +50,14 @@ import {
   worktreeDirectoryNameFor,
   type WorktreeBranchConflict,
 } from '../../shared/worktreeBranchNaming';
+import {
+  fetchRemoteBase,
+  getWorktreeDefaultBaseSetting,
+  refExists,
+  resolveWorktreeBase,
+  type ResolvedWorktreeBase,
+  type WorktreeBaseSource,
+} from './worktreeBaseBranch';
 
 const logger = log.scope('GitWorktreeService');
 
@@ -89,6 +97,12 @@ export interface Worktree {
   baseBranch: string;
   projectPath: string;
   createdAt: number;
+  /**
+   * Set by createWorktree when no explicit base was passed: where the default
+   * base came from, and why a preferred choice was skipped. Not persisted.
+   */
+  baseBranchSource?: WorktreeBaseSource;
+  baseFallbackReason?: string;
 }
 
 /**
@@ -166,7 +180,23 @@ export interface CreateWorktreeOptions {
    * taken. Exclusive with `name`.
    */
   branchSuffix?: string;
-  baseBranch?: string; // Branch to base the worktree on (defaults to repo root's current branch)
+  /**
+   * Ref to base the worktree on. Always wins when set. When unset, the
+   * project's default base is resolved (see worktreeBaseBranch.ts): the
+   * remote default branch unless the project setting says otherwise.
+   */
+  baseBranch?: string;
+  /**
+   * Workspace whose project setting picks the default base. Defaults to the
+   * repo path; differs when a multi-root workspace branches an attached folder
+   * or a nested clone, or creates a worktree group member.
+   */
+  settingsWorkspacePath?: string;
+  /**
+   * Bound for the single-branch fetch of a remote default base. Defaults to
+   * WORKTREE_BASE_FETCH_TIMEOUT_MS; tests shorten it.
+   */
+  defaultBaseFetchTimeoutMs?: number;
   /**
    * Paths the folder must not reuse although nothing is there: those the
    * app's worktree rows record, archived ones included, since a row keeps its
@@ -425,6 +455,14 @@ export class GitWorktreeService {
       throw new Error('workspacePath is required');
     }
 
+    // Freshen a remote default base BEFORE taking the lock: the fetch can take
+    // up to its timeout, and other git operations on this repo must not queue
+    // behind it. Creation then resolves again inside the lock and uses
+    // whatever ref is cached.
+    if (!options.baseBranch) {
+      await this.prefetchDefaultBase(workspacePath, options);
+    }
+
     // Use centralized lock to prevent concurrent worktree operations
     return gitOperationLock.withLock(workspacePath, 'createWorktree', () =>
       recordGitActivity(
@@ -437,6 +475,30 @@ export class GitWorktreeService {
         (worktree) => `Created worktree ${worktree.path} on ${worktree.branch}`,
       )
     );
+  }
+
+  /**
+   * One bounded `git fetch <remote> <branch>` for a remote default base (#1958).
+   * Never throws; a failure or timeout leaves the cached ref in place.
+   */
+  private async prefetchDefaultBase(workspacePath: string, options: CreateWorktreeOptions): Promise<void> {
+    try {
+      const setting = getWorktreeDefaultBaseSetting(options.settingsWorkspacePath ?? workspacePath);
+      const resolved = await resolveWorktreeBase(gitFor(workspacePath), setting);
+      if (!resolved.remote) return;
+      const fetched = await fetchRemoteBase(workspacePath, resolved.remote, {
+        timeoutMs: options.defaultBaseFetchTimeoutMs,
+        env: sanitizeGitRepositoryEnv(process.env),
+      });
+      if (!fetched.success) {
+        logger.warn('Fetch of default worktree base failed; using the cached ref', {
+          baseBranch: resolved.displayRef,
+          error: fetched.error,
+        });
+      }
+    } catch (error) {
+      logger.warn('Could not prefetch the default worktree base', { workspacePath, error });
+    }
   }
 
   /**
@@ -471,21 +533,44 @@ export class GitWorktreeService {
       : options.name || this.generateWorktreeName();
     logger.info('Using worktree name', { worktreeName });
 
-    // Determine base branch - use the repo root's current branch (not hardcoded)
+    // An explicit base (picker, PR review) always wins. Otherwise resolve the
+    // project's default, which never fails because of the setting (#1958).
+    // `baseBranch` is what gets stored and shown; `baseRef` is what git gets.
+    // A resolved default keeps its fully qualified ref so a local branch
+    // named like `origin/main` cannot shadow the remote one.
     let baseBranch: string;
+    let baseRef: string;
+    let baseBranchSource: WorktreeBaseSource | undefined;
+    let baseFallbackReason: string | undefined;
     if (options.baseBranch) {
+      // A caller-supplied ref must never be read as an option, and a typo
+      // should fail here with a clear message, not inside `worktree add`.
+      validateGitOperand(options.baseBranch, 'baseBranch');
+      if (!(await refExists(git, options.baseBranch))) {
+        throw new Error(`Base branch "${options.baseBranch}" not found`);
+      }
       baseBranch = options.baseBranch;
+      baseRef = options.baseBranch;
     } else {
-      // Get the current branch of the repo root
-      baseBranch = await this.getCurrentBranch(git);
+      const setting = getWorktreeDefaultBaseSetting(options.settingsWorkspacePath ?? workspacePath);
+      const resolved = await resolveWorktreeBase(git, setting);
+      if (!resolved.ref) {
+        // Only an unborn HEAD with no usable remote ref gets here.
+        throw new WorkspaceHasNoCommitsError(workspacePath);
+      }
+      baseBranch = resolved.displayRef;
+      baseRef = resolved.ref;
+      baseBranchSource = resolved.source;
+      baseFallbackReason = resolved.fallbackReason;
     }
     // `git branch <new> <base>` below would read such a base as an option, and
     // `-m` renames the checked-out branch. `--end-of-options` would need git
-    // 2.24, above the 2.17 these worktrees need.
-    if (baseBranch.startsWith('-')) {
-      throw new Error(`Invalid base branch '${baseBranch}': a branch name cannot start with '-'`);
+    // 2.24, above the 2.17 these worktrees need. An explicit base was refused
+    // above already; this guards the ref git actually gets.
+    if (baseRef.startsWith('-')) {
+      throw new Error(`Invalid base branch '${baseRef}': a branch name cannot start with '-'`);
     }
-    logger.info('Using base branch', { baseBranch });
+    logger.info('Using base branch', { baseBranch, baseRef, baseBranchSource, baseFallbackReason });
 
     // Create worktrees directory if it doesn't exist
     const projectName = path.basename(workspacePath);
@@ -539,8 +624,11 @@ export class GitWorktreeService {
     try {
       // The two steps `worktree add -b` runs itself, apart, so a failure shows
       // whether this attempt made the branch
-      logger.info('Creating git worktree', { worktreePath, branchName, baseBranch });
-      await git.raw(['branch', branchName, baseBranch]);
+      logger.info('Creating git worktree', { worktreePath, branchName, baseBranch, baseRef });
+      // --no-track: with git's default branch.autoSetupMerge a branch created
+      // from a remote ref tracks it, so `worktree/<name>` would track
+      // origin/main and a bare `git push` could target main.
+      await git.raw(['branch', '--no-track', branchName, baseRef]);
       branchCreated = true;
       await git.raw(['worktree', 'add', worktreePath, branchName]);
 
@@ -555,6 +643,8 @@ export class GitWorktreeService {
         baseBranch,
         projectPath: workspacePath,
         createdAt: Date.now(),
+        ...(baseBranchSource ? { baseBranchSource } : {}),
+        ...(baseFallbackReason ? { baseFallbackReason } : {}),
       };
 
       return worktree;
@@ -3213,9 +3303,13 @@ ${newLines.map(line => '+' + line).join('\n')}`;
     }
   }
 
-  /** The repository's current branch, the base a worktree takes when none is named */
-  async readCurrentBranch(repoPath: string): Promise<string> {
-    return this.getCurrentBranch(gitFor(repoPath));
+  /**
+   * The base a worktree of `repoPath` takes when none is named: its default
+   * under the project setting of `settingsWorkspacePath` (worktreeBaseBranch.ts).
+   * Never fetches. An empty `ref` means nothing resolves (no commits yet).
+   */
+  async resolveDefaultBase(repoPath: string, settingsWorkspacePath: string): Promise<ResolvedWorktreeBase> {
+    return resolveWorktreeBase(gitFor(repoPath), getWorktreeDefaultBaseSetting(settingsWorkspacePath));
   }
 
   /** Whether the checkout at `checkoutPath` ignores the folder `relativeDir` */

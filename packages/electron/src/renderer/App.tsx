@@ -78,7 +78,7 @@ import {
   setSelectedWorkstreamAtom,
   initSessionList,
 } from './store/atoms/sessions';
-import { dispatchCreateNewSession } from './store/actions/sessionHistoryActions';
+import { dispatchCreateNewSession, openWorktreeSessionActionAtom } from './store/actions/sessionHistoryActions';
 import { openSessionInOwningProject } from './store/actions/sessionNotificationNavigation';
 import { NavigationGutter } from './components/NavigationGutter';
 // NOTE: useTabs and useTabNavigation removed - EditorMode manages tabs now
@@ -146,6 +146,7 @@ import { initCollabConversionListeners } from './store/listeners/collabConversio
 import { initNotificationListeners } from './store/listeners/notificationListeners';
 import { initExtensionPermissionListeners } from './store/listeners/extensionPermissionListeners';
 import { initPanelGutterBadgeListeners } from './store/listeners/panelGutterBadgeListeners';
+import { initTerminalRevealListeners } from './store/listeners/terminalRevealListeners';
 import { initPermissionListeners } from './store/listeners/permissionListeners';
 import { initSoundListeners } from './store/listeners/soundListeners';
 import { initStytchAuthListeners } from './store/listeners/stytchAuthListeners';
@@ -447,6 +448,7 @@ export default function App() {
     const cleanupNotification = initNotificationListeners();
     const cleanupExtensionPermission = initExtensionPermissionListeners();
     const cleanupPanelGutterBadges = initPanelGutterBadgeListeners();
+    const cleanupTerminalReveal = initTerminalRevealListeners();
     const cleanupPermission = initPermissionListeners();
     const cleanupSound = initSoundListeners();
     const cleanupStytchAuth = initStytchAuthListeners();
@@ -505,6 +507,7 @@ export default function App() {
       cleanupNotification?.();
       cleanupExtensionPermission?.();
       cleanupPanelGutterBadges();
+      cleanupTerminalReveal();
       cleanupPermission?.();
       cleanupSound?.();
       cleanupStytchAuth?.();
@@ -2345,6 +2348,23 @@ export default function App() {
 
     window.addEventListener('open-ai-session', handleOpenAiSession as unknown as EventListener);
     return () => window.removeEventListener('open-ai-session', handleOpenAiSession as unknown as EventListener);
+  }, [setActiveMode]);
+
+  // #1959: the Git panel's branch switcher asks to open the worktree session
+  // that already has a branch checked out, instead of switching to it.
+  useEffect(() => {
+    const handleOpenWorktreeSession = async (event: CustomEvent<{ worktreeId?: string }>) => {
+      const worktreeId = event.detail?.worktreeId;
+      if (!worktreeId) return;
+      try {
+        const sessionId = await store.set(openWorktreeSessionActionAtom, worktreeId);
+        if (sessionId) setActiveMode('agent');
+      } catch (error) {
+        console.error('[App] Failed to open worktree session:', error);
+      }
+    };
+    window.addEventListener('nimbalyst:open-worktree-session', handleOpenWorktreeSession as unknown as EventListener);
+    return () => window.removeEventListener('nimbalyst:open-worktree-session', handleOpenWorktreeSession as unknown as EventListener);
   }, [setActiveMode]);
 
   // Receive explicit git-extension selections and seed a new standalone commit session.
