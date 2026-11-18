@@ -23,6 +23,11 @@
  * issues a uuid-keyed request; the response handler resolves the matching
  * promise. Errors crossing the boundary are reconstructed into real Errors
  * so try/catch in callers behaves the same as before.
+ *
+ * If the worker that holds the live database dies (it has run out of heap in
+ * the field), the proxy starts a new one and re-sends `init`; see
+ * `handleWorkerDeath`. Before that, every later call failed with "SQLite
+ * worker not running" until the app was restarted (#1649).
  */
 
 import { serializeBridgeError } from './worker/migrationReadBridge';
@@ -116,6 +121,36 @@ export interface SQLiteDatabaseProxyOptions {
  */
 const BACKUP_REQUEST_TIMEOUT_MS = 30 * 60_000;
 
+const INIT_REQUEST_TIMEOUT_MS = 120_000;
+
+/**
+ * Restart budget for a worker that died while it held the live database. A
+ * worker that keeps dying is not restarted forever: past this many restarts
+ * inside the window, the proxy stays down and every call says why.
+ */
+const MAX_WORKER_RESTARTS = 3;
+const WORKER_RESTART_WINDOW_MS = 10 * 60_000;
+/** Restart k waits `WORKER_RESTART_BACKOFF_MS * 2^(k-1)`: 0.5s, 1s, 2s. */
+const WORKER_RESTART_BACKOFF_MS = 500;
+
+/**
+ * Requests whose operation manages the worker's lifecycle itself (migration,
+ * cutover, restore, backup verification). If the worker dies while one of
+ * these is in flight, it is not restarted and the proxy stays down: a restore
+ * or cutover may have moved the live database, and reopening the live path
+ * then would create an empty database there.
+ */
+const SELF_MANAGED_REQUESTS: ReadonlySet<WorkerRequestType> = new Set<WorkerRequestType>([
+  'migrationPreflight',
+  'migrationStart',
+  'migrationStartDryRun',
+  'migrationDryRunStatus',
+  'migrationAdoptDryRun',
+  'verifyCutover',
+  'restoreBackup',
+  'verifyBackup',
+]);
+
 /** Resolve the on-disk path to the SQLite worker bundle. */
 function resolveWorkerPath(): string {
   if (app.isPackaged) {
@@ -140,6 +175,25 @@ export class SQLiteDatabaseProxy {
   private pgliteReader: LivePgliteReader | null = null;
   private migrationControl: MigrationControlHandler | null = null;
   private migrationObserver: ((event: string, payload: unknown) => void) | null = null;
+  /** Set when `close()` starts; only an explicit `initialize()` clears it. Blocks every restart. */
+  private closeRequested = false;
+  /** Bumped by `close()` so a restart that was under way stops at its next step. */
+  private lifecycleGeneration = 0;
+  /**
+   * In-flight `SELF_MANAGED_REQUESTS`, by request id. Removed by the reply or
+   * by the worker's death, never by the request timeout: a restore that timed
+   * out on this side may still be moving files on the worker.
+   */
+  private selfManagedInFlight = new Map<string, WorkerRequestType>();
+  /** The restart under way: backoff, spawn, `init`. Requests wait on it. */
+  private restartPromise: Promise<void> | null = null;
+  private wakeRestartBackoff: (() => void) | null = null;
+  /** When each restart in the current window started. */
+  private restartTimes: number[] = [];
+  /** Set when a dead worker is not restarted; every call rejects with it until `close()`. */
+  private downError: Error | null = null;
+  /** Why each worker died, for a restart whose worker died before the restart saw its `init` succeed. */
+  private readonly deathReasons = new WeakMap<Worker, string>();
 
   constructor(opts: SQLiteDatabaseProxyOptions) {
     this.opts = opts;
@@ -175,7 +229,10 @@ export class SQLiteDatabaseProxy {
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
+    // After a worker death this is the restart under way, or the rejection
+    // that says why the proxy stays down.
     if (this.initPromise) return this.initPromise;
+    this.closeRequested = false;
     this.initPromise = this.doInitialize();
     return this.initPromise;
   }
@@ -191,37 +248,61 @@ export class SQLiteDatabaseProxy {
    * the active backend).
    */
   ensureWorkerSpawned(): void {
-    if (!this.worker) this.createWorker();
+    // A restart under way spawns its own worker; a proxy that stays down
+    // spawns none until `close()`.
+    if (!this.worker && !this.restartPromise && !this.downError) this.createWorker();
   }
 
   private async doInitialize(): Promise<void> {
     this.ensureWorkerSpawned();
-    const payload: InitPayload = {
+    const worker = this.worker;
+    const generation = this.lifecycleGeneration;
+    try {
+      await this.send('init', this.buildInitPayload(), INIT_REQUEST_TIMEOUT_MS);
+    } catch (err) {
+      // If the worker died during this `init`, forget the attempt so a later
+      // `initialize()` spawns a new worker and tries again; whether to try is
+      // the caller's decision (boot has its own failure path), so nothing
+      // restarts here. An error answer or a timeout from a worker that is
+      // still running stays the answer.
+      if (this.worker !== worker && generation === this.lifecycleGeneration) this.initPromise = null;
+      throw err;
+    }
+    this.initialized = true;
+  }
+
+  private buildInitPayload(): InitPayload {
+    return {
       dbDir: this.opts.dbDir,
       schemaDir: this.opts.schemaDir,
       slowQueryThresholdMs: this.opts.slowQueryThresholdMs,
       sampleRate: this.opts.sampleRate,
       // Resolved here rather than in the worker: electron-store needs the
-      // `electron` module, which a worker bundle cannot resolve.
+      // `electron` module, which a worker bundle cannot resolve. Read again
+      // on a restart: the user may have raised it since boot, and a stale
+      // lower value would delete copies at the next rotation.
       backupCopiesKept: getDatabaseMaintenanceSettings().backupCopiesKept,
     };
-    await this.send('init', payload, 120_000);
-    this.initialized = true;
   }
 
   async close(): Promise<void> {
-    if (this.worker) {
+    this.closeRequested = true;
+    this.lifecycleGeneration++;
+    this.restartPromise = null;
+    this.wakeRestartBackoff?.();
+    const worker = this.worker;
+    if (worker) {
       try {
-        await this.send('close', undefined, 30_000);
+        await this.post('close', undefined, 30_000);
       } catch (err) {
         logger.main.warn('[SQLiteProxy] close request failed', err);
       }
       try {
-        await this.worker.terminate();
+        await worker.terminate();
       } catch {
         /* ignore */
       }
-      this.worker = null;
+      if (this.worker === worker) this.worker = null;
     }
     // Fail any in-flight pending requests so callers don't hang.
     for (const [, p] of this.pending) {
@@ -229,8 +310,10 @@ export class SQLiteDatabaseProxy {
       p.reject(new Error('SQLiteDatabaseProxy closed'));
     }
     this.pending.clear();
+    this.selfManagedInFlight.clear();
     this.initialized = false;
     this.initPromise = null;
+    this.downError = null;
   }
 
   // --------------------------------------------------------------------------
@@ -454,12 +537,13 @@ export class SQLiteDatabaseProxy {
   // Internal
   // --------------------------------------------------------------------------
 
-  private createWorker(): void {
+  private createWorker(): Worker {
     const workerPath = resolveWorkerPath();
     logger.main.info('[SQLiteProxy] spawning worker', { workerPath, dbDir: this.opts.dbDir });
-    this.worker = new Worker(workerPath);
+    const worker = new Worker(workerPath);
+    this.worker = worker;
 
-    this.worker.on(
+    worker.on(
       'message',
       (
         msg:
@@ -471,6 +555,7 @@ export class SQLiteDatabaseProxy {
           this.handleWorkerEvent(msg as { event: string; bridgeId?: string; payload: unknown });
           return;
         }
+        this.selfManagedInFlight.delete(msg.id);
         const pending = this.pending.get(msg.id);
         if (!pending) return;
         this.pending.delete(msg.id);
@@ -491,36 +576,167 @@ export class SQLiteDatabaseProxy {
       },
     );
 
-    this.worker.on('error', (err) => {
+    // A worker's `error` event is always followed by `exit` (an out-of-memory
+    // death emits ERR_WORKER_OUT_OF_MEMORY, then exit code 1). The death is
+    // handled on whichever comes first: a request posted in between would be
+    // dropped by the dead thread without a reply.
+    worker.on('error', (err) => {
       logger.main.error('[SQLiteProxy] worker error', err);
-      for (const [, p] of this.pending) {
-        if (p.timer) clearTimeout(p.timer);
-        p.reject(err);
-      }
-      this.pending.clear();
+      const code = (err as { code?: string }).code;
+      this.handleWorkerDeath(worker, err, code ?? `worker error: ${err.message}`);
     });
 
-    this.worker.on('exit', (code) => {
+    worker.on('exit', (code) => {
       if (code !== 0) {
         logger.main.warn('[SQLiteProxy] worker exited with code', code);
       }
-      for (const [, p] of this.pending) {
-        if (p.timer) clearTimeout(p.timer);
-        p.reject(new Error(`SQLite worker exited (code ${code})`));
-      }
-      this.pending.clear();
-      this.worker = null;
-      this.initialized = false;
+      this.handleWorkerDeath(worker, new Error(`SQLite worker exited (code ${code})`), `exit code ${code}`);
     });
+    return worker;
   }
 
-  private send(
+  /**
+   * A worker died. Requests in flight on it reject with `cause` and are never
+   * replayed: a write may already have committed. If it held the live
+   * database (its `init` succeeded) and nothing else owns its lifecycle, a
+   * new worker is started and sent `init` again; otherwise the proxy stays
+   * down, or is left to whoever owns it.
+   *
+   * A restart reaches only what the worker's `init` does: open the existing
+   * `nimbalyst.sqlite` (SQLite replays its own WAL), set pragmas, apply schema
+   * migrations not yet recorded (none, in the same process), and load backup
+   * metadata. No rename, delete, backup rotation or recovery runs.
+   */
+  private handleWorkerDeath(worker: Worker, cause: Error, reason: string): void {
+    // A worker `close()` already let go of, or the `exit` after an `error`.
+    if (this.worker !== worker) return;
+    const heldLiveDatabase = this.initialized;
+    const selfManaged = this.selfManagedInFlight.values().next().value;
+    this.selfManagedInFlight.clear();
+    for (const [, p] of this.pending) {
+      if (p.timer) clearTimeout(p.timer);
+      p.reject(cause);
+    }
+    this.pending.clear();
+    this.worker = null;
+    this.initialized = false;
+    this.deathReasons.set(worker, reason);
+
+    // Migration-only workers, a death during an `init` (the first one rejects
+    // to its caller, a restart's is judged by `restartWorker`), and app
+    // shutdown are not restarted here.
+    if (!heldLiveDatabase || this.closeRequested) return;
+
+    if (selfManaged) {
+      this.stayDown(
+        new Error(
+          `SQLite worker not running: it stopped (${reason}) during '${selfManaged}', which manages the worker itself, so it was not restarted`,
+        ),
+      );
+      return;
+    }
+
+    this.restartOrStayDown(reason);
+  }
+
+  /**
+   * A worker that held the live database died: start a restart if the budget
+   * allows, else stay down. Returns the restart, or the rejection that says
+   * why the proxy stays down.
+   */
+  private restartOrStayDown(reason: string): Promise<void> {
+    const now = Date.now();
+    this.restartTimes = this.restartTimes.filter((t) => now - t < WORKER_RESTART_WINDOW_MS);
+    if (this.restartTimes.length >= MAX_WORKER_RESTARTS) {
+      return this.stayDown(
+        new Error(
+          `SQLite worker not running: it stopped again (${reason}) after ${MAX_WORKER_RESTARTS} restarts in ${WORKER_RESTART_WINDOW_MS / 60_000} minutes, so it was not restarted; restart Nimbalyst`,
+        ),
+      );
+    }
+    this.restartTimes.push(now);
+    const attempt = this.restartTimes.length;
+    logger.main.warn(
+      `[SQLiteProxy] restarting worker after ${reason} (restart ${attempt} of ${MAX_WORKER_RESTARTS})`,
+    );
+    const restart = this.restartWorker(attempt, this.lifecycleGeneration);
+    // Waiting requests and `initialize()` callers see the outcome; this only
+    // keeps an unobserved rejection quiet.
+    restart.catch(() => {});
+    this.restartPromise = restart;
+    this.initPromise = restart;
+    return restart;
+  }
+
+  private async restartWorker(attempt: number, generation: number): Promise<void> {
+    const closed = () => this.closeRequested || generation !== this.lifecycleGeneration;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, WORKER_RESTART_BACKOFF_MS * 2 ** (attempt - 1));
+      this.wakeRestartBackoff = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+    });
+    this.wakeRestartBackoff = null;
+    if (closed()) throw new Error('SQLiteDatabaseProxy closed');
+    let worker: Worker;
+    try {
+      worker = this.createWorker();
+      await this.post('init', this.buildInitPayload(), INIT_REQUEST_TIMEOUT_MS);
+    } catch (err) {
+      if (closed()) throw new Error('SQLiteDatabaseProxy closed');
+      // Counts as this attempt. Not retried, and no recovery runs.
+      this.restartPromise = null;
+      const down = new Error(
+        `SQLite worker not running: restart ${attempt} of ${MAX_WORKER_RESTARTS} failed (${(err as Error).message}), so it was not retried`,
+      );
+      this.stayDown(down);
+      throw down;
+    }
+    if (closed()) throw new Error('SQLiteDatabaseProxy closed');
+    this.restartPromise = null;
+    if (this.worker !== worker) {
+      // The new worker answered `init` and died before this ran: with main
+      // busy, a real out-of-memory death delivers the answer, `error` and
+      // `exit` in one callback. It held the live database, so its death
+      // counts like any other, against the budget. Requests waiting on this
+      // restart follow the next one, or the reason the proxy stays down.
+      return this.restartOrStayDown(this.deathReasons.get(worker) ?? 'unknown cause');
+    }
+    this.initialized = true;
+    logger.main.info(`[SQLiteProxy] worker restarted (restart ${attempt} of ${MAX_WORKER_RESTARTS})`);
+  }
+
+  private stayDown(error: Error): Promise<void> {
+    logger.main.error(`[SQLiteProxy] ${error.message}`);
+    this.downError = error;
+    const rejected = Promise.reject(error);
+    rejected.catch(() => {});
+    this.initPromise = rejected;
+    return rejected;
+  }
+
+  /**
+   * Every request goes through here. While a restart is under way it waits
+   * for the new worker's `init`; once the proxy stays down it rejects with
+   * the reason.
+   */
+  private send(type: WorkerRequestType, payload?: unknown, timeoutMs?: number): Promise<unknown> {
+    if (this.downError) return Promise.reject(this.downError);
+    if (this.restartPromise) {
+      return this.restartPromise.then(() => this.send(type, payload, timeoutMs));
+    }
+    return this.post(type, payload, timeoutMs);
+  }
+
+  private post(
     type: WorkerRequestType,
     payload?: unknown,
     timeoutMs = this.opts.requestTimeoutMs ?? 60_000,
   ): Promise<unknown> {
     return new Promise((resolve, reject) => {
-      if (!this.worker) {
+      const worker = this.worker;
+      if (!worker) {
         reject(new Error('SQLite worker not running'));
         return;
       }
@@ -542,7 +758,8 @@ export class SQLiteDatabaseProxy {
       }, timeoutMs);
       if (typeof timer.unref === 'function') timer.unref();
       this.pending.set(id, { resolve, reject, timer });
-      this.worker.postMessage({ id, type, payload });
+      if (SELF_MANAGED_REQUESTS.has(type)) this.selfManagedInFlight.set(id, type);
+      worker.postMessage({ id, type, payload });
     });
   }
 

@@ -60,6 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The PGLite to SQLite cutover retries a briefly locked database folder instead of failing immediately
 - Run Manager stops its processes on restart and update, and Stop cancels a start that is still checking its port
 - Several long agent sessions running at once no longer exhaust the app's memory while linking file edits to tool calls
+- The app recovers on its own when its database worker runs out of memory, instead of failing every action until restart
 
 ### Removed
 <!-- Removed features go here -->
