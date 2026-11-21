@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Several long agent sessions running at once no longer exhaust the app's memory while linking file edits to tool calls
 - Launching Nimbalyst while it is already running now brings its window back, or opens the Project Manager, even when the only window left is a hidden background one. On Windows and Linux, closing the Project Manager with no project open now quits the app instead of leaving it running with no window, which made later launches open and close again.
 - Launching Nimbalyst again while it is already running no longer starts a second copy of the app that shows a window for about five seconds and then disappears. On Windows and Linux the extra launch now hands over to the running app and exits at once, and on every platform it no longer opens the shared database or replaces the running app's logs.
+- If the database worker crashes again right after Nimbalyst restarts it, Nimbalyst now tries again instead of leaving every database action failing until you restart the app.
 
 ### Removed
 <!-- Removed features go here -->
