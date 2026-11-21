@@ -206,7 +206,15 @@ jobs:
 
           # validate-extra-resources.js checks the binaries inside these during
           # the build; here we only need the target package to be present.
-          for PKG in "@openai/codex-${NPM_PLATFORM}-${TARGET_ARCH}" "@zed-industries/codex-acp-${NPM_PLATFORM}-${TARGET_ARCH}"; do
+          # Sharp (loaded by Memory's local embedder) is copied with a filtered
+          # `../../node_modules` entry, which validate-extra-resources.js cannot
+          # check, so its target binding is checked here. Windows has no
+          # separate libvips package.
+          CROSS_PKGS=("@openai/codex-${NPM_PLATFORM}-${TARGET_ARCH}" "@zed-industries/codex-acp-${NPM_PLATFORM}-${TARGET_ARCH}" "@img/sharp-${NPM_PLATFORM}-${TARGET_ARCH}")
+          if [ "$NPM_PLATFORM" != "win32" ]; then
+            CROSS_PKGS+=("@img/sharp-libvips-${NPM_PLATFORM}-${TARGET_ARCH}")
+          fi
+          for PKG in "${CROSS_PKGS[@]}"; do
             if [ ! -d "node_modules/${PKG}" ]; then
               echo "::error::Cross-arch package not found at node_modules/${PKG}"
               ls -la "node_modules/$(dirname "${PKG}")/" || true
@@ -786,6 +794,17 @@ jobs:
               exit 1
             fi
             echo "latest-linux.yml lists ${name}"
+          done
+          # Both Mac channel files must carry the macOS floor. Without it the
+          # updater on a macOS 12 install downloads a build that cannot launch.
+          for feed in release/latest-mac.yml release/alpha-mac.yml; do
+            [ -e "$feed" ] || continue
+            if ! grep -q "^minimumSystemVersion: 22\.0\.0$" "$feed"; then
+              echo "::error::${feed} is missing minimumSystemVersion: 22.0.0"
+              cat "$feed"
+              exit 1
+            fi
+            echo "${feed} declares minimumSystemVersion 22.0.0"
           done
           # Copy generated yml files back to release-files
           cp release/*.yml ../../release-files/ 2>/dev/null || true

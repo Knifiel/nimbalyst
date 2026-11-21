@@ -34,6 +34,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A message sent while background tasks are still running goes in right away, instead of waiting for all of them once one has finished
 - Answering a question card while the agent's turn is still running now reaches the agent at its next tool call, instead of after the turn ends
 - A background task that finishes while the agent is still working no longer gets its result answered twice, and the agent's reply to a task that finishes near the end of its turn is no longer cut off
+- Several long agent sessions running at once no longer exhaust the app's memory while linking file edits to tool calls
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.84.3] - 2026-11-20
+
+
+### Added
+<!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- New Codex sessions default to GPT-6.2 Sol, the model Codex itself selects by default; GPT-6.2 Sol and GPT-6.2 Astra are now listed in the Codex model picker
+- Nimbalyst now runs on Electron 45 and requires macOS 13 Ventura or later on Mac. Macs on macOS 12 Monterey are not offered the update and can keep using 0.84.2.
+
+### Fixed
+<!-- Bug fixes go here -->
+- Desktop builds now include the patched image decoder that Memory needs to load local embedding models.
+- Desktop personal sync now encrypts with a different crypto API, avoiding a runtime bug that could abort the app with no crash report when an earlier unrelated encryption error, such as an unreadable saved credential, was still pending (#1979)
+- Reopen Closed Tab (Cmd+Shift+T) in Wiki mode now reopens Local wiki pages, item pages and type pages; before, it only reopened shared documents
+- When the SQLite database worker exits unexpectedly, it is now restarted automatically (up to 5 times in 10 minutes) instead of leaving database access broken until the app restarts, and agent messages that had not reached the database while it restarted are held and written afterwards instead of being dropped (#1988)
+- On Windows, Import earlier sessions no longer fails with "Invalid external session cursor" for session files whose file ID is above 2^53; sessions left empty by that failure are shown as needing update and preselected for retry, and the import dialog now shows the underlying error instead of "Failed to import sessions" (#1989)
+- Files a Claude Code session changes through a Bash command (for example a python heredoc or `sed -i`) are now listed in its edited files even when the command never names the file's path, and a Codex session running in the same project no longer stops them from being listed; when two sessions' commands overlap, the file is listed as a withheld edit instead of being linked to either session
 
 ### Removed
 <!-- Removed features go here -->
@@ -59,8 +83,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With auto-commit on, commit proposals into another worktree of the session's repository, and folder proposals containing files another session also edited, are now committed automatically instead of waiting for manual approval
 - The PGLite to SQLite cutover retries a briefly locked database folder instead of failing immediately
 - Run Manager stops its processes on restart and update, and Stop cancels a start that is still checking its port
-- Several long agent sessions running at once no longer exhaust the app's memory while linking file edits to tool calls
-- The app recovers on its own when its database worker runs out of memory, instead of failing every action until restart
 
 ### Removed
 <!-- Removed features go here -->
