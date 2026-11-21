@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Answering a question card while the agent's turn is still running now reaches the agent at its next tool call, instead of after the turn ends
 - A background task that finishes while the agent is still working no longer gets its result answered twice, and the agent's reply to a task that finishes near the end of its turn is no longer cut off
 - Several long agent sessions running at once no longer exhaust the app's memory while linking file edits to tool calls
+- Launching Nimbalyst while it is already running now brings its window back, or opens the Project Manager, even when the only window left is a hidden background one. On Windows and Linux, closing the Project Manager with no project open now quits the app instead of leaving it running with no window, which made later launches open and close again.
 
 ### Removed
 <!-- Removed features go here -->
