@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Folders excluded through a repository's local or global git exclude settings are no longer watched for changes, so a large excluded folder no longer slows the app down.
 
 ### Removed
 <!-- Removed features go here -->
