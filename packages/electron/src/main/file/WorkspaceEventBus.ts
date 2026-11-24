@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import { RecoveringFileWatcher } from './RecoveringFileWatcher';
-import { createWorkspaceNativeWatcher, drainNativeFileEvents, supportsRecursiveWatch, type NativeWatchHandle } from './WorkspaceNativeWatcher';
+import { addNativeWatchPath, createWorkspaceNativeWatcher, drainNativeFileEvents, supportsRecursiveWatch, type NativeWatchHandle } from './WorkspaceNativeWatcher';
 import { deliverObservedFileEvent, drainRenameEvents } from './WorkspaceEventDelivery';
 import { pathExistsAfterRename } from './pathExistsAfterRename';
 import type { FileWatchHealth } from '../../shared/fileWatchHealth';
@@ -140,6 +140,25 @@ const REPLAY_BUFFER_MAX = 50;
 const REPLAY_BUFFER_TTL_MS = 5000;
 
 let gitignoreChangeHandler: GitignoreChangeHandler | null = null;
+
+const INOTIFY_WATCH_LIMIT_PATH = '/proc/sys/fs/inotify/max_user_watches';
+
+/** Actionable text for the first ENOSPC of a run: retries cannot raise the OS watch limit. */
+function describeWatchLimitFailure(workspacePath: string, nextRetryAt: number | undefined): string {
+  const retry = nextRetryAt === undefined ? ''
+    : ` Next retry in ${Math.max(0, Math.round((nextRetryAt - Date.now()) / 1000))}s.`;
+  if (process.platform !== 'linux') {
+    return `[WorkspaceEventBus] File watch limit reached for ${workspacePath} (ENOSPC); add large folders to .gitignore.${retry}`;
+  }
+  let limit = '';
+  try {
+    const value = Number.parseInt(fs.readFileSync(INOTIFY_WATCH_LIMIT_PATH, 'utf-8'), 10);
+    if (Number.isFinite(value)) limit = ` (${value})`;
+  } catch {
+    // The limit is only context for the message.
+  }
+  return `[WorkspaceEventBus] inotify watch limit${limit} reached for ${workspacePath}; add large folders to .gitignore or raise fs.inotify.max_user_watches.${retry}`;
+}
 
 interface BusEntry {
   lifecycle: RecoveringFileWatcher<NativeWatchHandle>;
@@ -465,6 +484,11 @@ export async function drainWorkspaceEvents(workspace: string): Promise<void> {
   await drainRenameEvents(key);
 }
 
+/** Whether the installed handle's initial scan is still running (Linux). */
+function isScanning(entry: BusEntry): boolean {
+  return entry.lifecycle.health.state === 'starting';
+}
+
 /** Global registry of shared watchers, keyed by normalized workspace path. */
 const busEntries = new Map<string, BusEntry>();
 
@@ -503,16 +527,21 @@ export async function subscribe(
     gitRootDirCache: new Map(), workspaceCommonDir: null, separateCheckoutCache: new Map(),
     gitignoreBypassPaths: new Set(), bypassOwners: new Map(), replayBuffer: [],
   };
-  entry.lifecycle = new RecoveringFileWatcher(async (current, fail) => {
+  entry.lifecycle = new RecoveringFileWatcher(async (current, fail, ready) => {
     // Running git is async, so it happens here, once per start, never in `ignored`.
     const globalExcludesFile = await resolveGlobalExcludesFile(key);
     const filter = await loadGitignoreFilter(key, globalExcludesFile);
+    const workspaceCommonDir = gitCommonDir(key);
+    // Listed before the handle exists, so the clones are added before chokidar's
+    // root scan can finish and `ready` waits for their scans too.
+    const nestedCheckouts = !supportsRecursiveWatch && workspaceCommonDir
+      ? await listIgnoredNestedRepositories(key) : [];
     if (!current()) return { close() {} } as NativeWatchHandle;
     entry.globalExcludesFile = globalExcludesFile;
     entry.workspaceGitignoreFilter = filter;
     entry.nestedGitignoreCache.clear();
     entry.gitRootDirCache.clear();
-    entry.workspaceCommonDir = gitCommonDir(key);
+    entry.workspaceCommonDir = workspaceCommonDir;
     entry.separateCheckoutCache.clear();
     entry.replayBuffer = [];
     const watcher = createWorkspaceNativeWatcher(key, current, fail,
@@ -522,16 +551,14 @@ export async function subscribe(
           (isGitignoredScoped(filePath, key, entry) && getGitignoreAction(filePath, entry) === 'drop'));
       },
       (type, filePath, observedAt) => deliverNativeEvent(entry, type, filePath, current, observedAt),
+      ready,
     );
-    if (watcher && 'add' in watcher) {
-      for (const file of new Set([...entry.expandedPaths, ...entry.gitignoreBypassPaths])) watcher.add(file);
-      // chokidar's depth budget counts from each added path. A clone the root
-      // ignores starts its own budget, so its deep trees are reached.
-      if (entry.workspaceCommonDir) {
-        const nestedCheckouts = await listIgnoredNestedRepositories(key);
-        if (current()) for (const checkout of nestedCheckouts) watcher.add(checkout);
-      }
+    for (const file of new Set([...entry.expandedPaths, ...entry.gitignoreBypassPaths])) {
+      addNativeWatchPath(watcher, file, true);
     }
+    // chokidar's depth budget counts from each added path. A clone the root
+    // ignores starts its own budget, so its deep trees are reached.
+    for (const checkout of nestedCheckouts) addNativeWatchPath(watcher, checkout, true);
     return watcher;
   }, health => {
     // Routine startup/stop is diagnostic; retain failures and successful recovery.
@@ -539,6 +566,9 @@ export async function subscribe(
       : health.state === 'watching' && health.generation > 1 ? logger.main.info
       : logger.main.debug;
     logHealth('[WorkspaceEventBus] Watcher health:', { workspacePath: key, ...health, subscriberCount: entry.listeners.size });
+    if (health.state === 'recovering' && health.reason === 'ENOSPC' && entry.lifecycle.capacityFailureCount === 1) {
+      logger.main.warn(describeWatchLimitFailure(key, health.nextRetryAt));
+    }
     for (const subscriber of entry.listeners.values()) {
       try { subscriber.onHealthChanged?.(health); }
       catch (error) { logger.main.error('[WorkspaceEventBus] Health listener failed:', error); }
@@ -618,9 +648,7 @@ export function addWatchedPath(workspacePath: string, folderPath: string): void 
 
   entry.expandedPaths.add(folderPath);
   const watcher = entry.lifecycle.handle;
-  if (watcher && 'add' in watcher) {
-    watcher.add(folderPath);
-  }
+  if (watcher) addNativeWatchPath(watcher, folderPath, isScanning(entry));
 }
 
 /**
@@ -660,9 +688,7 @@ export function addGitignoreBypass(workspacePath: string, absolutePath: string, 
 
   // On Linux, ensure chokidar watches this specific path
   const watcher = entry.lifecycle.handle;
-  if (!supportsRecursiveWatch && watcher && 'add' in watcher) {
-    watcher.add(absolutePath);
-  }
+  if (!supportsRecursiveWatch && watcher) addNativeWatchPath(watcher, absolutePath, isScanning(entry));
 
   // Replay any recently dropped events for this path
   replayDroppedEvents(entry, normalizedPath);
