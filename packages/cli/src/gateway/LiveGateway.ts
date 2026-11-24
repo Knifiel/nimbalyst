@@ -322,6 +322,11 @@ function mcpItemToRecord(item: any): TrackerRecord {
       linkedSessions: item.linkedSessions,
       linkedCommitSha: item.linkedCommitSha,
       origin: item.origin,
+      // `tracker_get` returns comments as a top-level key, not in customFields.
+      // They belong in `system` (tracker-core SYSTEM_KEYS), not `fields`, or
+      // `nim tracker show` dumps them as a raw JSON line under Fields. Empty
+      // stays unset so an item with no comments reads as it always has.
+      comments: Array.isArray(item.comments) && item.comments.length > 0 ? item.comments : undefined,
     },
     fields,
   };

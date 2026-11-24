@@ -66,6 +66,8 @@ import {
   registerCaptureWindowMount,
   clearCaptureWindowMounts,
   resolveSenderWorkspacePath,
+  resolveBackendToolCallWorkspacePath,
+  resolveProjectFileRoot,
 } from '../captureWindowWorkspace';
 import { windowStates } from '../windowState';
 import { OffscreenEditorManager } from '../../services/OffscreenEditorManager';
@@ -88,6 +90,33 @@ describe('capture window workspace resolution', () => {
     registerCaptureWindowMount(101, '/ws/other/a.ipynb', '/ws/other');
 
     expect(resolveSenderWorkspacePath({ windowId: 7, webContentsId: 101 })).toBe('/ws/rail');
+  });
+
+  it('gives a backend tool call no project from a real window when it names none', () => {
+    // #1299: an unnamed call used to get the on-screen rail project, which a
+    // background caller has no reason to use. Only the capture window, whose
+    // one mounted file fixes the project, may omit it.
+    windowStates.set(7, { workspacePath: '/ws/primary', activeWorkspacePath: '/ws/rail' } as never);
+    registerCaptureWindowMount(101, '/ws/demo/a.ipynb', '/ws/demo');
+
+    expect(resolveBackendToolCallWorkspacePath({ requested: undefined, webContentsId: 55 })).toBeUndefined();
+    expect(resolveBackendToolCallWorkspacePath({ requested: '/ws/named', webContentsId: 55 })).toBe('/ws/named');
+    expect(resolveBackendToolCallWorkspacePath({ requested: undefined, webContentsId: 101 })).toBe('/ws/demo');
+  });
+
+  it('gives project file access the tab\'s rail project, checked against what main knows', () => {
+    // #1299: an editor in a background rail project read and wrote against the
+    // on-screen project's root. The tab names its project; main accepts it
+    // only when that window has the project open.
+    windowStates.set(7, { workspacePath: '/ws/a', additionalWorkspacePaths: ['/ws/b'], activeWorkspacePath: '/ws/a' } as never);
+    registerCaptureWindowMount(101, '/ws/demo/a.ipynb', '/ws/demo');
+
+    expect(resolveProjectFileRoot({ windowId: 7, webContentsId: 55, requested: '/ws/b' })).toBe('/ws/b');
+    expect(resolveProjectFileRoot({ windowId: 7, webContentsId: 55, requested: '/ws/elsewhere' })).toBeUndefined();
+    expect(resolveProjectFileRoot({ windowId: 7, webContentsId: 55, requested: undefined })).toBeUndefined();
+    expect(resolveProjectFileRoot({ windowId: null, webContentsId: 101, requested: '/ws/demo' })).toBe('/ws/demo');
+    expect(resolveProjectFileRoot({ windowId: null, webContentsId: 101, requested: undefined })).toBe('/ws/demo');
+    expect(resolveProjectFileRoot({ windowId: null, webContentsId: 101, requested: '/ws/a' })).toBeUndefined();
   });
 
   it('falls back to the capture window mount when the sender has no window state', () => {
@@ -133,7 +162,7 @@ describe('capture window workspace resolution', () => {
   describe('project file access from the capture window', () => {
     /** Mirrors `getAuthorizedWorkspaceRoot` in HistoryHandlers. */
     const authorize = (sender: { windowId: number | null; webContentsId: number }): string => {
-      const workspaceRoot = resolveSenderWorkspacePath(sender);
+      const workspaceRoot = resolveProjectFileRoot({ ...sender, requested: undefined });
       if (!workspaceRoot) throw new Error('Project file access is unavailable outside a workspace.');
       return workspaceRoot;
     };

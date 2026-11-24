@@ -35,9 +35,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Answering a question card while the agent's turn is still running now reaches the agent at its next tool call, instead of after the turn ends
 - A background task that finishes while the agent is still working no longer gets its result answered twice, and the agent's reply to a task that finishes near the end of its turn is no longer cut off
 - Several long agent sessions running at once no longer exhaust the app's memory while linking file edits to tool calls
-- Launching Nimbalyst while it is already running now brings its window back, or opens the Project Manager, even when the only window left is a hidden background one. On Windows and Linux, closing the Project Manager with no project open now quits the app instead of leaving it running with no window, which made later launches open and close again.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.84.4] - 2026-11-23
+
+
+### Added
+<!-- New features go here -->
+- Phase toggles in the agent mode session list can hide sessions by phase, such as Complete; all phases are shown until you turn one off.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- Extensions must name a project when they call `sendPrompt` or one of their backend tools; a call without one is refused instead of using the project on screen. Editors get their tab's project from the new `EditorHost.workspacePath`.
+
+### Fixed
+<!-- Bug fixes go here -->
+- An automation that runs on a schedule or from its document's Run Now button now starts its AI session in the project that contains the automation file, not whichever project is active in the window's project rail.
+- Automations in every project open in a window's project rail now run on schedule, not only those in the window's first project, and write their output and history into their own project.
+- A relative file path an agent passes to an extension tool now resolves against the session's project, not the window's first project.
+- An extension editor whose tab is in a project other than the one on screen now reads and writes files in its own project, not the on-screen one.
+- In auto mode, approving a Claude tool call that the safety classifier blocked now tells the agent you approved it and to run it again. Before, the agent only got a generic retry hint and could skip the call. The prompt for a compound shell command now offers only Allow Once, since Session and Always never applied to it.
 - Launching Nimbalyst again while it is already running no longer starts a second copy of the app that shows a window for about five seconds and then disappears. On Windows and Linux the extra launch now hands over to the running app and exits at once, and on every platform it no longer opens the shared database or replaces the running app's logs.
+- Deleting a session whose transcript was not open, or while sync was disconnected, now removes it from your other devices too. Before, the server never got the delete and the session could come back. A delete made offline is kept and sent once sync reconnects, including after a restart, and only for the account it was made under.
 - If the database worker crashes again right after Nimbalyst restarts it, Nimbalyst now tries again instead of leaving every database action failing until you restart the app.
+- Launching Nimbalyst while it is already running now brings its window back, or opens the Project Manager, even when the only window left is a hidden background one. On Windows and Linux, closing the Project Manager with no project open and no other window visible now quits the app instead of leaving it running with no window, which made later launches open and close again.
+- While an agent reply streams, scrolling up in the transcript (with the wheel, keys, scrollbar or touch) now keeps you where you scrolled instead of pulling you back to the bottom as the reply grows, and returning to the bottom after jumping to a search result, message or prompt follows the reply again.
+- A session that spawns child sessions now appears in the Files-mode chat panel's session dropdown and auto-select; only workstream containers and empty parent roots are skipped (#1737).
+- The @-mention file picker now lists all recent files, and a file opened in a side-rail project is recorded under the project on screen instead of the window's first project (#303).
+- `tracker_get` reports archive state and comments, and `nim tracker show` prints comments in the record instead of as a raw JSON line (#1225).
+- An agent waiting on your answer to an interactive prompt is no longer woken by finished background tasks, which closed its MCP connection before the answer arrived; results are held and delivered after you answer (#1557).
 
 ### Removed
 <!-- Removed features go here -->
@@ -436,6 +464,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Switching projects in one window no longer restarts the previous project's terminals inside the new project
 - Clicking a notification for a session in another open project opens that session, instead of the session that was open there before.
 - Choosing "Always" on one of several tool permission prompts that are waiting at once now approves the others too, instead of asking again
+- The @-mention file list in the chat box now shows all of a project's stored recent files (up to 50) instead of only the 20 most recent
 
 ### Removed
 <!-- Removed features go here -->
@@ -656,6 +685,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Quick Open, @ mentions, and content search find files in git repositories cloned inside a project, which the project's ignore rules used to hide (#1449).
 - An agent session in a worktree can read and edit folders attached to either the worktree or its project
 - Expanded deep folders stay visible and current when files change elsewhere, even when refreshes finish out of order
+- A session waiting on your answer is no longer interrupted when a background task finishes, so the question stays open and the results arrive once you have replied (#1557).
 
 ### Removed
 <!-- Removed features go here -->

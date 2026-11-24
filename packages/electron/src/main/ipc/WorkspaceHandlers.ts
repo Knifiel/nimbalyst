@@ -9,7 +9,7 @@ import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import { AnalyticsService } from '../services/analytics/AnalyticsService';
 import { openWorkspaceFile, openFile } from '../file/FileOpener';
-import { fuzzyMatchPath } from '@nimbalyst/runtime';
+import { fuzzyMatchPath } from '@nimbalyst/runtime/utils/fuzzyMatch';
 import { parseFileMask, matchesFileMask } from '@nimbalyst/extension-sdk/file-mask';
 import { getSyncId, removeFileFromIndex } from '../services/DocSyncService';
 
@@ -471,8 +471,9 @@ export function registerWorkspaceHandlers() {
             return [];
         }
 
-        // Filter to only existing files
-        return workspaceRecentFiles.filter(filePath => existsSync(filePath)).slice(0, 20);
+        // Filter to only existing files. No extra cut here: the store already
+        // caps the list, and the @-mention picker should show all of it (#303).
+        return workspaceRecentFiles.filter(filePath => existsSync(filePath));
     });
 
     // Add to workspace recent files

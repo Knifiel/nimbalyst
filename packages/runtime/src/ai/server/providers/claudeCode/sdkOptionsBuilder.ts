@@ -33,7 +33,7 @@ type SDKUserMessage = {
   type: 'user';
   message: MessageParam;
   parent_tool_use_id: string | null;
-  /** 'next': read in the running turn once its current tool calls finish. */
+  /** 'next' folds the message into a running turn at the next model request. */
   priority?: 'now' | 'next' | 'later';
   origin?: { kind: 'human' };
   /** The CLI stamps the reply to this message with it (`user_message_uuid`). */

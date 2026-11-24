@@ -1,9 +1,13 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
+import { createStore } from 'jotai';
 import type { SessionMeta } from '@nimbalyst/runtime';
 import {
+  isWorkstreamContainer,
   isWorkstreamParentSession,
+  matchesSessionListPhases,
   matchesSessionListTag,
+  sessionListHiddenPhasesAtom,
   VIRTUAL_TAG_WORKSTREAMS,
   VIRTUAL_TAG_WORKTREE,
 } from '../sessionListFilter';
@@ -56,9 +60,47 @@ describe('session list virtual tags', () => {
     }))).toBe(false);
   });
 
+  it('treats only conversation-less roots as workstream containers', () => {
+    expect(isWorkstreamContainer(workstream)).toBe(true);
+    expect(isWorkstreamContainer(session({ id: 'legacy', childCount: 2 }))).toBe(true);
+    expect(isWorkstreamContainer(session({ id: 'parent', childCount: 2, messageCount: 12 }))).toBe(false);
+    expect(isWorkstreamContainer(standalone)).toBe(false);
+  });
+
   it('preserves the existing #worktree and persisted-tag predicates', () => {
     expect(matchesSessionListTag(worktreeSession, VIRTUAL_TAG_WORKTREE, registry)).toBe(true);
     expect(matchesSessionListTag(standalone, 'feature', registry)).toBe(true);
     expect(matchesSessionListTag(standalone, 'missing', registry)).toBe(false);
+  });
+});
+
+describe('session list phase filter', () => {
+  const done = session({ id: 'done', phase: 'complete' });
+  const planning = session({ id: 'planning', phase: 'planning' });
+  const unphased = session({ id: 'unphased' });
+  const workstream = session({ id: 'ws', sessionType: 'workstream', childCount: 2 });
+  const doneChild = session({ id: 'ws-a', parentSessionId: 'ws', phase: 'complete' });
+  const activeChild = session({ id: 'ws-b', parentSessionId: 'ws', phase: 'implementing' });
+  const registry = new Map(
+    [done, planning, unphased, workstream, doneChild, activeChild].map(s => [s.id, s]),
+  );
+
+  it('shows every phase by default, including complete', () => {
+    const hidden = createStore().get(sessionListHiddenPhasesAtom);
+    expect(hidden).toEqual([]);
+    expect(matchesSessionListPhases(done, hidden, registry)).toBe(true);
+    expect(matchesSessionListPhases(planning, hidden, registry)).toBe(true);
+    expect(matchesSessionListPhases(unphased, hidden, registry)).toBe(true);
+  });
+
+  it('hides complete sessions once complete is selected and never hides unphased ones', () => {
+    expect(matchesSessionListPhases(done, ['complete'], registry)).toBe(false);
+    expect(matchesSessionListPhases(planning, ['complete'], registry)).toBe(true);
+    expect(matchesSessionListPhases(unphased, ['backlog', 'planning', 'implementing', 'validating', 'complete'], registry)).toBe(true);
+  });
+
+  it('filters a workstream without its own phase by its most active child', () => {
+    expect(matchesSessionListPhases(workstream, ['complete'], registry)).toBe(true);
+    expect(matchesSessionListPhases(workstream, ['implementing'], registry)).toBe(false);
   });
 });

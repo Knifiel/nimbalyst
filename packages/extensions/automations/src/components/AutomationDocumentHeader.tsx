@@ -14,9 +14,18 @@ interface AIModel {
 import { ALL_DAYS, DAY_LABELS } from '../frontmatter/types';
 import { parseAutomationStatus, updateAutomationStatus } from '../frontmatter/parser';
 import { formatRelativeTime, calculateNextRun } from '../scheduler/scheduleUtils';
+import { projectRootOf } from '../paths';
 
 /** Load execution history from history.json in the output directory. */
-function useExecutionHistory(outputLocation: string | undefined) {
+function useExecutionHistory(outputLocation: string | undefined, automationFilePath: string) {
+  // Relative paths belong to the project that holds this automation, which
+  // need not be the window's first project (#1299).
+  // An open document's path is absolute, so its project is always known.
+  const projectRootFor = useCallback(
+    async (): Promise<string | undefined> => projectRootOf(automationFilePath),
+    [automationFilePath],
+  );
+
   const [records, setRecords] = useState<ExecutionRecord[]>([]);
 
   const refresh = useCallback(async () => {
@@ -24,8 +33,7 @@ function useExecutionHistory(outputLocation: string | undefined) {
     const electronAPI = (window as any).electronAPI;
     if (!electronAPI) return;
     try {
-      const state = await electronAPI.getInitialState();
-      const wp = state?.workspacePath;
+      const wp = await projectRootFor();
       if (!wp) return;
       const location = outputLocation.endsWith('/') ? outputLocation : outputLocation + '/';
       const historyPath = location + 'history.json';
@@ -40,20 +48,19 @@ function useExecutionHistory(outputLocation: string | undefined) {
     } catch {
       setRecords([]);
     }
-  }, [outputLocation]);
+  }, [outputLocation, projectRootFor]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
   const openFile = useCallback(async (filePath: string) => {
     const electronAPI = (window as any).electronAPI;
     if (!electronAPI?.invoke) return;
-    const state = await electronAPI.getInitialState();
-    const wp = state?.workspacePath;
+    const wp = await projectRootFor();
     if (!wp) return;
     const absPath = filePath.startsWith('/') ? filePath : `${wp}/${filePath}`;
     // Use workspace:open-file which sends open-document event to properly open/switch tabs
     electronAPI.invoke('workspace:open-file', { workspacePath: wp, filePath: absPath });
-  }, []);
+  }, [projectRootFor]);
 
   return { records, openFile, refresh };
 }
@@ -197,7 +204,7 @@ export const AutomationDocumentHeader: React.FC<DocumentHeaderComponentProps> = 
     [status, handleUpdate],
   );
 
-  const { records: historyRecords, openFile: openHistoryFile, refresh: refreshHistory } = useExecutionHistory(status?.output?.location);
+  const { records: historyRecords, openFile: openHistoryFile, refresh: refreshHistory } = useExecutionHistory(status?.output?.location, filePath);
   const [showHistory, setShowHistory] = useState(false);
   const historyRef = useRef<HTMLDivElement>(null);
 

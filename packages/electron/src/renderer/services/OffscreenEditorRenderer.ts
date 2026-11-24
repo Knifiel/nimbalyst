@@ -266,6 +266,8 @@ class OffscreenEditorRendererImpl {
       fileName,
       theme: 'light', // TODO: Get from app settings
       isActive: false, // Offscreen editors are never "active"
+      workspaceId: workspacePath,
+      workspacePath,
 
       async loadContent(): Promise<string> {
         const result = await electronAPI.readFileContent(filePath);
@@ -379,6 +381,7 @@ class OffscreenEditorRendererImpl {
        * the offscreen path made `fs` impossible; it was simply never wired.
        */
       fs: createProjectFileSystemHost({
+        workspacePath,
         // Nothing on screen to refresh: this host exists to render once.
         onAfterWrite: async () => {},
       }),

@@ -941,19 +941,15 @@ function createExtensionContext(
 
   const subscriptions: Disposable[] = [];
 
-  // Cache workspace path for resolving relative paths
-  let cachedWorkspacePath: string | null = null;
+  // The project a relative path from non-tool extension code belongs to: the
+  // window's on-screen project, asked of main on every call. A cached copy went
+  // stale when that project closed or the rail switched (#1299). Tool handlers
+  // never get here for relative paths; the tools bridge resolves those against
+  // the calling session's project.
   async function getWorkspacePath(): Promise<string | null> {
-    if (cachedWorkspacePath) return cachedWorkspacePath;
     const electronAPI = (window as any).electronAPI;
-    if (electronAPI?.getInitialState) {
-      const state = await electronAPI.getInitialState();
-      if (state?.workspacePath) {
-        cachedWorkspacePath = state.workspacePath;
-        return cachedWorkspacePath;
-      }
-    }
-    return null;
+    if (!electronAPI?.invoke) return null;
+    return (await electronAPI.invoke('extensions:get-active-project-path')) ?? null;
   }
 
   // Resolve a path: if it's absolute, use as-is; if relative, prepend workspace path
@@ -975,7 +971,10 @@ function createExtensionContext(
       writeFile: async (p: string, content: string | Uint8Array) =>
         platformService.writeFile(await resolvePath(p), content),
       fileExists: async (p: string) => platformService.fileExists(await resolvePath(p)),
-      findFiles: async (pattern: string) => {
+      findFiles: async (pattern: string, rootDir?: string) => {
+        if (rootDir) {
+          return platformService.findFiles(rootDir, pattern);
+        }
         const wp = await getWorkspacePath();
         if (wp) {
           return platformService.findFiles(wp, pattern);
@@ -983,6 +982,11 @@ function createExtensionContext(
         // Fallback to extensions directory if workspace path unavailable
         const extensionsDir = await platformService.getExtensionsDirectory();
         return platformService.findFiles(extensionsDir, pattern);
+      },
+      listProjectPaths: async () => {
+        const electronAPI = (window as any).electronAPI;
+        if (!electronAPI) return [];
+        return electronAPI.invoke('extensions:list-scheduled-project-paths');
       },
     },
     ui: {
@@ -1048,6 +1052,7 @@ function createExtensionContext(
         sessionName?: string;
         provider?: 'claude-code' | 'claude' | 'openai' | 'openai-codex';
         model?: string;
+        workspacePath?: string;
       }): Promise<{ sessionId: string; response: string }> => {
         const electronAPI = (window as any).electronAPI;
         if (!electronAPI) {

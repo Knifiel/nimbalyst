@@ -8,10 +8,19 @@
  * new send with the message.
  */
 
+import { decideIdleWake } from './idleWakeGating';
+
 export interface TeammateIdleWakeData {
   sessionId: string;
   message: string;
 }
+
+/**
+ * What the listener did with a wake. `started` means the session was marked
+ * running and the send was scheduled; a send that fails after that ends the
+ * session through the abandon path like any other failed wake.
+ */
+export type TeammateIdleWakeOutcome = 'ignored' | 'dropped' | 'held' | 'started' | 'abandoned';
 
 export interface WakeTargetWindow {
   isDestroyed: () => boolean;
@@ -21,6 +30,10 @@ export interface TeammateIdleWakeDeps<W extends WakeTargetWindow = WakeTargetWin
   isSessionActive: (sessionId: string) => boolean;
   startSession: (options: { sessionId: string; workspacePath: string }) => Promise<void>;
   endSession: (sessionId: string) => Promise<void>;
+  /** The lead is parked on an interactive prompt, waiting on the user. */
+  isBlockedOnUser: (sessionId: string) => boolean;
+  /** Hold a wake until the lead is no longer blocked on the user. */
+  holdForUser: (sessionId: string, message: string) => void;
   /** Workspace path of the turn that installed this listener. */
   turnWorkspacePath: () => string;
   resolveOwnerWorkspacePath: (sessionId: string) => Promise<string | null>;
@@ -39,16 +52,25 @@ export interface TeammateIdleWakeDeps<W extends WakeTargetWindow = WakeTargetWin
 }
 
 export function createTeammateIdleWakeListener<W extends WakeTargetWindow>(deps: TeammateIdleWakeDeps<W>) {
-  return async (data: TeammateIdleWakeData): Promise<void> => {
+  return async (data: TeammateIdleWakeData): Promise<TeammateIdleWakeOutcome> => {
     if (!data.sessionId) {
       deps.logWarn('[AIService] teammate:messageWhileIdle with no sessionId');
-      return;
+      return 'ignored';
     }
-    // Don't wake a session that already ended (e.g., all teammates completed
-    // between the message being queued and this handler running).
-    if (!deps.isSessionActive(data.sessionId)) {
+    const decision = decideIdleWake({
+      // Don't wake a session that already ended (e.g., all teammates completed
+      // between the message being queued and this handler running).
+      sessionActive: deps.isSessionActive(data.sessionId),
+      hasPendingPrompt: deps.isBlockedOnUser(data.sessionId),
+    });
+    if (decision.action === 'drop') {
       deps.logInfo(`[AIService] Ignoring teammate message for ended session ${data.sessionId}`);
-      return;
+      return 'dropped';
+    }
+    if (decision.action === 'defer') {
+      deps.holdForUser(data.sessionId, data.message);
+      deps.logInfo(`[AIService] Holding teammate message for session ${data.sessionId}: lead is waiting on an interactive prompt`);
+      return 'held';
     }
     deps.logInfo(`[AIService] Teammate message while lead idle, triggering sendMessage for session ${data.sessionId}`);
     // Load with the workspace that owns the session row. The turn's path can be
@@ -71,15 +93,17 @@ export function createTeammateIdleWakeListener<W extends WakeTargetWindow>(deps:
       const targetWindow = deps.findWindow(workspacePath);
       if (!targetWindow || targetWindow.isDestroyed()) {
         abandon('[AIService] No window for idle wake', new Error(`No window for workspace ${workspacePath}`));
-        return;
+        return 'abandoned';
       }
       deps.defer(() => {
         deps.sendMessage(targetWindow, data.message, data.sessionId, workspacePath).catch((err) => {
           abandon('[AIService] Failed to process teammate message while idle', err);
         });
       });
+      return 'started';
     } catch (error) {
       abandon('[AIService] Failed to handle teammate message while idle', error);
+      return 'abandoned';
     }
   };
 }
