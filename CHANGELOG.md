@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Answering a question card while the agent's turn is still running now reaches the agent at its next tool call, instead of after the turn ends
 - A background task that finishes while the agent is still working no longer gets its result answered twice, and the agent's reply to a task that finishes near the end of its turn is no longer cut off
 - Several long agent sessions running at once no longer exhaust the app's memory while linking file edits to tool calls
+- Folders excluded through a repository's local or global git exclude settings are no longer watched for changes, so a large excluded folder no longer slows the app down.
 
 ### Removed
 <!-- Removed features go here -->
