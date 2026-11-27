@@ -13,8 +13,8 @@ import { CollapsibleGroup } from './CollapsibleGroup';
 import { WorktreeBaseBranchPicker, type WorktreePickerCreateOptions } from './WorktreeBaseBranchPicker';
 import { restoreRepoSelection, worktreeRepoChoices } from './worktreeRepoSelection';
 import { SessionListItem } from './SessionListItem';
-import { SessionTreeRow, useVisibleSessionTreeRows, type VisibleSessionTreeRow } from './SessionTree.tsx';
-import { visibleSessionTreeIds, sessionTreeRootId, rendersAsSessionTree, treeParentIds } from './sessionTreeModel';
+import { SessionTreeRow, readTreeExpanded, sessionTreeSearchExpandAtom, useVisibleSessionTreeRows, type VisibleSessionTreeRow } from './SessionTree.tsx';
+import { bulkTreeExpand, searchExpandEntries, searchExpandKey, titleSearchMatcher, titleSearchReveal, visibleSessionTreeIds, sessionTreeRootId, rendersAsSessionTree, treeParentIds } from './sessionTreeModel';
 import { resolveSessionArchiveSelection, sessionArchiveSubtreeIds } from './sessionArchiveSelection';
 import { WorkstreamGroup } from './WorkstreamGroup';
 import { BlitzGroup } from './BlitzGroup';
@@ -47,8 +47,8 @@ import {
 import { alphaFeatureEnabledAtom, worktreesFeatureAvailableAtom } from '../../store/atoms/appSettings';
 import { activeWorkspacePathAtom } from '../../store/atoms/openProjects';
 import { useGitRepoProbe } from '../../hooks/useGitRepoProbe';
-import { workstreamStateAtom, setTreeExpandedForAtom } from '../../store/atoms/workstreamState';
-import { sessionProcessingAtom, sessionUnreadAtom, sessionHasPendingInteractivePromptAtom, activeSessionIdAtom as globalActiveSessionIdAtom, sessionPinnedUpdateAtom, createWorkstreamAtom } from '../../store/atoms/sessions';
+import { setTreeExpandedForAtom } from '../../store/atoms/workstreamState';
+import { activeSessionIdAtom as globalActiveSessionIdAtom, sessionPinnedUpdateAtom, createWorkstreamAtom } from '../../store/atoms/sessions';
 import { collapsedGroupsAtom, compactRowsAtom, setCompactRowsAtom, showContextUsageAtom, setShowContextUsageAtom, sortOrderAtom, setCollapsedGroupsAtom, setSortOrderAtom } from '../../store/atoms/agentMode';
 import {
   recentlyRenamedSessionAtom,
@@ -832,6 +832,19 @@ const SessionHistoryComponent: React.FC = () => {
     };
   }, [workspacePath, updateSessionStore]);
 
+  // Title search also matches sessions nested under a root: the root stays in the list
+  // and the ancestors of each nested match open for as long as the query is active.
+  const titleReveal = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return query ? titleSearchReveal(sessionRegistry, titleSearchMatcher(query, showArchived)) : null;
+  }, [searchQuery, sessionRegistry, showArchived]);
+  const expandKey = searchExpandKey(searchQuery, titleReveal && !contentSearchTriggered ? titleReveal.expandIds : null);
+  const setSearchExpand = useSetAtom(sessionTreeSearchExpandAtom);
+  useEffect(() => {
+    setSearchExpand(searchExpandEntries(expandKey));
+  }, [expandKey, setSearchExpand]);
+  useEffect(() => () => setSearchExpand(new Map()), [setSearchExpand]);
+
   // Session list refresh is now handled by centralized listener in sessionListListeners.ts
   // Components just read from sessionListAtom which updates automatically
 
@@ -880,7 +893,7 @@ const SessionHistoryComponent: React.FC = () => {
       if (hasPhaseFilter && !matchesSessionListPhases(session, hiddenPhases, sessionRegistry)) {
         return false;
       }
-      if (hasTitleQuery && !(session.title ?? '').toLowerCase().includes(titleQuery)) {
+      if (hasTitleQuery && !(session.title ?? '').toLowerCase().includes(titleQuery) && !titleReveal?.rootIds.has(session.id)) {
         return false;
       }
       if (hasTagFilter) {
@@ -890,7 +903,7 @@ const SessionHistoryComponent: React.FC = () => {
       return true;
     });
     setSessions(filtered.sort(compareSessionOrder));
-  }, [searchQuery, tagFilter.tags, hiddenPhases, allSessions, mode, compareSessionOrder, sessionRegistry, contentSearchTriggered]);
+  }, [searchQuery, tagFilter.tags, hiddenPhases, allSessions, mode, compareSessionOrder, sessionRegistry, contentSearchTriggered, titleReveal]);
 
   useEffect(() => {
     const commitOrderMap = (nextMap: Map<string, number>) => {
@@ -2438,6 +2451,11 @@ const SessionHistoryComponent: React.FC = () => {
     return ids;
   }, [groupKeys, groupedItems, sessionRegistry]);
   const setTreeExpandedFor = useSetAtom(setTreeExpandedForAtom);
+  const setAllTreesExpanded = useCallback((expanded: boolean) => {
+    const next = bulkTreeExpand(allTreeParentIds, store.get(sessionTreeSearchExpandAtom), expanded);
+    setTreeExpandedFor({ ids: next.persistIds, expanded });
+    setSearchExpand(next.overrides);
+  }, [setTreeExpandedFor, setSearchExpand, allTreeParentIds]);
 
   const flatVirtuosoItems = useMemo(() => {
     const flat: FlatVirtuosoItem[] = [];
@@ -2466,7 +2484,7 @@ const SessionHistoryComponent: React.FC = () => {
   visualOrderRef.current = () => {
     const ids: string[] = [];
     const treeOrder = (rows: SessionItem[]) => visibleSessionTreeIds(rows.map(row => ({...row, updatedAt: Math.max(row.updatedAt, workspaceTurnActivity.get(row.id) ?? 0)})), node =>
-      store.get(workstreamStateAtom(node.session.id)).treeExpanded ?? node.ids.some(id => id === activeSessionId || store.get(sessionProcessingAtom(id)) || store.get(sessionUnreadAtom(id)) || store.get(sessionHasPendingInteractivePromptAtom(id)))
+      readTreeExpanded(store.get, { id: node.session.id, ids: node.ids }, activeSessionId)
     );
     for (const entry of flatVirtuosoItems) {
       if (entry.kind === 'tree-row') {
@@ -3262,7 +3280,7 @@ const SessionHistoryComponent: React.FC = () => {
           <>
         <button
           className="session-history-collapse-all flex items-center justify-center px-1 py-1 text-xs rounded border border-[var(--nim-border)] bg-[var(--nim-bg-secondary)] text-[var(--nim-text-faint)] cursor-pointer transition-all duration-150 outline-none hover:bg-[var(--nim-bg-tertiary)] hover:border-[var(--nim-primary)] hover:text-[var(--nim-text)]"
-          onClick={() => setTreeExpandedFor({ ids: allTreeParentIds, expanded: false })}
+          onClick={() => setAllTreesExpanded(false)}
           title="Collapse all"
           aria-label="Collapse all"
         >
@@ -3270,7 +3288,7 @@ const SessionHistoryComponent: React.FC = () => {
         </button>
         <button
           className="session-history-expand-all flex items-center justify-center px-1 py-1 text-xs rounded border border-[var(--nim-border)] bg-[var(--nim-bg-secondary)] text-[var(--nim-text-faint)] cursor-pointer transition-all duration-150 outline-none hover:bg-[var(--nim-bg-tertiary)] hover:border-[var(--nim-primary)] hover:text-[var(--nim-text)]"
-          onClick={() => setTreeExpandedFor({ ids: allTreeParentIds, expanded: true })}
+          onClick={() => setAllTreesExpanded(true)}
           title="Expand all"
           aria-label="Expand all"
         >

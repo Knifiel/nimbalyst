@@ -129,7 +129,9 @@ export function visibleSessionTreeIds<T extends TreeSession>(
   return ids;
 }
 
-export function sessionTreeRootId(id: string, rows: ReadonlyMap<string, TreeSession>): string {
+/** The session and its ancestors up to the sidebar root; stops at a blitz parent, a worktree boundary, or a cycle. */
+export function sessionTreePath(id: string, rows: ReadonlyMap<string, TreeSession>): string[] {
+  const path = [id];
   const visited = new Set<string>();
   let current = id;
   while (!visited.has(current)) {
@@ -145,8 +147,60 @@ export function sessionTreeRootId(id: string, rows: ReadonlyMap<string, TreeSess
     )
       break;
     current = parent.id;
+    path.push(current);
   }
-  return current;
+  return path;
+}
+
+export function sessionTreeRootId(id: string, rows: ReadonlyMap<string, TreeSession>): string {
+  const path = sessionTreePath(id, rows);
+  return path[path.length - 1];
+}
+
+/**
+ * Title search: the sidebar roots whose tree holds a match, and the ancestors to open
+ * so a nested match is visible. A match's own expansion is left alone, so a matching
+ * parent keeps its children behind its chevron.
+ */
+export function titleSearchReveal(
+  rows: ReadonlyMap<string, TreeSession>,
+  matches: (row: TreeSession) => boolean
+): { rootIds: Set<string>; expandIds: Set<string> } {
+  const rootIds = new Set<string>();
+  const expandIds = new Set<string>();
+  for (const row of rows.values()) {
+    if (!matches(row)) continue;
+    const path = sessionTreePath(row.id, rows);
+    rootIds.add(path[path.length - 1]);
+    for (const id of path.slice(1)) expandIds.add(id);
+  }
+  return { rootIds, expandIds };
+}
+
+/** A hidden archived session is not a title match; its ancestors are still walked. */
+export function titleSearchMatcher(query: string, showArchived: boolean) {
+  const q = query.trim().toLowerCase();
+  return (row: TreeSession & { title?: string; isArchived?: boolean }) =>
+    (showArchived || !row.isArchived) && (row.title ?? '').toLowerCase().includes(q);
+}
+
+/**
+ * The search-only expansion entries for a query. Keyed by the query as well as the
+ * ancestors, so a new query re-opens ancestors the user collapsed under the old one.
+ */
+export function searchExpandKey(query: string, expandIds: Iterable<string> | null): string {
+  return expandIds ? [query.trim().toLowerCase(), ...[...expandIds].sort()].join('\0') : '';
+}
+export function searchExpandEntries(key: string): Map<string, boolean> {
+  return new Map(key ? key.split('\0').slice(1).map((id) => [id, true] as const) : []);
+}
+
+/** Collapse all / Expand all during search: ancestors opened by search change only their override. */
+export function bulkTreeExpand(ids: readonly string[], overrides: ReadonlyMap<string, boolean>, expanded: boolean) {
+  return {
+    persistIds: ids.filter((id) => !overrides.has(id)),
+    overrides: overrides.size ? new Map([...overrides.keys()].map((id) => [id, expanded] as const)) : overrides,
+  };
 }
 
 /** Server is authoritative; this check supplies immediate drag and picker feedback. */

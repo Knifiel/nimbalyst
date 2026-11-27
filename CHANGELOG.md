@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Each window in the Claude and Codex usage popovers now shows how much of the window has passed next to its reset time, and a "Limit ratio" line (elapsed share divided by usage share) while the window is still running (#1975).
 - New worktrees can be set up automatically: chosen project files such as `.env` are copied in and a setup command runs in a terminal of the worktree (Settings > Project > Worktree Setup)
 - The new-worktree dialog can branch a project's nested clones together with it: one task folder holds a worktree of each chosen clone at its own path, on one branch, with a repository picker in the Git panel, and is archived or deleted as a unit
 - Approving a plan can start its implementation in a new worktree, and sessions an agent spawns into a new worktree get the repositories last picked in the new-worktree dialog and the project's worktree setup, starting once the setup command finishes
@@ -18,16 +19,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- In an orchestrating session's transcript, a child session's update message now shows as a card labeled "Child session update" with its list of modified files collapsed behind a "Files modified" toggle (#2001).
+- Remote MCP servers that need OAuth are now signed in by Nimbalyst itself instead of the third-party `mcp-remote` helper, so they no longer need Node.js installed or an `npx` download. Sign-ins are stored encrypted in Nimbalyst's own storage, existing `mcp-remote` sign-ins are imported once, and Codex, Copilot and other agents reach these servers through a local gateway that keeps the tokens out of their configuration. Saved `npx mcp-remote <url>` servers that use only supported options are routed the same way without changing the saved config.
+- The Linear, GitHub, PostHog, Atlassian, Notion, Asana and Zapier server templates now add HTTP servers. The Asana template uses Asana's v2 endpoint, which needs an OAuth client ID; the v1 endpoint the template used before has been shut down.
 - A worktree of a repository cloned inside the project uses the project's agent trust instead of asking again; the clone opened on its own still asks
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Session title search in the sidebar now also matches sessions nested under a parent session, and opens the parents above each match until the search is cleared (#2007).
+- AI actions with non-Latin headings in `ai-actions.md` remain separate actions instead of being dropped as duplicates (#1565).
+- Gemini models no longer disappear from the model picker when settings carry an outdated list of Gemini model IDs (#2016).
+- The Gemini usage chip shows usage before the first Gemini request when the Antigravity IDE's language server is already running, instead of waiting for that request (#2018).
+- When signed out, a published team tracker item shows its body right away instead of showing "Connecting..." for about 15 seconds while team lookups retry (#1914).
+- An answer to a permission prompt or question given on another device, such as your phone, now reaches the waiting desktop session when the session has more than 50 messages; before, the prompt waited until it timed out (#2009).
+- When a project has more files than the operating system can watch, the file watcher now retries after 1, 5, 15, then 30 minutes instead of re-scanning the project as often as every second, and the "File updates delayed" warning suggests adding large folders to .gitignore (#2021).
+- In Claude Agent sessions, the approval prompt for a shell command now shows the agent's one-line description of the command above it, and the prompt for starting a sub-agent shows its task instead of just "Agent" (#1792).
+- Jump to question now goes to the newest open question instead of the oldest, the automatic jump to a new question runs once instead of again each time the pane is shown or the session is reopened, and reopening a session whose open question was already shown now keeps the transcript at the end (#1867).
 - A worktree of a repository cloned inside the project is created next to the project instead of inside it, and the new-worktree dialog names the repository it branches from.
 - Archiving or deleting a worktree no longer deletes another repository's checkout of the same project that sits inside the worktree's folder
 - Archiving or deleting a worktree no longer deletes a folder or branch its repository does not own (another repository's worktree, or a moved, copied, locked or nested checkout), and no longer prunes the repository's other worktrees.
 - Edits inside a repository cloned in the project and ignored by its `.gitignore` now reach the file tree and open editors, following that clone's own ignore rules.
 - Git repositories cloned inside a project and ignored by its `.gitignore` now get status badges and appear in the Git panel's repo picker and the title-bar branch menu.
-- Jump to question now goes to the newest open question instead of an older abandoned one, and returning to a session no longer scrolls back to a question you already saw.
 - Long sessions no longer freeze the chat while the agent is working: the transcript stops reloading its whole history on top of itself
 - Long sessions no longer stall the app after every tool call, and their file edits are linked to the tool calls that made them again
 - When a background task finishes after the agent's turn ended, the agent's reply to it is no longer cut off, so the transcript no longer shows "No response requested." and the agent no longer apologizes for work it never dropped
@@ -36,7 +48,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A background task that finishes while the agent is still working no longer gets its result answered twice, and the agent's reply to a task that finishes near the end of its turn is no longer cut off
 - Several long agent sessions running at once no longer exhaust the app's memory while linking file edits to tool calls
 - Folders excluded through a repository's local or global git exclude settings are no longer watched for changes, so a large excluded folder no longer slows the app down.
-- Projects with more files than the system can watch no longer keep the app busy re-scanning them every second; it now waits longer between attempts and suggests adding large folders to .gitignore.
 
 ### Removed
 <!-- Removed features go here -->

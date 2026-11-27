@@ -33,16 +33,17 @@ interface UsageSectionProps {
   windowDurationMs: number;
 }
 
-function calculateTimeElapsedPercent(resetsAt: string | null, windowDurationMs: number): number {
-  if (!resetsAt) return 0;
+function calculateTimeElapsedPercent(resetsAt: string | null, windowDurationMs: number): number | null {
+  if (!resetsAt || !Number.isFinite(windowDurationMs) || windowDurationMs <= 0) return null;
 
   const resetTime = new Date(resetsAt).getTime();
+  if (!Number.isFinite(resetTime)) return null;
   const now = Date.now();
   const windowStartTime = resetTime - windowDurationMs;
   const elapsedMs = now - windowStartTime;
 
   const percent = (elapsedMs / windowDurationMs) * 100;
-  return Math.max(0, Math.min(100, percent));
+  return Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : null;
 }
 
 const UsageSection: React.FC<UsageSectionProps> = ({
@@ -62,10 +63,10 @@ const UsageSection: React.FC<UsageSectionProps> = ({
 
   const colors = colorClasses[color] || colorClasses.muted;
   const timeElapsedPercent = calculateTimeElapsedPercent(resetsAt, windowDurationMs);
-  const isOverPacing = utilization > timeElapsedPercent;
+  const isOverPacing = timeElapsedPercent !== null && utilization > timeElapsedPercent;
 
   return (
-    <div className="mb-4 last:mb-0">
+    <div className="gemini-usage-section mb-4 last:mb-0">
       <div className="flex justify-between items-baseline mb-1">
         <div>
           <div className="text-[13px] font-semibold text-nim">{title}</div>
@@ -80,12 +81,15 @@ const UsageSection: React.FC<UsageSectionProps> = ({
           className={`h-full rounded-full transition-all duration-300 ${colors.bar}`}
           style={{ width: `${Math.min(utilization, 100)}%` }}
         />
-        <div
+        {timeElapsedPercent !== null && <div
           className={`absolute top-0 h-full w-0.5 transition-all duration-300 ${isOverPacing ? 'bg-red-400' : 'bg-nim-text-muted'}`}
           style={{ left: `${timeElapsedPercent}%` }}
           title={`${Math.round(timeElapsedPercent)}% of window elapsed`}
-        />
+        />}
       </div>
+      {/* No elapsed percentage or limit ratio here: these rows are the two most-constrained
+          per-model quotas, and Gemini does not report how long each quota window is, so the
+          5-hour and 7-day durations above are assumptions too weak to print as numbers. */}
       <div className="flex items-center gap-1 text-[11px] text-nim-muted">
         <MaterialSymbol icon="schedule" size={12} className="opacity-70" />
         <span>Resets in {formatResetTime(resetsAt)}</span>

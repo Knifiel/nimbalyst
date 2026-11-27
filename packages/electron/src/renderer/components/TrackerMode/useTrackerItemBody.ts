@@ -11,6 +11,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useAtomValue } from 'jotai';
 import type { EditorConfig } from '@nimbalyst/runtime/editor';
 import { $convertFromEnhancedMarkdownString, getEditorTransformers } from '@nimbalyst/runtime/editor';
 import { $getRoot, $setSelection, type LexicalEditor } from 'lexical';
@@ -27,6 +28,7 @@ import { useCollabSyncCurtain } from '../../hooks/useCollabSyncCurtain';
 import { registerLiveTypedPageEditor } from '../../services/personalAgentEdit';
 import { useCollabBodyHistory } from '../HistoryDialog/useCollabBodyHistory';
 import { personalTypedPageHistoryKey } from '../../../shared/personalPageUri';
+import { stytchIsSignedInAtom } from '../../store/atoms/stytchAuth';
 
 /** How this item's body is edited -- see `resolveTrackerContentMode`. */
 export type TrackerContentMode = 'file-backed' | 'local-pglite' | 'collaborative';
@@ -56,9 +58,15 @@ const INCOMPLETE_TEAM_LOOKUP_RETRY_MS = [500, 1000, 2000, 4000, 8000] as const;
 export function useTrackerTeam(workspacePath: string | undefined): TrackerTeam {
   const [teamOrgId, setTeamOrgId] = useState<string | null | undefined>(undefined);
   const [teamMembers, setTeamMembers] = useState<TeamMemberOption[]>([]);
+  // #1914: main answers a signed-out user with `complete: false`, the same
+  // "ask again" it gives the startup race, so the retries below ran their full
+  // 15.5 s before the body showed. Signed out is a definite "no team". Only a
+  // known `false` counts: `null` (auth not loaded yet) keeps the lookup, and
+  // keying the effect on this boolean means null -> true does not restart it.
+  const signedOut = useAtomValue(stytchIsSignedInAtom) === false;
 
   useEffect(() => {
-    if (!workspacePath) {
+    if (!workspacePath || signedOut) {
       setTeamOrgId(null);
       setTeamMembers([]);
       return;
@@ -102,7 +110,7 @@ export function useTrackerTeam(workspacePath: string | undefined): TrackerTeam {
       }
     })();
     return () => { cancelled = true; };
-  }, [workspacePath]);
+  }, [workspacePath, signedOut]);
   // Members load on a separate effect keyed on the resolved orgId so a
   // slow members call cannot block the editor. The list-members IPC has
   // its own server-side timeout (see fetchTeamApi); on failure the
@@ -518,7 +526,11 @@ export function useTrackerItemBody({
       isCodeHighlighted: true,
       hasLinkAttributes: true,
       markdownOnly: true,
-      initialContent: contentMarkdown || '',
+      // The baseline, not `contentMarkdown`: our own saves advance only the
+      // baseline, and this editor can remount mid-session when sign-in flips
+      // the team answer (#1914). Seeding from the open-time snapshot would
+      // hide the saved text and let the next keystroke save over it.
+      initialContent: loadedBaselineRef.current ?? contentMarkdown ?? '',
       onGetContent: (getContentFn: () => string) => {
         getContentFnRef.current = getContentFn;
       },
@@ -553,7 +565,8 @@ export function useTrackerItemBody({
   const collabEditorConfig = useMemo((): EditorConfig | null => {
     if (contentMode !== 'collaborative' || !collabConfig || collabLoading) return null;
     if (!contentLoaded) return null;
-    const mdContent = contentMarkdown;
+    // Same as the local editor: the latest saved body, not the open-time one.
+    const mdContent = loadedBaselineRef.current ?? contentMarkdown;
     // Prefer the body-cache cold paint when the hook supplies it (the
     // `tracker_body_cache` row matching the current body_version). Fall
     // back to the per-item PGLite markdown for new items that have never

@@ -7,6 +7,11 @@ import {
   rendersAsSessionTree,
   sessionMoveError,
   sessionTreeRootId,
+  titleSearchReveal,
+  titleSearchMatcher,
+  searchExpandKey,
+  searchExpandEntries,
+  bulkTreeExpand,
   treeIndent,
   treeParentIds,
   visibleSessionTreeIds,
@@ -18,6 +23,46 @@ const row = (
   extra: Partial<TreeSession> = {}
 ): TreeSession => ({ id, parentSessionId, createdAt: 1, ...extra });
 describe('session tree projection', () => {
+  const reveal = (rows: TreeSession[], match: (s: TreeSession) => boolean) => {
+    const { rootIds, expandIds } = titleSearchReveal(new Map(rows.map(r => [r.id, r])), match);
+    return { rootIds: [...rootIds].sort(), expandIds: [...expandIds].sort() };
+  };
+  it('keeps the root of a nested title match and opens only its ancestors', () => {
+    const rows = [row('root'), row('parent', 'root'), row('Пост-запуск', 'parent'), row('other', 'parent')];
+    expect(reveal(rows, s => s.id.toLowerCase().includes('пост'))).toEqual({ rootIds: ['root'], expandIds: ['parent', 'root'] });
+    expect(reveal(rows, () => false)).toEqual({ rootIds: [], expandIds: [] });
+  });
+  it('does not add an unrelated root across a worktree boundary', () => {
+    const rows = [row('root'), row('match', 'root', { worktreeId: 'other' })];
+    expect(reveal(rows, s => s.id === 'match')).toEqual({ rootIds: ['match'], expandIds: [] });
+  });
+  it('leaves a matching parent on its own expansion so its children stay behind its chevron', () => {
+    const rows = [row('Launch'), row('draft', 'Launch'), row('notes', 'Launch')];
+    expect(reveal(rows, s => s.id === 'Launch')).toEqual({ rootIds: ['Launch'], expandIds: [] });
+  });
+  it('stops at a blitz parent the way the sidebar root lookup does', () => {
+    const rows = [row('blitz', null, { sessionType: 'blitz' }), row('match', 'blitz')];
+    expect(reveal(rows, s => s.id === 'match')).toEqual({ rootIds: ['match'], expandIds: [] });
+    expect(sessionTreeRootId('match', new Map(rows.map(r => [r.id, r])))).toBe('match');
+  });
+  it('does not let a hidden archived child admit its root, but walks archived ancestors', () => {
+    const rows = [row('root', null, { title: 'Launch' } as any), row('old', 'root', { title: 'Beta notes', isArchived: true } as any)];
+    expect(reveal(rows, titleSearchMatcher('beta', false) as any)).toEqual({ rootIds: [], expandIds: [] });
+    expect(reveal(rows, titleSearchMatcher('beta', true) as any)).toEqual({ rootIds: ['root'], expandIds: ['root'] });
+    const archivedParent = [row('p', null, { title: 'x', isArchived: true } as any), row('c', 'p', { title: 'Beta' } as any)];
+    expect(reveal(archivedParent, titleSearchMatcher('beta', false) as any).rootIds).toEqual(['p']);
+  });
+  it('re-opens collapsed search ancestors when the query changes even if the ancestors do not', () => {
+    expect(searchExpandKey('alpha', ['root'])).not.toBe(searchExpandKey('beta', ['root']));
+    expect([...searchExpandEntries(searchExpandKey('Beta ', ['b', 'a']))]).toEqual([['a', true], ['b', true]]);
+    expect(searchExpandEntries(searchExpandKey('beta', null)).size).toBe(0);
+  });
+  it('keeps Expand all during search from saving the expansion of ancestors search opened', () => {
+    const { persistIds, overrides } = bulkTreeExpand(['root', 'other'], new Map([['root', false]]), true);
+    expect(persistIds).toEqual(['other']);
+    expect([...overrides]).toEqual([['root', true]]);
+    expect(bulkTreeExpand(['root'], new Map(), false).persistIds).toEqual(['root']);
+  });
   it('sorts siblings by pins then subtree activity and includes the root in file rollups', () => {
     const [root] = buildSessionTree([
       row('root', null, { uncommittedCount: 2 }),
