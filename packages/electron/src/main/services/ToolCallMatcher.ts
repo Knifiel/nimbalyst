@@ -872,11 +872,12 @@ async function readStartedToolCallWindow(
  * null and cannot affect a match. Collecting every window first and
  * deduplicating afterwards held a long session's whole tool history (args and
  * output) in memory for each pass, and a session with definitive toolUseIds
- * (see definitiveToolUseId) is scanned unbounded after every tool call. Here each window is folded into its tool
- * call's dedup state as its page arrives, and only windows that can score for
- * one of `files` keep their payload. A completed window that can score but
- * has no args gets them from its call's started window, as deduplicateWindows
- * does; when that started window was not kept, its row is re-read by id.
+ * (see definitiveToolUseId) is scanned unbounded after every tool call. Here
+ * each window is folded into its tool call's dedup state as its page arrives,
+ * and only windows that can score for one of `files` keep their payload. A
+ * completed window that can score but has no args gets them from its call's
+ * started window, as deduplicateWindows does; when that started window was not
+ * kept, its row is re-read by id.
  *
  * Fails the way getRawToolCallWindows does: a failed read is logged and
  * returns no windows, with scannedWindowCount 0.

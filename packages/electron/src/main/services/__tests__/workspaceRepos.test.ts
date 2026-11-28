@@ -26,6 +26,8 @@ import {
   resolveRepoForFile,
 } from '../workspaceRepos';
 import { __resetGitRootCache } from '../GitStatusService';
+import { runGitInProcess, setGitRunTransport, type GitRunOptions, type GitRunResult } from '../git/runGit';
+import { gitTimeoutError } from '../git/gitRunnerProtocol';
 import { FIXTURE_IDENTITY_ARGS, gitSandboxEnv } from '../testSupport/gitTestSandbox';
 
 function git(args: string[], cwd: string): void {
@@ -109,6 +111,38 @@ describe('workspace repos', () => {
     expect(await listWorkspaceRepos(umbrella)).toEqual([umbrella, clone]);
     expect(await listRepoScanPaths(umbrella)).toEqual([umbrella, clone]);
     expect(await resolveDefaultRepo(umbrella)).toBe(umbrella);
+  });
+
+  it.each([
+    ['answers', (args: string[], options: GitRunOptions) => runGitInProcess(args, options), true],
+    ['outlasts its 5 s timeout', (args: string[]) => Promise.reject(gitTimeoutError(args)), false],
+  ])('N6: lists the ignored clones through the git runner, not a git forked from main, when git %s', async (_label, answer, listed) => {
+    const umbrella = path.join(tmpRoot, 'umbrella');
+    const clone = path.join(umbrella, 'service-a');
+    fs.mkdirSync(clone, { recursive: true });
+    git(['init', '-q'], umbrella);
+    fs.writeFileSync(path.join(umbrella, '.gitignore'), '/service-a/\n');
+    git(['init', '-q'], clone);
+    rootsByWorkspace.set(umbrella, [umbrella]);
+    const calls: Array<{ args: string[]; options: GitRunOptions }> = [];
+    setGitRunTransport({
+      run: (args, options): Promise<GitRunResult> => {
+        calls.push({ args, options });
+        return answer(args, options);
+      },
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(await listWorkspaceRepos(umbrella)).toEqual(listed ? [umbrella, clone] : [umbrella]);
+      expect(calls).toEqual([{
+        args: ['--no-optional-locks', 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'],
+        options: { cwd: umbrella, maxBuffer: 64 * 1024 * 1024, timeout: 5_000 },
+      }]);
+      expect(consoleError).toHaveBeenCalledTimes(listed ? 0 : 1);
+    } finally {
+      setGitRunTransport(null);
+      consoleError.mockRestore();
+    }
   });
 
   it('attributes a file in an attached folder to that folder repo', () => {

@@ -2019,7 +2019,7 @@ describe('ToolCallMatcher', () => {
           const before = param(/<=\s*\$(\d+)/) as number | undefined;
           if (cursor === 0) {
             stats.scans++;
-            if (after !== undefined || before !== undefined) stats.boundedScans++;
+            if (after !== undefined && before !== undefined) stats.boundedScans++;
           }
           const rows = [...messages]
             .sort((a, b) => a.id - b.id)
@@ -2311,8 +2311,8 @@ describe('ToolCallMatcher', () => {
       /**
        * Counts the raw-message reads matchSession makes against the real
        * database. A scan is a keyset walk from cursor 0 and `pages` its reads;
-       * a scan is unbounded when its SQL carries no created_at bound. Every row
-       * any read returns counts as scanned.
+       * a scan is unbounded unless its SQL carries both created_at bounds. Every
+       * row any read returns counts as scanned.
        */
       function countRawScans() {
         const stats = { scans: 0, pages: 0, unboundedScans: 0, rowsScanned: 0 };
@@ -2324,7 +2324,7 @@ describe('ToolCallMatcher', () => {
               stats.pages++;
               if (Number(params?.[Number(cursorRef[1]) - 1]) === 0) {
                 stats.scans++;
-                if (!/[<>]=\s*\$\d+/.test(sql)) stats.unboundedScans++;
+                if (!(/>=\s*\$\d+/.test(sql) && /<=\s*\$\d+/.test(sql))) stats.unboundedScans++;
               }
             }
             stats.rowsScanned += result.rows.length;

@@ -376,6 +376,26 @@ function isSeparateCheckout(checkoutRoot: string, entry: BusEntry): boolean {
   return separate;
 }
 
+/**
+ * The checkouts a watcher start reads, re-read when an overflow episode ends:
+ * the dropped backlog can hold a `git init`, a clone or a worktree swap. Bounded
+ * by the clones: the root's shared git dir is one stat, each checkout's answer
+ * is recomputed on its next event, and on Linux one git call (in the git
+ * runner) lists the clones the root ignores, which chokidar adds to the kept
+ * handle, a scan only of a clone it does not watch yet.
+ */
+function resyncCheckouts(entry: BusEntry): void {
+  entry.workspaceCommonDir = gitCommonDir(entry.workspaceAbs);
+  entry.separateCheckoutCache.clear();
+  const handle = entry.lifecycle.handle;
+  if (supportsRecursiveWatch || !entry.workspaceCommonDir || !handle) return;
+  void listIgnoredNestedRepositories(entry.workspaceAbs).then((checkouts) => {
+    // Stopped, or replaced after a native failure: the next start lists for its own handle.
+    if (entry.lifecycle.handle !== handle) return;
+    for (const checkout of checkouts) addNativeWatchPath(handle, checkout, isScanning(entry));
+  }).catch(error => logger.main.error('[WorkspaceEventBus] Nested checkout resync failed:', error));
+}
+
 function ignoredByNestedRepo(absolutePath: string, owningRoot: string, entry: BusEntry): boolean {
   let nestedFilter = entry.nestedGitignoreCache.get(owningRoot);
   if (!nestedFilter) {
@@ -575,6 +595,7 @@ export async function subscribe(
       entry.nestedGitignoreCache.clear();
       entry.gitRootDirCache.clear();
       reloadGitignoreFiltersForPath(path.join(key, '.gitignore'), entry);
+      resyncCheckouts(entry);
     }
     for (const subscriber of entry.listeners.values()) {
       try { subscriber.onHealthChanged?.(health); }

@@ -76,10 +76,15 @@ vi.mock('../WorkspaceNativeWatcher', async (importOriginal) => {
 
 // The faked darwin platform makes the availability probe run xcode-select,
 // which Linux lacks. Every machine that runs this file has git: it runs git init.
-vi.mock('../../utils/gitUtils', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../utils/gitUtils')>()),
-  isGitAvailable: () => true,
-}));
+// The clone listing is spied: a recursive handle reaches the clones already.
+vi.mock('../../utils/gitUtils', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../utils/gitUtils')>();
+  return {
+    ...actual,
+    isGitAvailable: () => true,
+    listIgnoredNestedRepositories: vi.fn(actual.listIgnoredNestedRepositories),
+  };
+});
 
 vi.mock('../../utils/logger', () => ({
   logger: {
@@ -104,6 +109,7 @@ import {
 } from '../WorkspaceEventBus';
 import type { WorkspaceEventListener } from '../WorkspaceEventBus';
 import type { FileWatchHealth } from '../../../shared/fileWatchHealth';
+import { listIgnoredNestedRepositories } from '../../utils/gitUtils';
 
 function createListener(): WorkspaceEventListener & {
   changes: Array<{ path: string; type: string; bypassed?: boolean }>;
@@ -629,6 +635,57 @@ describe('WorkspaceEventBus umbrella repo with ignored clones', () => {
     fireWatchEvent('change', '.claude/worktrees/agent/src/agent.ts');
 
     expect(listener.onChange).not.toHaveBeenCalled();
+    unsubscribe(layout.workspace, 'sub-1');
+  });
+
+  /** Point `<rel>/.git` at a linked worktree's admin dir under `commonDir`. */
+  function linkTo(rel: string, commonDir: string) {
+    const gitDir = path.join(commonDir, 'worktrees', path.basename(rel));
+    fs.mkdirSync(gitDir, { recursive: true });
+    fs.writeFileSync(path.join(gitDir, 'commondir'), '../..\n');
+    fs.writeFileSync(path.join(layout.workspace, rel, '.git'), `gitdir: ${gitDir}\n`);
+  }
+  const otherRepo = () => path.join(path.dirname(path.dirname(layout.workspace)), 'other-repo', '.git');
+
+  const moveGit = (rel: string, from: string, to: string) => () =>
+    fs.renameSync(path.join(layout.workspace, rel, from), path.join(layout.workspace, rel, to));
+
+  it.each([
+    ['F-C4', 'the workspace root becomes a repository', 'clone/src/app.ts',
+      moveGit('', '.git', '.git-later'), moveGit('', '.git-later', '.git')],
+    ['F-C4', "a folder the umbrella ignores becomes another repository's checkout", 'member/src/api.ts',
+      () => linkTo('member', path.join(layout.workspace, '.git')),
+      () => linkTo('member', otherRepo())],
+    ['N3', 'a folder the umbrella ignores becomes a repository', 'clone/src/app.ts',
+      moveGit('clone', '.git', '.git-later'), moveGit('clone', '.git-later', '.git')],
+  ])('%s: follows the checkouts on disk once an overflow episode ends in which %s', async (_id, _label, file, before, during) => {
+    before();
+    const listener = createListener();
+    const states: FileWatchHealth[] = [];
+    let ended!: () => void;
+    const episodeEnded = new Promise<void>(resolve => { ended = resolve; });
+    listener.onHealthChanged = (health) => {
+      states.push(health);
+      if (health.state === 'watching' && states.some(state => state.state === 'recovering')) ended();
+    };
+    await subscribe(layout.workspace, 'sub-1', listener);
+    fireWatchEvent('change', file);
+    await drainWorkspaceEvents(layout.workspace);
+    expect(listener.changes).toEqual([]);
+
+    // A checkout-sized storm overflows the backlog while the change happens.
+    during();
+    for (let i = 0; i < 16_600; i++) fireWatchEvent('change', `src/storm-${i}.ts`);
+    await episodeEnded;
+    await drainWorkspaceEvents(layout.workspace);
+    expect(mockFsWatch).toHaveBeenCalledTimes(1);
+    expect(states).toContainEqual(expect.objectContaining({ state: 'recovering', reason: 'event_queue_overflow' }));
+    expect(listIgnoredNestedRepositories).not.toHaveBeenCalled();
+    listener.changes.length = 0;
+
+    fireWatchEvent('change', file);
+    await drainWorkspaceEvents(layout.workspace);
+    expect(listener.changes.map((change) => change.path)).toEqual([path.join(layout.workspace, file)]);
     unsubscribe(layout.workspace, 'sub-1');
   });
 });

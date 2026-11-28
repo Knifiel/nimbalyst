@@ -236,11 +236,10 @@ export async function listIgnoredNestedRepositories(repoRoot: string): Promise<s
 
   let stdout: string;
   try {
-    ({ stdout } = await execFileAsync(
-      'git',
+    ({ stdout } = await runGit(
       ['--no-optional-locks', 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'],
       // Repo discovery waits on this, so a wedged git must not hold it up.
-      { windowsHide: true, cwd: repoRoot, encoding: 'utf8', maxBuffer: LS_FILES_MAX_BUFFER, timeout: NESTED_REPO_SCAN_TIMEOUT_MS },
+      { cwd: repoRoot, maxBuffer: LS_FILES_MAX_BUFFER, timeout: NESTED_REPO_SCAN_TIMEOUT_MS },
     ));
   } catch (error) {
     console.error('[gitUtils] git ls-files failed while listing ignored nested repositories', repoRoot, error);

@@ -191,4 +191,114 @@ describe.skipIf(process.platform !== 'linux')('WorkspaceEventBus on Linux: watch
       fs.rmSync(workspace, { recursive: true, force: true });
     }
   });
+
+  /**
+   * An umbrella whose root ignores service/, a folder that is not yet a
+   * repository, so chokidar never descends into it. `listed` records each
+   * listing of the clones the root ignores, as git would answer it from disk.
+   */
+  function umbrellaWithFolderToClone(rootIsRepository = true) {
+    const workspace = fs.mkdtempSync(path.join(process.env.TMPDIR ?? '/var/tmp', 'bus-linux-clone-'));
+    if (rootIsRepository) fs.mkdirSync(path.join(workspace, '.git'));
+    fs.writeFileSync(path.join(workspace, '.gitignore'), '/service/\n');
+    const service = path.join(workspace, 'service');
+    fs.mkdirSync(path.join(service, 'src'), { recursive: true });
+    const listed: string[][] = [];
+    return { workspace, service, listed, list: () => {
+      const checkouts = [service].filter((dir) => fs.existsSync(path.join(dir, '.git')));
+      listed.push(checkouts);
+      return checkouts;
+    } };
+  }
+
+  /** Two checkout-sized storms on `handle`, one overflow episode, between which service/ becomes a repository. */
+  async function overflowWhileCloning(handle: any, service: string, states: FileWatchHealth[]) {
+    const storm = (name: string) => {
+      for (let i = 0; i < 16_600; i++) handle.emit('change', path.join(path.dirname(service), `${name}-${i}.md`));
+    };
+    storm('before');
+    fs.mkdirSync(path.join(service, '.git'));
+    storm('after');
+    expect(states.filter((health) => health.state === 'recovering')).toEqual([
+      expect.objectContaining({ reason: 'event_queue_overflow' }),
+    ]);
+    await vi.waitFor(() => expect(states.at(-1)?.state).toBe('watching'), { timeout: 10_000, interval: 20 });
+  }
+
+  it('N2: watches a clone the root ignores that a git init during an overflow episode created', async () => {
+    const { workspace, service, listed, list } = umbrellaWithFolderToClone();
+    try {
+      nested.list = async () => list();
+      const states: FileWatchHealth[] = [];
+      const added: string[] = [];
+      await subscribe(workspace, 'clone-init', {
+        ...noEvents,
+        onAdd: (filePath: string) => added.push(filePath),
+        onHealthChanged: (health) => { states.push(health); },
+      });
+      await vi.waitFor(() => expect(states.at(-1)?.state).toBe('watching'), { timeout: 10_000, interval: 20 });
+      const handle = recorded.handles[0];
+      await overflowWhileCloning(handle, service, states);
+
+      // Listed once for the episode and added to the same handle, which then scans the clone.
+      await vi.waitFor(() => expect(Object.keys(handle.getWatched())).toContain(path.join(service, 'src')), { timeout: 10_000, interval: 20 });
+      expect(listed).toEqual([[], [service]]);
+      expect(recorded.handles).toHaveLength(1);
+      const created = path.join(service, 'src', 'lib.ts');
+      fs.writeFileSync(created, 'x');
+      await vi.waitFor(() => expect(added).toContain(created), { timeout: 5_000, interval: 20 });
+    } finally {
+      resetBus();
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  }, 40_000);
+
+  it('N2: lists no clones when an overflow episode ends in a workspace that is not a repository', async () => {
+    const { workspace, service, listed, list } = umbrellaWithFolderToClone(false);
+    try {
+      nested.list = async () => list();
+      const states: FileWatchHealth[] = [];
+      await subscribe(workspace, 'clone-init', { ...noEvents, onHealthChanged: (health) => { states.push(health); } });
+      await vi.waitFor(() => expect(states.at(-1)?.state).toBe('watching'), { timeout: 10_000, interval: 20 });
+      await overflowWhileCloning(recorded.handles[0], service, states);
+
+      // The episode's listing starts before `watching` is reported, so none started.
+      expect(listed).toEqual([]);
+    } finally {
+      resetBus();
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  }, 40_000);
+
+  it.each([
+    ['the bus stops', () => resetBus()],
+    ['a native failure replaces the handle', (handle: any) => handle.emit('error', Object.assign(new Error('EIO'), { code: 'EIO' }))],
+  ])('N2: adds nothing to the old handle when %s before the episode listing answers', async (_label, interrupt) => {
+    const { workspace, service, listed, list } = umbrellaWithFolderToClone();
+    try {
+      let answer!: () => void;
+      nested.list = async () => {
+        if (listed.length !== 1) return list();
+        await new Promise<void>((resolve) => { answer = resolve; });
+        return list();
+      };
+      const states: FileWatchHealth[] = [];
+      await subscribe(workspace, 'clone-init', { ...noEvents, onHealthChanged: (health) => { states.push(health); } });
+      await vi.waitFor(() => expect(states.at(-1)?.state).toBe('watching'), { timeout: 10_000, interval: 20 });
+      const handle = recorded.handles[0];
+      await overflowWhileCloning(handle, service, states);
+      await vi.waitFor(() => expect(answer).toBeTypeOf('function'), { timeout: 10_000, interval: 20 });
+
+      const add = vi.spyOn(handle, 'add');
+      interrupt(handle);
+      answer();
+      // The listing has answered; a retry's start may list again for its own handle.
+      await vi.waitFor(() => expect(listed.slice(0, 2)).toEqual([[], [service]]), { timeout: 10_000, interval: 20 });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(add).not.toHaveBeenCalled();
+    } finally {
+      resetBus();
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  }, 40_000);
 });
